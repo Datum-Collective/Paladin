@@ -15,25 +15,46 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    depends_on:
+      apc-main:
+        condition: service_healthy
 
   apc-main:
     build: .
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - apc_main_data:/var/lib/apc
     expose:
       - "8000"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
 
   apc-bounty:
     profiles: ["bounty"]
     build: ./.bounty-src
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - apc_bounty_data:/var/lib/apc
     expose:
       - "8000"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
 
 volumes:
   caddy_data:

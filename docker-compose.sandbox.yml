@@ -1,0 +1,28 @@
+# Opt-in sandbox infrastructure. Combine with docker-compose.yml when repository
+# execution is enabled; ordinary deployments do not require an engine socket.
+services:
+  apc-main:
+    environment:
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-datum-sandbox:latest}
+      SANDBOX_DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      # Trusted orchestrator access only. Child containers never receive it.
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      # Set this to the host socket's group ID on Linux (`stat -c %g`).
+      - ${DOCKER_GID:-0}
+
+  # Build-only service. It is not part of the request-serving stack.
+  sandbox-runner:
+    profiles: ["sandbox-build"]
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: ${SANDBOX_IMAGE:-datum-sandbox:latest}
+    command: ["true"]
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
