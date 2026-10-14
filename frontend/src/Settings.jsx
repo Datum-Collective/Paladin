@@ -28,7 +28,7 @@ const SHORTCUTS = [
     ['Activity', `${M}5`], ['Workspaces', `${M}6`], ['Integrations', `${M}7`], ['Command palette', `${M}K`], ['Settings', `${M},`]]],
   ['Workspaces', [['New workspace', `${M}N`], ['Open repository', `${M}⇧O`], ['Open folder', `${M}O`], ['Add log data', `${M}⇧L`],
     ['Refresh', `${M}R`]]],
-  ['View', [['Show or hide sidebar', isMac ? '⌃⌘S' : 'Ctrl+B'], ['Show or hide inspector', isMac ? '⌥⌘I' : 'Ctrl+Alt+I']]],
+  ['View', [['Show or hide sidebar', `${M}B`], ['Collapse or expand sidebar', isMac ? '⌃⌘S' : 'Ctrl+Shift+B'], ['Show or hide inspector', isMac ? '⌥⌘I' : 'Ctrl+Alt+I']]],
   ['Assistant', [['Send message', 'Return'], ['New line', '⇧Return']]],
 ]
 

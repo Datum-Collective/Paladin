@@ -35,7 +35,8 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
   t.push({
     label: 'View',
     submenu: [
-      { label: 'Show or Hide Sidebar', accelerator: isMac ? 'Control+Command+S' : 'Control+B', click: cmd('toggle-sidebar') },
+      { label: 'Show or Hide Sidebar', accelerator: 'CommandOrControl+B', click: cmd('toggle-sidebar') },
+      { label: 'Collapse or Expand Sidebar', accelerator: isMac ? 'Control+Command+S' : 'Control+Shift+B', click: cmd('collapse-sidebar') },
       { label: 'Show or Hide Inspector', accelerator: isMac ? 'Alt+Command+I' : 'Control+Alt+I', click: cmd('toggle-inspector') },
       { type: 'separator' },
       { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },

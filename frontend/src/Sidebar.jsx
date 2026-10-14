@@ -9,30 +9,30 @@ const WS = [['analysis', 'Analysis', 'graph', '1'], ['repo', 'Repository', 'repo
 const FOOT = [['integrations', 'Integrations', 'plug', '7'], ['settings', 'Settings', 'settings', ',']]
 
 export default function Sidebar({ view, setView, graph, empty, canPlay, playing, onPlay, onReset, onPalette, rems, desktop,
-                                  user, onSignOut, workspaces, current, onOpenWs, onCreateWs, onHome, onManage }) {
+                                  user, onSignOut, workspaces, current, onOpenWs, onCreateWs, onHome, onManage, rail, onToggleRail }) {
   const open = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
   const item = ([id, label, icon, k]) => (
     <button key={id} className={view === id ? 'nav-item on' : 'nav-item'} onClick={() => setView(id)}
-            aria-current={view === id ? 'page' : undefined}>
-      <Icon name={icon} size={16} /><span>{label}</span>
+            aria-current={view === id ? 'page' : undefined} aria-label={label} title={rail ? `${label}  ${mod}${k}` : undefined}>
+      <Icon name={icon} size={16} />{!rail && <span>{label}</span>}
       {id === 'analysis' && open > 0 && <span className="badge" title="Open remediations">{open}</span>}
-      <kbd>{k.length === 1 && k !== ',' ? `${mod}${k}` : k === ',' ? `${mod},` : `${mod}${k}`}</kbd>
+      {!rail && <kbd>{`${mod}${k}`}</kbd>}
     </button>
   )
   return (
-    <aside className="sidebar">
+    <aside className={rail ? 'sidebar rail' : 'sidebar'}>
       <div className="sidebar-top drag" aria-hidden="true" />
-      <button className="palette-trigger nodrag" onClick={onPalette} aria-label="Open command palette">
-        <Icon name="search" size={14} /><span>Search</span><kbd>{mod}K</kbd>
+      <button className="palette-trigger nodrag" onClick={onPalette} aria-label="Open command palette" title={rail ? `Search  ${mod}K` : undefined}>
+        <Icon name="search" size={14} />{!rail && <><span>Search</span><kbd>{mod}K</kbd></>}
       </button>
       <nav aria-label="App" className="nav">{TOP.map(item)}</nav>
 
-      <div className="side-label">Open workspace</div>
+      {!rail && <div className="side-label">Open workspace</div>}
       <WorkspaceSwitcher workspaces={workspaces} current={current} onOpen={onOpenWs} onCreate={onCreateWs}
-                         onHome={onHome} onManage={onManage} />
+                         onHome={onHome} onManage={onManage} rail={rail} />
       <nav aria-label="Workspace" className="nav">{WS.map(item)}</nav>
 
-      <section className="side-group" aria-label="Workspace status">
+      {!rail && <section className="side-group" aria-label="Workspace status">
         {empty ? <p className="muted small">No data yet. Import a repository or add logs.</p> : (
           <>
             <div className="row-top"><Severity level={graph.severity} />
@@ -47,13 +47,18 @@ export default function Sidebar({ view, setView, graph, empty, canPlay, playing,
           {canPlay && <button onClick={onPlay} disabled={playing}><Icon name="play" size={14} />{playing ? 'Playing' : 'Play Sample'}</button>}
           <button onClick={onReset}><Icon name="refresh" size={14} />Reset…</button>
         </div>
-      </section>
+      </section>}
 
       <span className="spacer" />
       <nav aria-label="System" className="nav">{FOOT.map(item)}</nav>
       {!desktop && user && (
-        <button className="nav-item" onClick={onSignOut}><Icon name="logout" size={16} /><span>Sign Out</span></button>
+        <button className="nav-item" onClick={onSignOut} aria-label="Sign Out" title={rail ? 'Sign Out' : undefined}>
+          <Icon name="logout" size={16} />{!rail && <span>Sign Out</span>}</button>
       )}
+      <button className="nav-item collapse" onClick={onToggleRail} aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={rail ? 'Expand sidebar' : undefined}>
+        <Icon name={rail ? 'chevrons-right' : 'chevrons-left'} size={16} />{!rail && <span>Collapse</span>}
+      </button>
     </aside>
   )
 }

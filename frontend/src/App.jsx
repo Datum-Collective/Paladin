@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import Analysis from './Analysis.jsx'
 import CommandPalette from './CommandPalette.jsx'
+import Resizer from './Resizer.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
 import Settings, { PANES } from './Settings.jsx'
@@ -83,6 +84,8 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [newDlg, setNewDlg] = useState(false)
   const [delTarget, setDelTarget] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
+  const [rail, setRail] = useStored('sidebar-rail', false)
+  const [sidebarW, setSidebarW] = useStored('sidebar-w', 248)
   const [inspectorOpen, setInspectorOpen] = useStored('inspector-open', true)
   const [pane, setPane] = useStored('settings-pane', 'general')
   const [recents, setRecents] = useStored('palette-recents', [])
@@ -144,7 +147,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
       assistant: () => setView('assistant'), settings: () => goSettings(), ingest: () => go('ingest'),
       events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
-      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'toggle-inspector': () => setInspectorOpen((o) => !o),
+      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'collapse-sidebar': () => { setSidebarOpen(true); setRail((r) => !r) }, 'toggle-inspector': () => setInspectorOpen((o) => !o),
       play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
       refresh: () => ws.refresh(), reset: () => setConfirmReset(true),
       'fix-cheapest': () => (fx && fx.cheapest_cut ? ws.propose(fx.cheapest_cut.edges, 'Cheapest cut') : toast('There is no fix to propose yet.', 'warn')),
@@ -156,7 +159,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       },
     }
     if (table[id]) table[id]()
-  }, [ws, fx, go, goSettings, chooseFolder, toast, setSidebarOpen, setInspectorOpen])
+  }, [ws, fx, go, goSettings, chooseFolder, toast, setSidebarOpen, setInspectorOpen, setRail])
 
   // native menu bar -> same table (desktop)
   const runRef = useRef(run)
@@ -166,7 +169,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
   // keyboard (web has no menu bar; desktop accelerators come from the menu, so only the web needs these)
   useEffect(() => {
     if (config.desktop) return undefined
-    const keys = { k: 'palette', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', 5: 'activity', 6: 'workspaces', 7: 'integrations', ',': 'settings' }
+    const keys = { k: 'palette', b: 'toggle-sidebar', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', 5: 'activity', 6: 'workspaces', 7: 'integrations', ',': 'settings' }
     const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return
       const id = e.shiftKey && e.key.toLowerCase() === 'h' ? 'home' : keys[e.key.toLowerCase()]
@@ -199,6 +202,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
       { id: 'refresh', group: 'Actions', title: 'Refresh', icon: 'refresh' },
       { id: 'toggle-sidebar', group: 'View', title: 'Show or hide sidebar', icon: 'sidebar' },
+      { id: 'collapse-sidebar', group: 'View', title: 'Collapse or expand sidebar', icon: 'chevrons-left' },
       { id: 'toggle-inspector', group: 'View', title: 'Show or hide inspector', icon: 'inspector' },
       { id: 'reset', group: 'Actions', title: 'Reset workspace…', icon: 'trash' },
     ]
@@ -220,13 +224,17 @@ function Shell({ config, user, onSignOut, onExpired }) {
   if (view === null || !ws.loaded) return <Splash />
   const showInspector = view === 'analysis'
   return (
-    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'} key={wsl.active}>
+    <div className="app" data-sidebar={sidebarOpen ? (rail ? 'rail' : 'open') : 'closed'} key={wsl.active}
+         style={sidebarOpen ? { gridTemplateColumns: `${rail ? 52 : sidebarW}px minmax(0, 1fr)` } : undefined}>
       {sidebarOpen && (
         <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
                  playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
-                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut}
+                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} rail={rail} onToggleRail={() => run('collapse-sidebar')}
                  workspaces={wsl.workspaces} current={wsl.current} onOpenWs={openWs} onCreateWs={() => setNewDlg(true)}
                  onHome={() => run('open-repo')} onManage={() => run('workspaces')} />
+      )}
+      {sidebarOpen && !rail && (
+        <Resizer side="left" value={sidebarW} min={200} max={360} onChange={setSidebarW} label="Resize sidebar" />
       )}
       <div className="content">
         <div className="toolbar drag" role="toolbar" aria-label={`${title} toolbar`}>

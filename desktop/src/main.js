@@ -87,8 +87,8 @@ function createWindow(origin) {
     // vibrancy needs a transparent window; the content column paints its own opaque background
     backgroundColor: isMac ? '#00000000' : (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
-    trafficLightPosition: isMac ? { x: 20, y: 20 } : undefined, // centres the controls in the 52pt titlebar row
-    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 44 },
+    trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined, // centres the controls in the 40pt titlebar row
+    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 40 },
     vibrancy: isMac ? 'sidebar' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
