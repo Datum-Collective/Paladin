@@ -102,3 +102,12 @@ def sim_pos(ws: int) -> int:
 
 def set_sim_pos(ws: int, pos: int) -> None:
     run("INSERT INTO sim(ws,pos) VALUES(?,?) ON CONFLICT(ws) DO UPDATE SET pos=excluded.pos", (ws, pos))
+
+
+def wipe_workspace(ws: int) -> None:
+    """Remove every trace of a workspace's analysis data (not the account)."""
+    for t in ("events", "fixes", "sim", "remediations", "audit", "code_models", "jobs"):
+        try:
+            run(f"DELETE FROM {t} WHERE ws=?", (ws,))
+        except Exception:  # table not created yet
+            pass

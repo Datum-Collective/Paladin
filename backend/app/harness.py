@@ -280,3 +280,9 @@ def open_pr(ws: int, jid: int) -> dict:
 
 def config() -> dict:
     return {"github_enabled": bool(os.environ.get("GITHUB_TOKEN")), "ai_enabled": ai.enabled()}
+
+
+def wipe(ws: int) -> None:
+    _ensure()
+    for r in store.q("SELECT id FROM jobs WHERE ws=?", (ws,)):
+        shutil.rmtree(data_root() / str(r["id"]), ignore_errors=True)

@@ -37,9 +37,10 @@ def _ensure() -> None:
         title TEXT NOT NULL, runbook TEXT NOT NULL, ai_drafted INTEGER NOT NULL DEFAULT 0,
         connector TEXT NOT NULL, mark INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL, updated REAL NOT NULL)""")
-    for col in ("risk_before", "risk_after"):
+    for col, typ in (("risk_before", "REAL"), ("risk_after", "REAL"), ("paths_before", "INTEGER"),
+                     ("paths_after", "INTEGER")):
         try:
-            store.run(f"ALTER TABLE remediations ADD COLUMN {col} REAL")
+            store.run(f"ALTER TABLE remediations ADD COLUMN {col} {typ}")
         except Exception:  # column already exists
             pass
     store.run("""CREATE TABLE IF NOT EXISTS audit(
@@ -140,11 +141,16 @@ def execute(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
     if cur["state"] != "approved":
         raise ValueError(f"cannot go from {cur['state']} to executed")
-    before = engine.snapshot(ws)["risk"]
+    def live(snap):  # paths an analyst would act on
+        return sum(1 for p in snap["paths"] if p["severity"] in ("CRITICAL", "HIGH", "MEDIUM"))
+
+    b = engine.snapshot(ws)
     store.apply_fix(ws, cur["edges"])
-    after = engine.snapshot(ws)["risk"]
-    return _set(ws, rid, "executed", actor, f"connector={cur['connector']} risk {before:.3f}->{after:.3f}",
-                mark=store.event_count(ws), risk_before=round(before, 4), risk_after=round(after, 4))
+    a = engine.snapshot(ws)
+    return _set(ws, rid, "executed", actor,
+                f"connector={cur['connector']} risk {b['risk']:.3f}->{a['risk']:.3f} paths {live(b)}->{live(a)}",
+                mark=store.event_count(ws), risk_before=round(b["risk"], 4), risk_after=round(a["risk"], 4),
+                paths_before=live(b), paths_after=live(a))
 
 
 def verify(ws: int, rid: int, actor: str) -> dict:

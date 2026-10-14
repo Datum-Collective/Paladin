@@ -85,3 +85,22 @@ def test_metrics_timeline_and_benchmarks_endpoints(client):
     assert "runs" in client.get("/api/benchmarks").json()
     client.post("/api/auth/logout")
     assert client.get("/api/metrics").status_code == 401
+
+
+def test_demo_login_starts_clean_and_paths_before_after(client):
+    edges = setup(client)
+    top = client.get("/api/paths").json()["paths"]  # inspect evidence before the fix removes the edge
+    hop = next(h for p in top for h in p["hops"] if h["observed"])
+    assert hop["events"] and hop["events"][0]["raw"] and top[0]["assets"][0]["label"]
+    assert client.get("/api/events").json()["total"] >= 1
+    rid = client.post("/api/remediations", json={"edges": edges}).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    r = client.post(f"/api/remediations/{rid}/execute").json()
+    assert r["paths_before"] is not None and r["paths_before"] >= r["paths_after"] >= 0
+    client.post("/api/auth/logout")
+    client.post("/api/auth/demo")  # evaluator opens the demo account: nothing left over
+    assert client.get("/api/events").json()["total"] == 0
+    assert client.get("/api/remediations").json()["remediations"] == []
+    assert client.get("/api/codescan").json()["scanned"] is False
+    assert client.get("/api/harness/jobs").json()["jobs"] == []
+    assert client.get("/api/simulate/status").json()["total"] >= 0

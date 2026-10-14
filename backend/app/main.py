@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from . import analyze, auth, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
+from . import harness
 from .harness_api import router as harness_router
 from .remediation_api import router as remediation_router
 
@@ -109,7 +110,12 @@ def demo(response: Response, request: Request):
     u, p = os.environ.get("DEMO_USER"), os.environ.get("DEMO_PASSWORD")
     if not (u and p):
         raise HTTPException(404, "demo account not configured")
-    return _login(Creds(email=u, password=p), response, request)
+    out = _login(Creds(email=u, password=p), response, request)
+    row = store.q("SELECT id FROM users WHERE email=?", (u.lower(),))
+    if row:  # the shared demo account always opens on an empty workspace
+        harness.wipe(row[0]["id"])
+        store.wipe_workspace(row[0]["id"])
+    return out
 
 
 @app.post("/api/auth/logout")
@@ -199,9 +205,23 @@ def _sim_step(ws: int, n: int):
     return {"position": pos + len(batch), "total": len(s), "done": pos + len(batch) >= len(s)}
 
 
+@app.get("/api/simulate/status")
+def sim_status(u: dict = Depends(auth.require_user)):
+    return {"total": len(_samples()), "position": store.sim_pos(u["id"])}
+
+
+@app.get("/api/events")
+def events(limit: int = 100, u: dict = Depends(auth.require_user)):
+    limit = max(1, min(limit, 500))
+    evs = store.get_events(u["id"])
+    return {"total": len(evs), "events": [e.model_dump(exclude={"raw"}) | {"raw": e.raw[:240]}
+                                          for e in reversed(evs[-limit:])]}
+
+
 @app.post("/api/simulate/reset")
 def sim_reset(u: dict = Depends(auth.require_user)):
-    store.reset_workspace(u["id"])
+    harness.wipe(u["id"])
+    store.wipe_workspace(u["id"])
     return {"ok": True}
 
 

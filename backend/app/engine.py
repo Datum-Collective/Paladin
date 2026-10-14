@@ -26,6 +26,15 @@ def snapshot(ws: int, k: int = 10) -> dict:
     labels = {n.id: n.label for n in all_nodes}
     for p in paths:
         p["narrative"], p["tactics"], p["hops"] = narrate(p, by_id, labels)
+    ev_by_id = {e.id: e for e in events}
+    nmap = {n.id: n for n in all_nodes}
+    for p in paths:
+        p["assets"] = [{"id": n, "label": nmap[n].label, "kind": nmap[n].kind,
+                        "criticality": nmap[n].criticality} for n in p["nodes"]]
+        for h in p["hops"]:
+            h["events"] = [{"id": i, "ts": ev_by_id[i].ts, "source": ev_by_id[i].source, "type": ev_by_id[i].type,
+                            "actor": ev_by_id[i].actor, "src_ip": ev_by_id[i].src_ip, "raw": ev_by_id[i].raw[:240]}
+                           for i in h["evidence"][:3] if i in ev_by_id]
     t5 = time.perf_counter()
     timings = {"load_ms": round((t1 - t0) * 1000, 2), "correlate_ms": round((t2 - t1) * 1000, 2),
                "graph_ms": round((t3 - t2) * 1000, 2), "paths_ms": round((t4 - t3) * 1000, 2),
