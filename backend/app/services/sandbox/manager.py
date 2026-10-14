@@ -71,6 +71,7 @@ class SandboxSession:
                 "run", "-d",
                 "--name", self.container_name,
                 *labels,
+                "--init",
                 "--read-only",
                 "--tmpfs", f"/tmp:rw,nosuid,nodev,noexec,size={self.config.tmpfs_size}",
                 "--mount", f"type=volume,src={self.volume_name},dst=/workspace",

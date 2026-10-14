@@ -1,0 +1,42 @@
+05/14-12:04:30.739 [**] [1:2017919:3] ET INFO NTP Monlist Request from non-standard source port [**] [Classification: misc-activity] [Priority: 2] {UDP} 10.44.20.10:55890 -> 145.78.103.167:123
+05/14-12:07:23.114 [**] [1:2017919:3] ET INFO NTP Monlist Request from non-standard source port [**] [Classification: misc-activity] [Priority: 2] {UDP} 10.44.20.10:61846 -> 74.172.69.175:123
+05/14-12:11:19.727 [**] [1:2016360:1] ET INFO Observed Discord Domain (discordapp.com) [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.30.10:54225 -> 145.78.103.167:443
+05/14-12:15:48.298 [**] [1:2027865:4] ET DNS Query to a .top domain [**] [Classification: potentially-bad-traffic] [Priority: 2] {UDP} 10.44.30.10:34929 -> 10.44.20.10:53
+05/14-12:19:18.375 [**] [1:2027757:2] ET DNS Query for .to TLD [**] [Classification: potentially-bad-traffic] [Priority: 3] {UDP} 10.44.30.10:56604 -> 10.44.20.10:53
+05/14-12:29:55.129 [**] [1:2024291:4] ET DNS Query to .bit TLD [**] [Classification: potentially-bad-traffic] [Priority: 2] {UDP} 10.44.30.10:42145 -> 10.44.20.10:53
+05/14-12:33:11.853 [**] [1:2000428:10] ET POLICY ZIP file download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.20.20:62767 -> 145.78.103.167:80
+05/14-12:38:28.521 [**] [1:2028401:1] ET JA3 Hash - Possible Malware - Various RAT [**] [Classification: potentially-bad-traffic] [Priority: 1] {TCP} 10.44.20.10:52419 -> 74.172.69.175:443
+05/14-12:58:20.277 [**] [1:2027863:3] ET DNS Query to a .tk domain [**] [Classification: potentially-bad-traffic] [Priority: 2] {UDP} 10.44.30.10:41644 -> 10.44.20.10:53
+05/14-12:59:30.483 [**] [1:2029706:1] ET DNS Query to .cloud TLD [**] [Classification: misc-activity] [Priority: 3] {UDP} 10.44.30.10:36991 -> 10.44.20.10:53
+05/14-13:02:05.707 [**] [1:2016149:3] ET INFO Session Traversal Utilities for NAT (STUN Binding Request) [**] [Classification: policy-violation] [Priority: 3] {UDP} 10.44.20.20:51950 -> 185.249.5.220:3478
+05/14-13:06:04.996 [**] [1:2028401:1] ET JA3 Hash - Possible Malware - Various RAT [**] [Classification: potentially-bad-traffic] [Priority: 1] {TCP} 10.44.20.20:61399 -> 45.33.74.51:443
+05/14-13:08:02.782 [**] [1:2027865:4] ET DNS Query to a .top domain [**] [Classification: potentially-bad-traffic] [Priority: 2] {UDP} 10.44.30.10:46652 -> 10.44.20.10:53
+05/14-13:09:29.086 [**] [1:2010935:3] ET POLICY Outgoing Basic Auth Base64 HTTP Password detected [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.30.10:35359 -> 145.78.103.167:80
+05/14-13:13:43.887 [**] [1:2000357:9] ET P2P BitTorrent Traffic [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.20.10:57941 -> 185.249.5.220:6881
+05/14-13:14:56.368 [**] [1:2022476:1] ET INFO LibreSSL Outbound Connection [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.20.10:51994 -> 145.78.103.167:443
+05/14-13:18:26.987 [**] [1:2016149:3] ET INFO Session Traversal Utilities for NAT (STUN Binding Request) [**] [Classification: policy-violation] [Priority: 3] {UDP} 10.44.20.20:49757 -> 185.249.5.220:3478
+05/14-13:25:20.558 [**] [1:2027757:2] ET DNS Query for .to TLD [**] [Classification: potentially-bad-traffic] [Priority: 3] {UDP} 10.44.30.10:50099 -> 10.44.20.10:53
+05/14-13:25:31.221 [**] [1:2027316:2] ET INFO Observed Let's Encrypt Certificate [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.30.10:41488 -> 145.78.103.167:443
+05/14-13:30:15.568 [**] [1:2000419:20] ET POLICY PE EXE or DLL Windows file download Non-HTTP [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.20.20:64377 -> 185.249.5.220:443
+05/14-13:36:38.438 [**] [1:2025331:5] ET POLICY SSLv3 Outbound Connection Detected [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.30.10:34102 -> 37.75.195.175:443
+05/14-13:45:37.253 [**] [1:2028401:1] ET JA3 Hash - Possible Malware - Various RAT [**] [Classification: potentially-bad-traffic] [Priority: 1] {TCP} 10.44.20.20:64308 -> 45.33.74.51:443
+05/14-13:47:58.485 [**] [1:2016149:3] ET INFO Session Traversal Utilities for NAT (STUN Binding Request) [**] [Classification: policy-violation] [Priority: 3] {UDP} 10.44.30.10:37288 -> 45.33.74.51:3478
+05/14-13:49:54.819 [**] [1:2028401:1] ET JA3 Hash - Possible Malware - Various RAT [**] [Classification: potentially-bad-traffic] [Priority: 1] {TCP} 10.44.30.10:51791 -> 185.249.5.220:443
+05/14-13:50:03.684 [**] [1:2000419:20] ET POLICY PE EXE or DLL Windows file download Non-HTTP [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.30.10:48894 -> 145.78.103.167:443
+05/14-13:54:28.761 [**] [1:2001115:7] ET POLICY MSI (microsoft installer file) download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.30.10:42544 -> 45.33.74.51:443
+05/14-13:55:36.376 [**] [1:2016149:3] ET INFO Session Traversal Utilities for NAT (STUN Binding Request) [**] [Classification: policy-violation] [Priority: 3] {UDP} 10.44.20.20:52931 -> 45.33.74.51:3478
+05/14-13:56:48.472 [**] [1:2029706:1] ET DNS Query to .cloud TLD [**] [Classification: misc-activity] [Priority: 3] {UDP} 10.44.30.10:59854 -> 10.44.20.10:53
+05/14-14:02:29.702 [**] [1:2016149:3] ET INFO Session Traversal Utilities for NAT (STUN Binding Request) [**] [Classification: policy-violation] [Priority: 3] {UDP} 10.44.20.10:58581 -> 45.33.74.51:3478
+05/14-14:02:31.587 [**] [1:2000419:20] ET POLICY PE EXE or DLL Windows file download Non-HTTP [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.20.10:65337 -> 37.75.195.175:443
+05/14-14:06:49.933 [**] [1:2028401:1] ET JA3 Hash - Possible Malware - Various RAT [**] [Classification: potentially-bad-traffic] [Priority: 1] {TCP} 10.44.30.10:52376 -> 185.249.5.220:443
+05/14-14:12:01.843 [**] [1:2027757:2] ET DNS Query for .to TLD [**] [Classification: potentially-bad-traffic] [Priority: 3] {UDP} 10.44.30.10:41047 -> 10.44.20.10:53
+05/14-14:19:03.701 [**] [1:2029706:1] ET DNS Query to .cloud TLD [**] [Classification: misc-activity] [Priority: 3] {UDP} 10.44.30.10:39402 -> 10.44.20.10:53
+05/14-14:26:21.862 [**] [1:2024290:2] ET INFO Observed AWS S3 Domain (s3.amazonaws.com) [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.30.10:56823 -> 156.32.3.55:443
+05/14-14:27:45.377 [**] [1:2010935:3] ET POLICY Outgoing Basic Auth Base64 HTTP Password detected [**] [Classification: policy-violation] [Priority: 2] {TCP} 10.44.20.10:63925 -> 37.75.195.175:80
+05/14-14:35:19.664 [**] [1:2000428:10] ET POLICY ZIP file download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.20.20:62839 -> 156.32.3.55:80
+05/14-14:44:56.239 [**] [1:2001114:9] ET POLICY Mozilla XPI install files download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.30.10:37733 -> 145.78.103.167:443
+05/14-14:48:50.783 [**] [1:2023672:2] ET INFO Python-urllib Outbound Request [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.20.10:55128 -> 37.75.195.175:443
+05/14-14:54:24.151 [**] [1:2000428:10] ET POLICY ZIP file download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.20.20:50748 -> 145.78.103.167:80
+05/14-14:55:34.367 [**] [1:2023672:2] ET INFO Python-urllib Outbound Request [**] [Classification: misc-activity] [Priority: 3] {TCP} 10.44.30.10:49207 -> 145.78.103.167:443
+05/14-14:57:33.362 [**] [1:2000428:10] ET POLICY ZIP file download [**] [Classification: policy-violation] [Priority: 3] {TCP} 10.44.20.10:51494 -> 156.32.3.55:80
+05/14-14:58:43.505 [**] [1:2027865:4] ET DNS Query to a .top domain [**] [Classification: potentially-bad-traffic] [Priority: 2] {UDP} 10.44.30.10:47637 -> 10.44.20.10:53

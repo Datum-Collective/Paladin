@@ -75,3 +75,17 @@ def test_empty_workspace_reports_no_risk(client):
     assert g["events"] == 0 and g["risk"] == 0 and g["severity"] == "LOW"
     assert client.get("/api/paths").json()["paths"] == []
     assert client.get("/api/fixes").json()["cheapest_cut"] is None
+
+
+def test_play_sample_scenario_produces_ranked_path(client):
+    login(client)
+    status = client.get("/api/simulate/status").json()
+    assert status["total"] > 0
+
+    replay = client.post("/api/simulate/start").json()
+    while not replay["done"]:
+        replay = client.post("/api/simulate/step?n=500").json()
+
+    paths = client.get("/api/paths").json()["paths"]
+    assert replay["position"] == replay["total"] == status["total"]
+    assert paths and paths[0]["risk"] > 0
