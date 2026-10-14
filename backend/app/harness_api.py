@@ -58,6 +58,12 @@ def job(jid: int, u: dict = Depends(auth.require_user)):
     return _get(u["id"], jid)
 
 
+@router.post("/jobs/{jid}/cancel")
+def cancel(jid: int, u: dict = Depends(auth.require_user)):
+    _get(u["id"], jid)
+    return harness.cancel(u["id"], jid)
+
+
 @router.get("/jobs/{jid}/patch", response_class=PlainTextResponse)
 def patch(jid: int, u: dict = Depends(auth.require_user)):
     return _get(u["id"], jid)["diff"]
