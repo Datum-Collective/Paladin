@@ -288,7 +288,8 @@ function ScanReport({ job }) {
       </div>
       <div className="muted">
         AI: {r.ai.enabled ? `triage ${r.ai.triage ? 'ran' : 'had nothing to triage'}, reviewed ${r.ai.review_files} file(s)` +
-          (r.ai.claims_rejected ? `, discarded ${r.ai.claims_rejected} claim(s) that did not match the code` : '') : 'off'}
+          (r.ai.claims_rejected ? `, discarded ${r.ai.claims_rejected} claim(s) that did not match the code` : '') +
+          (r.ai.review_truncated && r.ai.review_truncated.length ? `, ${r.ai.review_truncated.length} file(s) too long to review in full` : '') : 'off'}
       </div>
       {skipped.length > 0 && (
         <>

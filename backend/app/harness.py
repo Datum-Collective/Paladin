@@ -75,6 +75,10 @@ BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".pdf", 
 DOC_EXT = {".md", ".txt", ".rst", ".adoc"}
 
 
+def _json_default(key: str):
+    return {} if key == "report" else []
+
+
 def _skip_reason(rel: str, size: int, kept: set[str]) -> str | None:
     """None when the file was scanned, otherwise the reason it was not."""
     low = rel.lower()
@@ -83,6 +87,9 @@ def _skip_reason(rel: str, size: int, kept: set[str]) -> str | None:
     if any(d in low + "/" or low.startswith(d) or ("/" + d) in "/" + low for d in codescan.SKIP_DIRS):
         return "vendored or build output"
     ext = Path(low).suffix
+    base = Path(low).name
+    if base.startswith(".env") or base.endswith((".pem", ".key", "id_rsa")):
+        return "credential files (deliberately not read)"
     if low.endswith(codescan.SKIP_FILES) or ext in (".map", ".lock"):
         return "lockfiles, minified, source maps"
     if ext in DOC_EXT:
@@ -98,18 +105,33 @@ def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, 
     kept_paths = {f["path"] for f in kept}
     skipped: dict[str, dict] = {}
     total = 0
-    for p in src.rglob("*"):
-        rel = p.relative_to(src)
-        if ".git" in rel.parts or not p.is_file() or p.is_symlink():
+    vendored = {d.rstrip("/") for d in codescan.SKIP_DIRS}
+
+    def note(why: str, n: int, example: str) -> None:
+        d = skipped.setdefault(why, {"count": 0, "examples": []})
+        d["count"] += n
+        if example not in d["examples"] and len(d["examples"]) < 4:
+            d["examples"].append(example)
+
+    for root, dirs, names in os.walk(src):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        rel_root = Path(root).relative_to(src)
+        top = rel_root.parts[0] if rel_root.parts else ""
+        if rel_root.parts and rel_root.parts[-1] in vendored:   # count without stat-ing every vendored file
+            n = sum(len(fs) for _, _, fs in os.walk(root))
+            total += n
+            note("vendored or build output", n, rel_root.as_posix())
+            dirs[:] = []
             continue
-        total += 1
-        why = _skip_reason(rel.as_posix(), p.stat().st_size, kept_paths)
-        if why:
-            d = skipped.setdefault(why, {"count": 0, "examples": []})
-            d["count"] += 1
-            top = rel.parts[0] if len(rel.parts) > 1 else rel.name
-            if top not in d["examples"] and len(d["examples"]) < 4:
-                d["examples"].append(top)
+        for name in names:
+            p = Path(root) / name
+            if p.is_symlink():
+                continue
+            total += 1
+            rel = (rel_root / name).as_posix()
+            why = _skip_reason(rel, p.stat().st_size, kept_paths)
+            if why:
+                note(why, 1, top or name)
     judged_no = sum(1 for f in findings if f["exploitable"] is False)
     return {
         "files_total": total, "scanned": len(kept), "lines_scanned": ai_stats.get("lines", 0),
@@ -119,24 +141,32 @@ def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, 
         "judged_not_exploitable": judged_no,
         "ai": {"enabled": ai_on, "triage": ai_stats.get("triage", False),
                "review_files": ai_stats.get("files_reviewed", 0), "review_findings": ai_stats.get("findings", 0),
-               "claims_rejected": ai_stats.get("claims_rejected", 0)},
+               "claims_rejected": ai_stats.get("claims_rejected", 0),
+               "review_truncated": ai_stats.get("truncated", [])},
         "limits": "Pattern rules plus an AI review of up to 10 files; not a full static-analysis or "
                   "dependency audit. Repo code is never executed.",
     }
 
 
 # ---- job storage ----
+_ensured_for = None
+
+
 def _ensure() -> None:
+    global _ensured_for
+    c = store.conn()
+    if _ensured_for is c:
+        return
     store.run("""CREATE TABLE IF NOT EXISTS jobs(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, repo_url TEXT NOT NULL, state TEXT NOT NULL,
         log TEXT NOT NULL DEFAULT '[]', findings TEXT NOT NULL DEFAULT '[]', fixes TEXT NOT NULL DEFAULT '[]',
         branch TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '', diff TEXT NOT NULL DEFAULT '',
         ai_used INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created REAL NOT NULL,
         updated REAL NOT NULL)""")
-    try:
+    cols = {r["name"] for r in store.q("PRAGMA table_info(jobs)")}
+    if "report" not in cols:
         store.run("ALTER TABLE jobs ADD COLUMN report TEXT NOT NULL DEFAULT '{}'")
-    except Exception:  # column already exists
-        pass
+    _ensured_for = c
 
 
 def _upd(jid: int, **cols) -> None:
@@ -157,7 +187,7 @@ def get(ws: int, jid: int) -> dict:
         raise KeyError(jid)
     d = dict(r[0])
     for k in ("log", "findings", "fixes", "report"):
-        d[k] = json.loads(d[k] or "{}")
+        d[k] = json.loads(d[k]) if d[k] else _json_default(k)
     d["ai_used"] = bool(d["ai_used"])
     return d
 
@@ -234,10 +264,15 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         if not fixes:
             _upd(jid, state="done", fixes="[]")
             live = [f for f in findings if f["exploitable"] is not False]
-            _log(jid, f"no issues found: {len(rep['rules'])} rules over {rep['lines_scanned']} lines in {n} files"
-                 f"{', plus AI review of ' + str(stats['files_reviewed']) + ' files' if stats['files_reviewed'] else ''}"
-                 " (this is not a proof of safety)" if not findings else
-                 f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
+            if not findings:
+                msg = f"no issues found: {len(rep['rules'])} rules over {rep['lines_scanned']} lines in {n} files"
+                if stats["files_reviewed"]:
+                    msg += f", plus AI review of {stats['files_reviewed']} files"
+                if stats["truncated"]:
+                    msg += f" ({len(stats['truncated'])} too long to review in full)"
+                _log(jid, msg + " (this is not a proof of safety)")
+                return
+            _log(jid, f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
                  f"{len(live)} need a manual fix (no safe automatic patch)")
             return
         branch = f"apc/fix-{jid}-{int(time.time())}"

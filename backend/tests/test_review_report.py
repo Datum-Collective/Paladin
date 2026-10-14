@@ -108,3 +108,76 @@ def test_zero_findings_still_reports_what_was_checked(client, tmp_path, monkeypa
     job = client.get(f"/api/harness/jobs/{j['id']}").json()
     assert job["state"] == "done" and job["report"]["scanned"] == 1 and job["report"]["candidates"] == 0
     assert any("rules" in l["msg"] and "lines" in l["msg"] for l in job["log"]), job["log"]
+
+
+def test_review_prompt_never_contains_secret_literals(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    seen = {}
+
+    def fake(system, user, *a, **k):
+        seen["user"] = user
+        return "[]"
+
+    monkeypatch.setattr(codescan.ai, "complete", fake)
+    src = 'API_KEY = "sk-live-abcdef1234567890"\nprint("hello world")\n'
+    codescan.ai_review([{"path": "a.py", "content": src}], existing=[])
+    assert "abcdef1234567890" not in seen["user"] and "sk-***" in seen["user"]
+
+
+def test_review_quote_matches_the_redacted_line(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    src = 'API_KEY = "sk-live-abcdef1234567890"\n'
+    claim = [{"file": "a.py", "line": 1, "quote": 'API_KEY = "sk-***[24 chars]"', "category": "secret",
+              "cwe": "CWE-798", "title": "secret", "reason": "r"}]
+    monkeypatch.setattr(codescan.ai, "complete", lambda *a, **k: json.dumps(claim))
+    out, _ = codescan.ai_review([{"path": "a.py", "content": src}], existing=[])
+    assert len(out) == 1 and "abcdef" not in json.dumps(out[0])
+
+
+def test_ai_review_fix_must_change_the_flagged_line(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    out = None
+    monkeypatch.setattr(codescan.ai, "complete", lambda *a, **k: json.dumps([
+        {"file": "a.py", "line": 2, "quote": "q = 'SELECT * FROM t WHERE id=' + id", "category": "injection",
+         "cwe": "CWE-89", "title": "t", "reason": "r"}]))
+    out, _ = codescan.ai_review([{"path": "a.py", "content": SRC}], existing=[])
+    f = out[0]
+    only_comment = '{"old":"x = 1","new":"x = 1  # reviewed"}'
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: only_comment)
+    assert fixers.try_fix(SRC, f) is None          # parses, adds no finding, but the flagged line is untouched
+    real = '{"old":"q = \'SELECT * FROM t WHERE id=\' + id\\n    return db.run(q)","new":"return db.run(\'SELECT * FROM t WHERE id=?\', (id,))"}'
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: real)
+    assert fixers.try_fix(SRC, f)["method"] == "haiku"
+
+
+def test_fix_prompt_window_is_redacted_and_masked_edits_rejected(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    seen = {}
+    src = 'import hashlib\nK = "sk-live-abcdef1234567890"\nx = eval(input())\n'
+    f = {"file": "a.py", "line": 3, "rule": "code-exec", "cwe": "", "technique": ""}
+
+    def fake(system, user, *a, **k):
+        seen["u"] = user
+        return '{"old":"K = \\"sk-***[24 chars]\\"","new":"K = 1"}'
+
+    monkeypatch.setattr(fixers.ai, "complete", fake)
+    assert fixers.try_fix(src, f) is None
+    assert "abcdef1234567890" not in seen["u"]
+
+
+def test_report_labels_credential_files_and_counts_truncation(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    big = "def f():\n" + "    x = 1\n" * 3000
+    repo = _git_repo(tmp_path, {".env": "A=1", "server.key": "k", "app/big.py": big, "poetry.lock": "x"})
+    client.post("/api/auth/demo")
+    j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
+    harness.wait(j["id"])
+    rep = client.get(f"/api/harness/jobs/{j['id']}").json()["report"]
+    assert rep["skipped"]["credential files (deliberately not read)"]["count"] == 2
+    assert rep["skipped"]["lockfiles, minified, source maps"]["count"] == 1
+
+
+def test_job_columns_default_to_the_right_json_type():
+    import app.harness as h
+    assert h._json_default("log") == [] and h._json_default("findings") == []
+    assert h._json_default("fixes") == [] and h._json_default("report") == {}

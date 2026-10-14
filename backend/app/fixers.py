@@ -83,7 +83,7 @@ def _window(content: str, line: int, r: int = 25) -> str:
 
 
 def _ai_edit(content: str, f: dict) -> tuple[str, str] | None:
-    win = _window(content, f["line"])
+    win = codescan.REDACT.sub(r"\1***\1", _window(content, f["line"]))   # secrets never leave the process
     text = ai.complete(FIX_SYSTEM, json.dumps({"file": f["file"], "rule": f["rule"], "cwe": f["cwe"],
                                                "line_in_file": f["line"], "code_window": win}), 900)
     if not text:
@@ -100,7 +100,7 @@ def _ai_edit(content: str, f: dict) -> tuple[str, str] | None:
         return None
     if not isinstance(old, str) or not isinstance(new, str) or not old.strip() or old == new:
         return None
-    if len(old) > MAX_PATCH_CHARS or len(new) > MAX_PATCH_CHARS or content.count(old) != 1:
+    if "***[" in old or len(old) > MAX_PATCH_CHARS or len(new) > MAX_PATCH_CHARS or content.count(old) != 1:
         return None
     return content.replace(old, new, 1), str(d.get("explanation", ""))[:200]
 
@@ -114,6 +114,18 @@ def _locate(content: str, f: dict) -> int | None:
         if rx and 0 <= i < len(lines) and rx.search(lines[i]):
             return i
     return None
+
+
+def _flagged_line_changed(old: str, new: str, f: dict) -> bool:
+    """True when the line the finding points at no longer appears in the patched file."""
+    h = f.get("line_hash")
+    if not h:
+        return True
+    lines = old.split("\n")
+    near = range(max(0, f["line"] - 4), min(len(lines), f["line"] + 3))
+    if not any(codescan.line_hash(lines[i]) == h for i in near):
+        return False  # cannot locate the flagged line, so we cannot show it was fixed
+    return all(codescan.line_hash(ln) != h for ln in new.split("\n"))
 
 
 def try_fix(content: str, f: dict) -> dict | None:
@@ -141,8 +153,9 @@ def try_fix(content: str, f: dict) -> dict | None:
             continue
         if known:
             ok = _count(rule, new_content, path) < before_rule and _total(new_content, path) <= before_total - 1
-        else:  # AI-review finding: no rule to watch, so require a real change and no new static findings
-            ok = new_content != content and _total(new_content, path) <= before_total
+        else:  # AI-review finding: the flagged line itself must be gone, and nothing new may appear
+            ok = (new_content != content and _total(new_content, path) <= before_total
+                  and _flagged_line_changed(content, new_content, f))
         if ok:
             return {"content": new_content, "method": method, "explanation": why}
     return None

@@ -200,10 +200,16 @@ def _norm(x: str) -> str:
     return re.sub(r"\s+", " ", x).strip()
 
 
+def line_hash(line: str) -> str:
+    """Stable id of a source line that is safe to store (no secret text)."""
+    import hashlib
+    return hashlib.sha1(_norm(line).encode()).hexdigest()[:16]
+
+
 def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict]:
     """Ask Haiku to review the most exposed files. Every claim must quote a real line at the stated position;
     anything that does not match the file is discarded (no hallucinated findings reach the report)."""
-    stats = {"files_reviewed": 0, "claims": 0, "claims_rejected": 0, "files": []}
+    stats = {"files_reviewed": 0, "claims": 0, "claims_rejected": 0, "files": [], "truncated": []}
     if not ai.enabled():
         return [], stats
     ranked = sorted(files, key=lambda f: (not ROUTE.search(f["content"]),
@@ -212,7 +218,11 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
     out: list[dict] = []
     for f in ranked[:REVIEW_MAX_FILES]:
         lines = f["content"].splitlines()
-        body = "\n".join(f"{i}| {ln}" for i, ln in enumerate(lines, 1))[:REVIEW_MAX_CHARS]
+        red = [REDACT.sub(r"\1***\1", ln) for ln in lines]      # secrets never leave the process
+        full = "\n".join(f"{i}| {ln}" for i, ln in enumerate(red, 1))
+        body = full[:REVIEW_MAX_CHARS]
+        if len(full) > REVIEW_MAX_CHARS:
+            stats["truncated"].append(f["path"])
         text = ai.complete(REVIEW_SYSTEM, json.dumps({"file": f["path"], "code": body}), 1800)
         if text is None:
             continue
@@ -229,7 +239,7 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
             line = it.get("line") if ok else None
             quote = _norm(str(it.get("quote", ""))) if ok else ""
             if not (ok and isinstance(line, int) and 1 <= line <= len(lines) and quote and
-                    quote in _norm(lines[line - 1]) and CWE_RE.match(str(it.get("cwe", "")))):
+                    quote in _norm(red[line - 1]) and CWE_RE.match(str(it.get("cwe", "")))):
                 stats["claims_rejected"] += 1
                 continue
             if any(e["file"] == f["path"] and abs(e["line"] - line) <= 1 for e in existing + out):
@@ -239,7 +249,7 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
             out.append({"id": "", "file": f["path"], "line": line, "rule": f"ai-{cat}", "cwe": it["cwe"],
                         "technique": CATEGORY_TECH.get(cat, "T1190"), "sink": CATEGORY_SINK[cat],
                         "title": str(it.get("title", "Potential weakness"))[:100],
-                        "routed": bool(ROUTE.search(f["content"])), "snippet": REDACT.sub(r"\1***\1", quote)[:200],
+                        "routed": bool(ROUTE.search(f["content"])), "snippet": quote[:200], "line_hash": line_hash(lines[line - 1]),
                         "context": ctx, "exploitable": True, "confidence": 0.6,
                         "reason": str(it.get("reason", ""))[:200], "triaged_by": "haiku-review"})
     return out, stats

@@ -31,21 +31,28 @@ STEPS = {
 }
 
 
+_ensured_for = None
+
+
 def _ensure() -> None:
+    global _ensured_for
+    c = store.conn()
+    if _ensured_for is c:
+        return
     store.run("""CREATE TABLE IF NOT EXISTS remediations(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, edges TEXT NOT NULL, state TEXT NOT NULL,
         title TEXT NOT NULL, runbook TEXT NOT NULL, ai_drafted INTEGER NOT NULL DEFAULT 0,
         connector TEXT NOT NULL, mark INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL, updated REAL NOT NULL)""")
+    have = {r["name"] for r in store.q("PRAGMA table_info(remediations)")}
     for col, typ in (("risk_before", "REAL"), ("risk_after", "REAL"), ("paths_before", "INTEGER"),
                      ("paths_after", "INTEGER")):
-        try:
+        if col not in have:
             store.run(f"ALTER TABLE remediations ADD COLUMN {col} {typ}")
-        except Exception:  # column already exists
-            pass
     store.run("""CREATE TABLE IF NOT EXISTS audit(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, rem INTEGER NOT NULL, actor TEXT NOT NULL,
         action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ts REAL NOT NULL)""")
+    _ensured_for = c
 
 
 def _audit(ws: int, rem: int, actor: str, action: str, detail: str = "") -> None:
