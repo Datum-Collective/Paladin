@@ -27,9 +27,19 @@ Optional (server env only): `ANTHROPIC_API_KEY` (Haiku triage and patch drafting
 settings (private repos and pull requests per user). Without them the app works with deterministic rules, public
 repos and patch download.
 
-Local dev: `cd backend && uv venv .venv && uv pip install -r requirements.txt && python -m pytest` (fully offline:
-fake Supabase and GitHub); then `uvicorn app.main:app --port 8000` and `cd frontend && npm ci && npm run dev`
-(proxies `/api` to :8000, open http://localhost:5173). Benchmarks: `python scripts/benchmark.py`.
+Local dev (first `cp .env.example backend/.env` and fill in `SUPABASE_*`; `APP_URL=http://localhost:5173`,
+`COOKIE_SECURE=0`):
+```bash
+# backend, terminal 1. The venv must be active, or call its python directly as shown
+cd backend
+uv venv .venv && uv pip install -r requirements.txt
+.venv/Scripts/python -m pytest          # Windows; macOS/Linux: .venv/bin/python -m pytest (offline: fake Supabase and GitHub)
+.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+
+# frontend, terminal 2
+cd frontend && npm ci && npm run dev    # proxies /api to :8000; open http://localhost:5173
+```
+Benchmarks: `python scripts/benchmark.py`.
 
 ## Sign-in, accounts and data (Supabase)
 Sign-in is GitHub only, through Supabase Auth. The backend runs the OAuth flow itself (PKCE) and keeps the session
