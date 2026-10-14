@@ -58,3 +58,8 @@ def test_workspaces_isolated(client):
 def test_unknown_edge_rejected(client):
     login(client)
     assert client.post("/api/fixes/apply", json={"edges": ["nope"]}).status_code == 422
+
+
+def test_demo_login(client):
+    assert client.post("/api/auth/demo").status_code == 200
+    assert client.get("/api/me").json()["email"] == "demo@example.com"

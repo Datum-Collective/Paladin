@@ -99,6 +99,15 @@ def _login(c: Creds, response: Response, request: Request):
     return {"email": c.email.strip().lower()}
 
 
+@app.post("/api/auth/demo")
+def demo(response: Response, request: Request):
+    """One-click sign-in to the seeded demo account; credentials stay server-side."""
+    u, p = os.environ.get("DEMO_USER"), os.environ.get("DEMO_PASSWORD")
+    if not (u and p):
+        raise HTTPException(404, "demo account not configured")
+    return _login(Creds(email=u, password=p), response, request)
+
+
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response):
     auth.logout(request.cookies.get(auth.COOKIE))
