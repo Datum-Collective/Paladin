@@ -14,3 +14,4 @@ desktop/build/backend/
 desktop/build/pyi-work/
 *.pem
 desktop/build/supabase.json
+backend/data_dir/
