@@ -37,6 +37,11 @@ def _ensure() -> None:
         title TEXT NOT NULL, runbook TEXT NOT NULL, ai_drafted INTEGER NOT NULL DEFAULT 0,
         connector TEXT NOT NULL, mark INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL, updated REAL NOT NULL)""")
+    for col in ("risk_before", "risk_after"):
+        try:
+            store.run(f"ALTER TABLE remediations ADD COLUMN {col} REAL")
+        except Exception:  # column already exists
+            pass
     store.run("""CREATE TABLE IF NOT EXISTS audit(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, rem INTEGER NOT NULL, actor TEXT NOT NULL,
         action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ts REAL NOT NULL)""")
@@ -135,8 +140,11 @@ def execute(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
     if cur["state"] != "approved":
         raise ValueError(f"cannot go from {cur['state']} to executed")
+    before = engine.snapshot(ws)["risk"]
     store.apply_fix(ws, cur["edges"])
-    return _set(ws, rid, "executed", actor, f"connector={cur['connector']}", mark=store.event_count(ws))
+    after = engine.snapshot(ws)["risk"]
+    return _set(ws, rid, "executed", actor, f"connector={cur['connector']} risk {before:.3f}->{after:.3f}",
+                mark=store.event_count(ws), risk_before=round(before, 4), risk_after=round(after, 4))
 
 
 def verify(ws: int, rid: int, actor: str) -> dict:

@@ -61,3 +61,27 @@ def test_ai_draft_used_when_available(client, monkeypatch):
     client.post("/api/auth/demo")
     r = client.post("/api/remediations", json={"edges": ["scan-web"]}).json()
     assert r["ai_drafted"] is True and r["runbook"] == "1. AI steps"
+
+
+def test_before_after_risk_recorded(client):
+    edges = setup(client)
+    rid = client.post("/api/remediations", json={"edges": edges}).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    r = client.post(f"/api/remediations/{rid}/execute").json()
+    assert r["risk_before"] > r["risk_after"] >= 0
+
+
+def test_metrics_timeline_and_benchmarks_endpoints(client):
+    client.post("/api/auth/demo")
+    client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN, SCAN.replace("13:00:01", "13:07:01")]})
+    client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
+    m = client.get("/api/metrics").json()
+    assert m["events_ingested"] >= 3 and m["ingest_events_per_sec"] > 0
+    assert m["current_analysis_ms"]["total_ms"] >= 0
+    assert m["compression"]["raw_events"] == 3 and m["compression"]["confirmed_steps"] >= 1
+    t = client.get("/api/timeline").json()
+    assert t["events"] == 3 and t["buckets"] and t["confirmed"][0]["technique"]
+    assert t["risk_series"] and t["risk_series"][-1]["risk"] >= t["risk_series"][0]["risk"]
+    assert "runs" in client.get("/api/benchmarks").json()
+    client.post("/api/auth/logout")
+    assert client.get("/api/metrics").status_code == 401

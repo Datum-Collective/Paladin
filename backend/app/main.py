@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyze, auth, codescan, engine, inventory, store
+from . import analyze, auth, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from .harness_api import router as harness_router
@@ -133,7 +133,10 @@ def _normalize(ev: Event) -> Event:
 
 def ingest_events(ws: int, events: list[Event]) -> int:
     """The ONE ingest path: HTTP upload, API key and Play all end up here."""
-    return store.add_events(ws, [_normalize(e) for e in events])
+    t0 = time.perf_counter()
+    n = store.add_events(ws, [_normalize(e) for e in events])
+    metrics.record_ingest(n, (time.perf_counter() - t0) * 1000)
+    return n
 
 
 def _rate(ws: int) -> None:
@@ -266,6 +269,23 @@ def code_report(u: dict = Depends(auth.require_user)):
 def code_clear(u: dict = Depends(auth.require_user)):
     codescan.clear(u["id"])
     return {"ok": True}
+
+
+@app.get("/api/metrics")
+def get_metrics(u: dict = Depends(auth.require_user)):
+    s = engine.snapshot(u["id"])
+    return {**metrics.summary(), "compression": engine.compression(s), "current_analysis_ms": s["timings"]}
+
+
+@app.get("/api/timeline")
+def get_timeline(u: dict = Depends(auth.require_user)):
+    return {**engine.timeline(u["id"]), "risk_series": engine.risk_series(u["id"])}
+
+
+@app.get("/api/benchmarks")
+def get_benchmarks(u: dict = Depends(auth.require_user)):
+    p = inventory.seed_dir() / "benchmarks.json"
+    return json.loads(p.read_text()) if p.exists() else {"runs": []}
 
 
 @app.post("/api/keys")

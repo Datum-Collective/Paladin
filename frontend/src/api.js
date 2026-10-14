@@ -40,5 +40,8 @@ export const api = {
   hJobs: () => req('GET', '/api/harness/jobs'),
   hJob: (id) => req('GET', `/api/harness/jobs/${id}`),
   hPr: (id) => req('POST', `/api/harness/jobs/${id}/pr`),
+  metrics: () => req('GET', '/api/metrics'),
+  timeline: () => req('GET', '/api/timeline'),
+  benchmarks: () => req('GET', '/api/benchmarks'),
   createKey: (label) => req('POST', '/api/keys', { label }),
 }

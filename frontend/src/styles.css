@@ -36,3 +36,13 @@ textarea { width:100%; margin:8px 0; }
 
 .state { font-size:11px; padding:1px 7px; border-radius:10px; background:var(--bg); border:1px solid var(--line); }
 .st-verified { color:#22c55e; } .st-failed { color:#ef4444; } .st-executed { color:#f59e0b; } .st-rolled_back { color:var(--muted); }
+
+.insights { flex:1; overflow:auto; padding:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; align-content:start; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+.card h3 { margin:0 0 10px; font-size:14px; }
+.chart { width:100%; height:auto; color:var(--muted); }
+.stats { display:flex; gap:20px; flex-wrap:wrap; }
+.stats div { display:flex; flex-direction:column; } .stats b { font-size:26px; } .stats span { font-size:12px; color:var(--muted); }
+.tbl { width:100%; border-collapse:collapse; font-size:12px; margin:8px 0; }
+.tbl th, .tbl td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); }
+.tbl th { color:var(--muted); font-weight:600; }

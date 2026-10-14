@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
 import Graph from './Graph.jsx'
+import Insights from './Insights.jsx'
 
 const SEV = { CRITICAL: 'sev-critical', HIGH: 'sev-high', MEDIUM: 'sev-medium', LOW: 'sev-low' }
 const KILL_CHAIN = ['reconnaissance', 'initial-access', 'execution', 'persistence', 'privilege-escalation',
@@ -124,6 +125,7 @@ function Remediations({ items, aiEnabled, onChange }) {
             <div className="muted">{r.edges.join(', ')}{r.ai_drafted ? ' · AI-drafted' : ''}</div>
           </div>
           {r.note && <div className="err">{r.note}</div>}
+          {r.risk_before != null && <div className="muted">risk {r.risk_before} → {r.risk_after}</div>}
           {NEXT_ACTION[r.state] && <button onClick={() => step(r.id, NEXT_ACTION[r.state])}>{NEXT_ACTION[r.state]}</button>}
           {['executed', 'verified', 'failed'].includes(r.state) &&
             <button onClick={() => step(r.id, 'rollback')}>rollback</button>}
@@ -318,6 +320,7 @@ export default function App() {
   const [sel, setSel] = useState(null)
   const [playing, setPlaying] = useState(false)
   const [tab, setTab] = useState('paths')
+  const [view, setView] = useState('dashboard')
   const timer = useRef(null)
 
   const refresh = useCallback(async () => {
@@ -362,9 +365,13 @@ export default function App() {
         <span className="muted">risk {graph ? graph.risk.toFixed(3) : '-'} · {graph ? graph.events : 0} events</span>
         <span className="spacer" />
         <button className="primary" disabled={playing} onClick={play}>{playing ? 'Playing…' : 'Play'}</button>
+        <button onClick={() => setView(view === 'dashboard' ? 'insights' : 'dashboard')}>
+          {view === 'dashboard' ? 'Insights' : 'Dashboard'}
+        </button>
         <button onClick={async () => { await api.simReset(); setSel(null); refresh() }}>Reset</button>
         <button onClick={async () => { await api.logout(); setUser(null) }}>Sign out</button>
       </header>
+      {view === 'insights' ? <Insights key={graph ? graph.events : 0} rems={rems.remediations} /> : (
       <main>
         <aside>
           <div className="tabs">
@@ -396,6 +403,7 @@ export default function App() {
           <Remediations items={rems.remediations} aiEnabled={rems.ai_enabled} onChange={refresh} />
         </aside>
       </main>
+      )}
     </div>
   )
 }

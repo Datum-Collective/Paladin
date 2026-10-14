@@ -55,23 +55,26 @@ def event_count(ws: int) -> int:
 
 
 def add_events(ws: int, events: list[Event]) -> int:
-    """Append events; ids are assigned from the sequence. Returns number stored (capped)."""
+    """Append events in one transaction; ids are e<seq>. Returns number stored (capped per workspace)."""
     with _lock:
         room = max(0, MAX_EVENTS - event_count(ws))
-        n = 0
+        batch = events[:room]
+        if not batch:
+            return 0
         c = conn()
+        nxt = c.execute("SELECT COALESCE(MAX(seq),0)+1 FROM events").fetchone()[0]
+        rows = []
+        for i, ev in enumerate(batch):
+            ev = ev.model_copy(update={"id": f"e{nxt + i}"})
+            rows.append((nxt + i, ws, ev.model_dump_json()))
         c.execute("BEGIN")
         try:
-            for ev in events[:room]:
-                cur = c.execute("INSERT INTO events(ws,data) VALUES(?,?)", (ws, "{}"))
-                ev = ev.model_copy(update={"id": f"e{cur.lastrowid}"})
-                c.execute("UPDATE events SET data=? WHERE seq=?", (ev.model_dump_json(), cur.lastrowid))
-                n += 1
+            c.executemany("INSERT INTO events(seq,ws,data) VALUES(?,?,?)", rows)
             c.execute("COMMIT")
         except Exception:
             c.execute("ROLLBACK")
             raise
-        return n
+        return len(rows)
 
 
 def get_events(ws: int) -> list[Event]:
