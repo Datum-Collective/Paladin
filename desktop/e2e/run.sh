@@ -20,7 +20,8 @@ BAD="$T/broken-e2e"; mkdir -p "$BAD/.git"      # has a .git entry but is not a r
 export E2E_REPO="$REPO" E2E_BADREPO="$BAD"
 export E2E_LOG='May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2'
 export PALADIN_E2E="$PWD/e2e/run.js"
-OUT="$(npx electron . --user-data-dir="$T/ud" 2>&1 | grep -E '^E2E_' || true)"
+# hard 420s cap so a hung app can never hang the run
+OUT="$(perl -e 'alarm shift; exec @ARGV' 420 npx electron . --user-data-dir="$T/ud" 2>&1 | grep -E '^E2E_' || true)"
 python3 - "$OUT" <<'PY'
 import json, sys
 line = sys.argv[1]
