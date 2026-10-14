@@ -8,7 +8,8 @@ export default function Sidebar({ view, setView, graph, empty, severity, canPlay
   const open = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
   return (
     <aside className="sidebar">
-      <div className="sidebar-top drag">
+      <div className="sidebar-top drag" aria-hidden="true" />
+      <div className="brand-row">
         <span className="brand"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       </div>
       <button className="palette-trigger nodrag" onClick={onPalette} aria-label="Open command palette">
@@ -25,8 +26,8 @@ export default function Sidebar({ view, setView, graph, empty, severity, canPlay
         ))}
       </nav>
 
-      <section className="side-card" aria-label="Workspace status">
-        <div className="side-card-head">Workspace</div>
+      <section className="side-group" aria-label="Workspace status">
+        <div className="side-head">Workspace</div>
         {empty ? <p className="muted small">No data yet. Scan a repository or add logs.</p> : (
           <>
             <div className="row-top"><span className={`pill ${severity.tone}`}>{severity.label}</span>
