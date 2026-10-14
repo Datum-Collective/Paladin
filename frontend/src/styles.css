@@ -618,3 +618,42 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
 .rows.selectable > li { padding: 8px 10px; margin-bottom: 6px; }
 .palette-input input { font-size: 14px; min-height: 40px; }
 .palette-item { padding: 5px 10px; }
+
+/* ---- selected state: a slowly rotating sunset ring with a soft halo (replaces the blue highlight) ----
+   One conic gradient, rotated through a registered custom property so the colours flow around the edge
+   without any layout change. Interior stays solid for legibility; Reduce Motion freezes it. */
+@property --sun-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+:root {
+  --sun: conic-gradient(from var(--sun-a), #f0507a 0%, #ee74c8 20%, #b583e6 40%, #6f8cf5 60%, #8fa9f4 74%, #b583e6 88%, #f0507a 100%);
+}
+@keyframes sun-spin { to { --sun-a: 360deg; } }
+
+.bar.focus, .rows.selectable > li.on, .sugg.on, .palette-item.on { position: relative; isolation: isolate; }
+.bar.focus::before, .rows.selectable > li.on::before, .sugg.on::before, .palette-item.on::before {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; z-index: 1; pointer-events: none;
+  background: var(--sun);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: sun-spin 7s linear infinite; }
+/* halo: lives on the wrapper, behind the panel, so it only ever glows outside the edge */
+.bar-wrap.focus::before { content: ""; position: absolute; inset: -3px; border-radius: 999px; z-index: 0; pointer-events: none;
+  background: var(--sun); filter: blur(11px); opacity: 0.34; animation: sun-spin 7s linear infinite; }
+.bar { position: relative; z-index: 1; }
+.bar-wrap .sugg-list { z-index: 15; }
+.rows.selectable > li.on { box-shadow: 0 6px 20px -8px rgba(238, 116, 200, 0.45); }
+
+/* the panel itself stays quiet: no blue border, fill or halo */
+.bar.focus { border-color: transparent; box-shadow: none; color: var(--text); }
+.bar.focus.bad::before { opacity: 0.9; }
+.rows.selectable > li.on { border-color: transparent; background: var(--bg-2); }
+.sugg.on, .palette-item.on { background: var(--bg-3); color: var(--text); }
+.sugg.on .sugg-title, .sugg.on .sugg-sub, .sugg.on .muted, .palette-item.on .muted { color: inherit; opacity: 1; }
+.sugg.on .sugg-sub, .palette-item.on .muted { color: var(--text-2); }
+.sugg.on .sugg-title { color: var(--text); }
+.sugg-list, .palette-list { overflow: auto; }
+.sugg-list { padding: 8px; }
+.palette-list { padding: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  .bar.focus::before, .bar-wrap.focus::before, .rows.selectable > li.on::before,
+  .sugg.on::before, .palette-item.on::before { animation: none; }
+}

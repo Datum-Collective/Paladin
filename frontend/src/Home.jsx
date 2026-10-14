@@ -193,7 +193,7 @@ export default function Home({
           )}
 
           <h1 className="home-title">Open a project</h1>
-          <div className="bar-wrap">
+          <div className={`bar-wrap ${focus ? 'focus' : ''}`}>
           <div className={`bar ${focus ? 'focus' : ''} ${err ? 'bad' : ''}`}>
             <Icon name="github" size={20} />
             <input ref={input} value={q} disabled={phase === 'checking' || phase === 'working'} spellCheck={false} autoComplete="off"
