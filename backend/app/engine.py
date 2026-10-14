@@ -20,7 +20,8 @@ def snapshot(ws: int, k: int = 10) -> dict:
     t2 = time.perf_counter()
     g = analyze.build_graph(all_nodes, edges, removed=fixed)
     t3 = time.perf_counter()
-    paths = analyze.top_paths(g, k)
+    # no evidence at all (no events, no code scan): there is nothing to analyse, so do not report prior-only risk
+    paths = analyze.top_paths(g, k) if (events or cm["nodes"]) else []
     t4 = time.perf_counter()
     by_id = {e.id: e for e in edges}
     labels = {n.id: n.label for n in all_nodes}

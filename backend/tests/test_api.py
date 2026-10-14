@@ -63,3 +63,11 @@ def test_unknown_edge_rejected(client):
 def test_demo_login(client):
     assert client.post("/api/auth/demo").status_code == 200
     assert client.get("/api/me").json()["email"] == "demo@example.com"
+
+
+def test_empty_workspace_reports_no_risk(client):
+    client.post("/api/auth/demo")
+    g = client.get("/api/graph").json()
+    assert g["events"] == 0 and g["risk"] == 0 and g["severity"] == "LOW"
+    assert client.get("/api/paths").json()["paths"] == []
+    assert client.get("/api/fixes").json()["cheapest_cut"] is None
