@@ -93,7 +93,7 @@ def template_runbook(facts: dict) -> str:
 
 def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     _ensure()
-    valid = {e.id for e in inventory.load()["edges"]} | {e["id"] for e in codescan.load_model(ws)["edges"]}
+    valid = {e.id for e in engine.workspace_model(ws)[1]}
     if not edge_ids or any(e not in valid for e in edge_ids):
         raise ValueError("unknown edge id")
     facts = _facts(ws, edge_ids)
@@ -167,8 +167,7 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     if cur["state"] != "executed":
         raise ValueError(f"cannot go from {cur['state']} to verified")
     from .models import Edge
-    inv = {e.id: e for e in inventory.load()["edges"]}
-    inv.update({e["id"]: Edge(**e) for e in codescan.load_model(ws)["edges"]})
+    inv = {e.id: e for e in engine.workspace_model(ws)[1]}
     later = store.get_events(ws)[cur["mark"]:]
     still = [ev.id for ev in later for eid in cur["edges"] if matches(inv[eid], ev)]
     closed = set(cur["edges"]) <= store.applied_fixes(ws)

@@ -49,6 +49,9 @@ def test_validation_auth_and_isolation(client):
     assert client.get("/api/remediations").status_code == 401
     client.post("/api/auth/demo")
     assert client.post("/api/remediations", json={"edges": ["nope"]}).status_code == 422
+    # the demo-company edges only exist in a workspace that has events
+    assert client.post("/api/remediations", json={"edges": ["scan-web"]}).status_code == 422
+    client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     rid = client.post("/api/remediations", json={"edges": ["scan-web"]}).json()["id"]
     client.post("/api/auth/logout")
     client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
@@ -59,6 +62,7 @@ def test_ai_draft_used_when_available(client, monkeypatch):
     from app import ai
     monkeypatch.setattr(ai, "draft", lambda facts: "1. AI steps")
     client.post("/api/auth/demo")
+    client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     r = client.post("/api/remediations", json={"edges": ["scan-web"]}).json()
     assert r["ai_drafted"] is True and r["runbook"] == "1. AI steps"
 

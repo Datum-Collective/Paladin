@@ -261,7 +261,7 @@ def get_fixes(u: dict = Depends(auth.require_user)):
 
 @app.post("/api/fixes/apply")
 def apply_fix(b: FixBody, u: dict = Depends(auth.require_user)):
-    valid = {e.id for e in inventory.load()["edges"]}
+    valid = {e.id for e in engine.workspace_model(u["id"])[1]}
     if not b.edges or any(e not in valid for e in b.edges):
         raise HTTPException(422, "unknown edge id")
     store.apply_fix(u["id"], b.edges)

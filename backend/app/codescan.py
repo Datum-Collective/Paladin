@@ -139,37 +139,49 @@ def triage(findings: list[dict]) -> bool:
     return used
 
 
+CODE_ENTRY = "code:internet"
+
+
 def to_model(findings: list[dict], mitigation_for) -> dict:
-    """Findings -> nodes/edges. Entry edge p reflects route exposure and AI confidence; unknown reachability
-    is labelled in the edge, not hidden."""
-    nodes = {"code:app": {"id": "code:app", "kind": "service", "label": "Scanned application", "criticality": 3}}
-    edges = []
+    """Findings -> a graph that is only about the scanned code.
+
+    Internet -> file -> weakness -> asset. Every finding gets its own node, so two weaknesses in one file are
+    two distinct paths (a DiGraph keeps one edge per node pair, so they must not share endpoints). Reaching a
+    file is exposure, not something a patch removes, so entry edges are uncuttable; the fix is the weakness.
+    """
+    nodes: dict[str, dict] = {CODE_ENTRY: {"id": CODE_ENTRY, "kind": "external", "label": "Internet (any client)",
+                                           "criticality": 1}}
+    edges: list[dict] = []
+    entry_p: dict[str, float] = {}
     live = [f for f in findings if f["exploitable"] is not False]
     for f in live:
         comp = f"code:{f['file']}"
         nodes.setdefault(comp, {"id": comp, "kind": "service", "label": f["file"], "criticality": 3})
-        base = 0.45 if f["routed"] else 0.12
-        p = round(max(0.02, min(0.9, base * (0.5 + f["confidence"]))), 3)
-        edges.append({"id": f"code:in:{f['id']}", "src": "internet", "dst": comp, "technique": "T1190", "p": p,
-                      "cost": 2, "mitigation": mitigation_for("T1190")})
+        p_in = round(max(0.02, min(0.9, (0.45 if f["routed"] else 0.12) * (0.5 + f["confidence"]))), 3)
+        entry_p[comp] = max(entry_p.get(comp, 0.0), p_in)
+        wid = f"code:finding:{f['id']}"
+        nodes[wid] = {"id": wid, "kind": "service", "label": f"{f['title']} (line {f['line']})", "criticality": 3}
+        edges.append({"id": f"code:{f['id']}", "src": comp, "dst": wid, "technique": f["technique"],
+                      "p": round(max(0.05, min(0.95, 0.3 + 0.5 * f["confidence"])), 3), "cost": 3,
+                      "mitigation": mitigation_for(f["technique"])})
         if f["sink"] == "secret":
             sid = f"code:secret:{f['id']}"
-            nodes[sid] = {"id": sid, "kind": "data", "label": f"Secret in {f['file']}:{f['line']}",
-                          "criticality": 8}
-            dst = sid
+            nodes[sid] = {"id": sid, "kind": "data", "label": f"Secret in {f['file']}:{f['line']}", "criticality": 8}
         else:
             sid, kind, label, crit = SINKS[f["sink"]]
             nodes.setdefault(sid, {"id": sid, "kind": kind, "label": label, "criticality": crit})
-            dst = sid
-        edges.append({"id": f"code:{f['id']}", "src": comp, "dst": dst, "technique": f["technique"],
-                      "p": round(max(0.05, min(0.95, 0.3 + 0.5 * f["confidence"])), 3), "cost": 3,
-                      "mitigation": mitigation_for(f["technique"])})
-    if "code:host" in nodes:  # assumption, stated: the app host can reach the app database
+        edges.append({"id": f"code:sink:{f['id']}", "src": wid, "dst": sid, "technique": f["technique"],
+                      "p": 0.9, "cost": None, "mitigation": ""})
+    for comp, p_in in entry_p.items():
+        edges.append({"id": f"code:in:{comp[5:]}", "src": CODE_ENTRY, "dst": comp, "technique": "T1190",
+                      "p": p_in, "cost": None, "mitigation": mitigation_for("T1190")})
+    if "code:host" in nodes:  # stated assumption: the application host can reach the application database
         nodes.setdefault("code:db", {"id": "code:db", "kind": "data", "label": "Application database",
                                      "criticality": 9})
         edges.append({"id": "code:host-db", "src": "code:host", "dst": "code:db", "technique": "T1005",
                       "p": 0.5, "cost": None, "mitigation": ""})
-    nodes.pop("code:app")
+    if not live:
+        return {"nodes": [], "edges": []}
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
