@@ -5,6 +5,9 @@ import CommandPalette from './CommandPalette.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
 import Settings, { PANES } from './Settings.jsx'
+import Home from './Home.jsx'
+import { PrefsProvider, usePrefs } from './prefs.jsx'
+import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
 import { pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
@@ -62,29 +65,55 @@ const TITLES = { analysis: 'Analysis', repo: 'Repository', insights: 'Insights',
 
 function Shell({ config, user, onSignOut, onExpired }) {
   const toast = useToast()
-  const ws = useWorkspace(user, onExpired)
-  const [view, setView] = useState('analysis')
+  const { prefs, ready: prefsReady } = usePrefs()
+  const wsl = useWorkspaces(user)
+  const ws = useWorkspace(user, onExpired, wsl.active)
+  const [view, setView] = useState(null)               // null until preferences and workspaces are known
   const [tab, setTab] = useState('paths')
   const [selected, setSelected] = useState(null)
   const [palette, setPalette] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [homeFocus, setHomeFocus] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
   const [inspectorOpen, setInspectorOpen] = useStored('inspector-open', true)
   const [pane, setPane] = useStored('settings-pane', 'general')
   const [recents, setRecents] = useStored('palette-recents', [])
+
+  // first screen honours the "Start with" preference, once
+  useEffect(() => {
+    if (view === null && prefsReady && wsl.loaded) setView(prefs['general.startup'] === 'last' && wsl.current ? 'analysis' : 'home')
+  }, [view, prefsReady, wsl.loaded, wsl.current, prefs])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
   }, [])
   const openPath = useCallback((id) => { setView('analysis'); setTab('paths'); setSelected(id) }, [])
   const doReset = useCallback(async () => { setConfirmReset(false); setSelected(null); await ws.reset() }, [ws])
+  const goSettings = useCallback((p) => { if (p) setPane(p); setView('settings') }, [setPane])
   const fx = ws.fixes
+
+  const openWs = useCallback(async (id) => {
+    if (await wsl.open(id)) { setSelected(null); setTab('paths'); setView((v) => (v === 'home' || v === null ? 'analysis' : v)) }
+  }, [wsl])
+  const createWs = useCallback(async () => {
+    const w = await wsl.create()
+    if (w) { setSelected(null); setView('analysis'); toast(`Created ${w.name}`, 'ok') }
+    return w
+  }, [wsl, toast])
+  const importRepo = useCallback(async (q) => {
+    const r = await wsl.importRepo(q)               // throws to Home, which shows the message inline
+    setSelected(null)
+    setView(prefs['general.after_import'] === 'analysis' ? 'analysis' : 'repo')
+    toast(r.reopened ? `Opened ${r.workspace.name}` : `Scanning ${r.workspace.name}`, 'ok')
+  }, [wsl, prefs, toast])
 
   // One command table drives the menu bar, the palette and the keyboard, so they cannot drift apart.
   const run = useCallback((id) => {
     const table = {
+      home: () => setView('home'), 'open-repo': () => { setView('home'); setHomeFocus((n) => n + 1) },
+      'new-workspace': () => createWs(),
       analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
-      assistant: () => setView('assistant'), settings: () => setView('settings'), ingest: () => go('ingest'),
+      assistant: () => setView('assistant'), settings: () => goSettings(), ingest: () => go('ingest'),
       events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
       'toggle-sidebar': () => setSidebarOpen((o) => !o), 'toggle-inspector': () => setInspectorOpen((o) => !o),
       play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
@@ -98,7 +127,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       },
     }
     if (table[id]) table[id]()
-  }, [ws, fx, go, toast, setSidebarOpen, setInspectorOpen])
+  }, [ws, fx, go, goSettings, createWs, toast, setSidebarOpen, setInspectorOpen])
 
   // native menu bar -> same table (desktop)
   const runRef = useRef(run)
@@ -111,20 +140,23 @@ function Shell({ config, user, onSignOut, onExpired }) {
     const keys = { k: 'palette', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', ',': 'settings' }
     const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return
-      const id = keys[e.key.toLowerCase()]
+      const id = e.shiftKey && e.key.toLowerCase() === 'h' ? 'home' : keys[e.key.toLowerCase()]
       if (id) { e.preventDefault(); runRef.current(id) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [config.desktop])
 
-  const title = view === 'settings' ? (PANES.find(([id]) => id === pane) || PANES[0])[1] : TITLES[view]
+  const title = view === 'settings' ? (PANES.find((p) => p.id === pane) || PANES[0]).label : (TITLES[view] || 'Paladin')
   useEffect(() => { document.title = `${title} · Paladin` }, [title])
 
   const severity = ws.graph ? { label: ws.graph.severity.toLowerCase(), tone: SEV_TONE[ws.graph.severity] } : { label: '', tone: '' }
 
   const commands = useMemo(() => {
     const c = [
+      { id: 'home', group: 'Go to', title: 'Start screen', icon: 'home', hint: 'Open a repository', keywords: 'home import github open' },
+      { id: 'new-workspace', group: 'Workspaces', title: 'New workspace', icon: 'plus' },
+      { id: 'open-repo', group: 'Workspaces', title: 'Open repository…', icon: 'github', keywords: 'import github scan clone' },
       { id: 'analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes' },
       { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
       { id: 'insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks' },
@@ -142,21 +174,36 @@ function Shell({ config, user, onSignOut, onExpired }) {
     if (fx && fx.best_single) c.push({ id: 'fix-single', group: 'Fixes', title: 'Propose best single fix', icon: 'shield', hint: `${fx.best_single.risk_removed_pct}% of risk removed` })
     if (bridge) c.push({ id: 'check-updates', group: 'App', title: 'Check for updates…', icon: 'refresh' })
     const cmds = c.map((x) => ({ ...x, run: () => run(x.id) }))
+    for (const w of wsl.workspaces.filter((x) => x.id !== wsl.active).slice(0, 8)) {
+      cmds.push({ id: `ws-${w.id}`, group: 'Workspaces', title: `Switch to ${w.name}`, icon: w.repo_url ? 'github' : 'folder', run: () => openWs(w.id) })
+    }
     for (const p of ws.paths.slice(0, 12)) {
       cmds.push({ id: `path-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph',
         hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`, run: () => openPath(p.id) })
     }
     return cmds
-  }, [ws.canPlay, ws.paths, fx, run, openPath])
+  }, [ws.canPlay, ws.paths, fx, run, openPath, wsl.workspaces, wsl.active, openWs])
 
-  if (!ws.loaded) return <Splash />
+  if (view === null || !ws.loaded) return <Splash />
+  if (view === 'home') {
+    return (
+      <>
+        <Home workspaces={wsl.workspaces} current={wsl.current} onOpen={openWs} onImport={importRepo} onCreate={createWs}
+              goSettings={goSettings} go={go} githubConfigured={Boolean(config.github)} focusToken={homeFocus}
+              onBack={wsl.current ? () => setView('analysis') : null} />
+        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents} />
+      </>
+    )
+  }
   const showInspector = view === 'analysis'
   return (
-    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'}>
+    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'} key={wsl.active}>
       {sidebarOpen && (
         <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
                  playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
-                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} />
+                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut}
+                 workspaces={wsl.workspaces} current={wsl.current} onOpenWs={openWs} onCreateWs={createWs}
+                 onHome={() => run('open-repo')} onManage={() => goSettings('workspaces')} />
       )}
       <div className="content">
         <div className="toolbar drag" role="toolbar" aria-label={`${title} toolbar`}>
@@ -169,14 +216,6 @@ function Shell({ config, user, onSignOut, onExpired }) {
             </span>
           )}
           <span className="spacer" />
-          {view === 'settings' && (
-            <div className="seg nodrag" role="tablist" aria-label="Settings sections">
-              {PANES.map(([id, l]) => (
-                <button key={id} role="tab" aria-selected={pane === id} className={pane === id ? 'on' : ''} onClick={() => setPane(id)}>{l}</button>
-              ))}
-            </div>
-          )}
-          <span className="spacer" />
           {showInspector && (
             <button className="tool nodrag" onClick={() => run('toggle-inspector')} aria-pressed={inspectorOpen}
                     aria-label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} title="Show or hide inspector"><Icon name="inspector" size={16} /></button>
@@ -185,8 +224,8 @@ function Shell({ config, user, onSignOut, onExpired }) {
         </div>
         {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} />}
-        {view === 'assistant' && <Assistant goSettings={() => { setPane('providers'); setView('settings') }} workspaceEmpty={ws.empty} />}
-        {view === 'settings' && <Settings pane={pane} config={config} user={user} onReset={() => setConfirmReset(true)} onSignOut={onSignOut} />}
+        {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} workspaceEmpty={ws.empty} />}
+        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={createWs} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
                     desktop={config.desktop} inspectorOpen={inspectorOpen} />
@@ -194,7 +233,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       </div>
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents}
-                      onRun={(id) => { if (!id.startsWith('path-')) setRecents((r) => pushRecent(r, id)) }} />
+                      onRun={(id) => { if (!id.startsWith('path-') && !id.startsWith('ws-')) setRecents((r) => pushRecent(r, id)) }} />
       {confirmReset && (
         <div className="scrim" onMouseDown={() => setConfirmReset(false)}
              onKeyDown={(e) => { if (e.key === 'Escape') setConfirmReset(false) }}>
@@ -250,7 +289,9 @@ export default function App() {
   if (!config || user === undefined) return <Splash />
   return (
     <ToastProvider>
-      {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={config.desktop ? renew : signOut} /> : <Login config={config} onDone={() => api.me().then(setUser)} />}
+      <PrefsProvider key={user ? 'u' : 'anon'}>
+        {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={config.desktop ? renew : signOut} /> : <Login config={config} onDone={() => api.me().then(setUser)} />}
+      </PrefsProvider>
     </ToastProvider>
   )
 }

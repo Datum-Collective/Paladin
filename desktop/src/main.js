@@ -80,7 +80,8 @@ function hardenSession() {
 
 function createWindow(origin) {
   win = new BrowserWindow({
-    width: 1440, height: 920, minWidth: 980, minHeight: 640,
+    width: Number((process.env.PALADIN_SIZE || '').split('x')[0]) || 1440,
+    height: Number((process.env.PALADIN_SIZE || '').split('x')[1]) || 920, minWidth: 980, minHeight: 640,
     show: false,
     title: 'Paladin',
     // vibrancy needs a transparent window; the content column paints its own opaque background
@@ -123,8 +124,27 @@ function smokeTest(w) {
         await new Promise((res) => setTimeout(res, 2000))
         // drive the same path as the menu bar: main -> renderer command channel
         for (const id of (process.env.PALADIN_SCREENSHOT_VIEW || '').split(',').filter(Boolean)) {
-          w.webContents.send('menu:command', { id })
-          await new Promise((res) => setTimeout(res, 700))
+          if (id.startsWith('pane:')) {   // click a Settings category by its label
+            await w.webContents.executeJavaScript(`[...document.querySelectorAll('.settings-nav button')]
+              .find((b) => b.textContent.includes(${JSON.stringify(id.slice(5))}))?.click()`)
+          } else if (id.startsWith('flash:')) {   // click a tab and capture mid-animation
+            await w.webContents.executeJavaScript(`[...document.querySelectorAll('[role=tab]')]
+              .find((b) => b.textContent.includes(${JSON.stringify(id.slice(6))}))?.click()`)
+            // freeze the flash at its peak so the capture is deterministic
+            await w.webContents.executeJavaScript(`(() => { const st = document.createElement('style');
+              st.textContent = '.seg button.on::after{animation-delay:-.2s!important;animation-play-state:paused!important}' +
+                '.seg button.on{animation-delay:-.25s!important;animation-play-state:paused!important}';
+              document.head.appendChild(st) })()`)
+            await new Promise((res) => setTimeout(res, 120))
+            continue
+          } else if (id.startsWith('type:')) {   // type into the start-screen bar to show autocomplete
+            await w.webContents.executeJavaScript(`(() => { const i = document.querySelector('.bar input'); i.focus();
+              Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ${JSON.stringify(id.slice(5))});
+              i.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+          } else {
+            w.webContents.send('menu:command', { id })
+          }
+          await new Promise((res) => setTimeout(res, 900))
         }
         const img = await w.webContents.capturePage()
         require('node:fs').writeFileSync(process.env.PALADIN_SCREENSHOT, img.toPNG())

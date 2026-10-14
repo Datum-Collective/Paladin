@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, chatStream } from './api.js'
-import { useStored } from './useStored.js'
+import { usePrefs } from './prefs.jsx'
 import { toHistory } from './lib.js'
 import Icon from './Icons.jsx'
 
@@ -35,11 +35,16 @@ function ErrorNote({ e, onRetry, goSettings }) {
 
 export default function Assistant({ goSettings, workspaceEmpty }) {
   const [providers, setProviders] = useState(null)
-  const [provider, setProvider] = useStored('assistant-provider', 'anthropic')
+  const { prefs, set: setPref } = usePrefs()
+  const provider = prefs['assistant.provider'] || 'anthropic'
+  const setProvider = (v) => setPref('assistant.provider', v)
   const [models, setModels] = useState({ state: 'idle', list: [], error: '' })
-  const [model, setModel] = useStored('assistant-model', '')
-  const [effort, setEffort] = useStored('assistant-effort', '')
-  const [ctx, setCtx] = useStored('assistant-context', true)
+  const model = prefs['assistant.model']
+  const setModel = (v) => setPref('assistant.model', v)
+  const effort = prefs['assistant.effort']
+  const setEffort = (v) => setPref('assistant.effort', v)
+  const ctx = prefs['assistant.context']
+  const setCtx = (v) => setPref('assistant.context', v)
   const [msgs, setMsgs] = useState([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -56,10 +61,10 @@ export default function Assistant({ goSettings, workspaceEmpty }) {
     api.models(provider).then((r) => {
       if (!live) return
       setModels({ state: 'ready', list: r.models, error: '' })
-      setModel((cur) => (r.models.some((m) => m.id === cur) ? cur : (r.models[0] ? r.models[0].id : '')))
+      if (!r.models.some((m) => m.id === model) && r.models[0]) setPref('assistant.model', r.models[0].id)
     }).catch((e) => live && setModels({ state: 'error', list: [], error: e.message }))
     return () => { live = false }
-  }, [provider, cfg && cfg.configured, setModel])
+  }, [provider, cfg && cfg.configured]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (end.current) end.current.scrollIntoView({ block: 'end' }) }, [msgs])
   useEffect(() => () => abort.current && abort.current.abort(), [])

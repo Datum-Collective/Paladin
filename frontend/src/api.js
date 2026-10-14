@@ -1,8 +1,15 @@
-async function req(method, url, body) {
+// every request names its workspace, so a second window switching workspaces cannot redirect this one
+let currentWs = null
+export const setWorkspace = (id) => { currentWs = id }
+export const workspaceId = () => currentWs
+const wsHeader = () => (currentWs ? { 'X-Workspace': String(currentWs) } : {})
+
+async function req(method, url, body, signal) {
   const r = await fetch(url, {
     method,
+    signal,
     credentials: 'same-origin',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...wsHeader() },
     body: body ? JSON.stringify(body) : undefined,
   })
   const data = await r.json().catch(() => ({}))
@@ -49,6 +56,17 @@ export const api = {
   timeline: () => req('GET', '/api/timeline'),
   benchmarks: () => req('GET', '/api/benchmarks'),
   createKey: (label) => req('POST', '/api/keys', { label }),
+  workspaces: () => req('GET', '/api/workspaces'),
+  createWorkspace: (name) => req('POST', '/api/workspaces', { name: name || null }),
+  importRepo: (query) => req('POST', '/api/workspaces/import', { query }),
+  openWorkspace: (id) => req('POST', `/api/workspaces/${id}/open`),
+  renameWorkspace: (id, name) => req('PATCH', `/api/workspaces/${id}`, { name }),
+  deleteWorkspace: (id) => req('DELETE', `/api/workspaces/${id}`),
+  resolveRepo: (query) => req('POST', '/api/repos/resolve', { query }),
+  suggestRepos: (q, signal) => req('GET', `/api/repos/suggest?q=${encodeURIComponent(q)}`, undefined, signal),
+  githubStatus: () => req('GET', '/api/github/status'),
+  prefs: () => req('GET', '/api/prefs'),
+  setPrefs: (patch) => req('PUT', '/api/prefs', patch),
   providers: () => req('GET', '/api/providers'),
   models: (pid) => req('GET', `/api/providers/${pid}/models`),
   validate: (pid) => req('POST', `/api/providers/${pid}/validate`),
@@ -61,7 +79,7 @@ export async function chatStream(body, onEvent, signal) {
   try {
     r = await fetch('/api/assistant/chat', {
       method: 'POST', credentials: 'same-origin', signal,
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json', ...wsHeader() }, body: JSON.stringify(body),
     })
   } catch (e) {
     if (e.name === 'AbortError') return

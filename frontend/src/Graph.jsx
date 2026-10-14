@@ -35,7 +35,7 @@ function theme() {
   ] }
 }
 
-export default function Graph({ graph, highlight, onEdge }) {
+export default function Graph({ graph, highlight, onEdge, showLabels = true }) {
   const ref = useRef(null)
   const cy = useRef(null)
 
@@ -53,13 +53,15 @@ export default function Graph({ graph, highlight, onEdge }) {
 
   const graphRef = useRef(null)
   graphRef.current = graph
+  const showLabelsRef = useRef(showLabels)
+  showLabelsRef.current = showLabels
 
   function draw() {
     const g = graphRef.current
     if (!g || !cy.current) return
     const kind = theme().kind
     const els = [
-      ...g.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: kind[n.kind] || kind.service,
+      ...g.nodes.map((n) => ({ data: { id: n.id, label: showLabelsRef.current ? n.label : '', color: kind[n.kind] || kind.service,
                                        shape: SHAPE[n.kind] || 'round-rectangle' } })),
       ...g.edges.map((e) => ({ data: { id: e.id, source: e.src, target: e.dst, technique: e.technique,
           p: e.p, observed: e.observed, fixed: e.fixed } })),
@@ -70,7 +72,7 @@ export default function Graph({ graph, highlight, onEdge }) {
       ranker: 'longest-path', fit: true, padding: 40 }).run()
   }
 
-  useEffect(() => { draw() }, [graph])
+  useEffect(() => { draw() }, [graph, showLabels])
 
   useEffect(() => {
     if (!cy.current) return

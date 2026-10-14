@@ -18,8 +18,9 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
   t.push({
     label: 'File',
     submenu: [
+      { label: 'New Workspace', accelerator: 'CommandOrControl+N', click: cmd('new-workspace') },
+      { label: 'Open Repository…', accelerator: 'CommandOrControl+Shift+O', click: cmd('open-repo') },
       { label: 'Add Log Data…', accelerator: 'CommandOrControl+O', click: cmd('ingest') },
-      { label: 'Scan Repository…', accelerator: 'CommandOrControl+Shift+O', click: cmd('repo') },
       { type: 'separator' },
       ...(isMac ? [{ role: 'close' }] : [settings, { type: 'separator' }, { role: 'quit' }]),
     ],
@@ -45,6 +46,7 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
   t.push({
     label: 'Go',
     submenu: [
+      { label: 'Start Screen', accelerator: 'CommandOrControl+Shift+H', click: cmd('home') },
       { label: 'Analysis', accelerator: 'CommandOrControl+1', click: cmd('analysis') },
       { label: 'Repository', accelerator: 'CommandOrControl+2', click: cmd('repo') },
       { label: 'Insights', accelerator: 'CommandOrControl+3', click: cmd('insights') },

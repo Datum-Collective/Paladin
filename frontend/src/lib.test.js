@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, clamp, fuzzy, pushRecent, rankCommands, toHistory } from './lib.js'
+import { ago, clamp, fuzzy, looksLikeRepo, pushRecent, rankCommands, toHistory } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -60,5 +60,12 @@ describe('toHistory', () => {
   it('keeps a normal alternating conversation untouched', () => {
     const m = [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }, { role: 'user', content: 'q2' }]
     expect(toHistory(m)).toEqual(m)
+  })
+})
+
+describe('looksLikeRepo', () => {
+  it('recognises links and owner/name, rejects prose', () => {
+    for (const ok of ['https://github.com/a/b', 'github.com/a/b', 'git@github.com:a/b.git', 'a/b', ' acme/api ']) expect(looksLikeRepo(ok)).toBe(true)
+    for (const no of ['', 'hello', 'a b/c', 'https://gitlab.com/a/b', 'one', 'src/main.py', 'docs/readme.md', 'github.com/torvalds', 'a_b/c']) expect(looksLikeRepo(no)).toBe(false)
   })
 })

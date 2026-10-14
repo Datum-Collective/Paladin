@@ -19,7 +19,16 @@ CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, ws INTE
 CREATE INDEX IF NOT EXISTS ev_ws ON events(ws, seq);
 CREATE TABLE IF NOT EXISTS fixes(ws INTEGER NOT NULL, edge TEXT NOT NULL, PRIMARY KEY(ws, edge));
 CREATE TABLE IF NOT EXISTS sim(ws INTEGER PRIMARY KEY, pos INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS workspaces(id INTEGER PRIMARY KEY, owner INTEGER NOT NULL, name TEXT NOT NULL, repo_url TEXT,
+  created REAL NOT NULL, opened REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS ws_owner ON workspaces(owner, opened);
+CREATE TABLE IF NOT EXISTS active_ws(user_id INTEGER PRIMARY KEY, ws INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS prefs(user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id, key));
 """
+
+
+def lock() -> threading.RLock:
+    return _lock
 
 
 def conn() -> sqlite3.Connection:
@@ -30,6 +39,10 @@ def conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(d / "apc.db", check_same_thread=False, isolation_level=None)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        try:  # keys are bound to the workspace they were created in
+            _conn.execute("ALTER TABLE api_keys ADD COLUMN ws INTEGER")
+        except sqlite3.OperationalError:
+            pass
     return _conn
 
 

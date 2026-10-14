@@ -27,7 +27,9 @@ def client(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_provider_keys():
     """Provider keys live in process memory; never let one test's keys leak into another."""
-    from app import keys
+    from app import github, keys
     keys.clear()
+    github.clear_cache()
     yield
     keys.clear()
+    github.clear_cache()
