@@ -9,6 +9,8 @@ files:
 extraResources:
   - from: build/backend/paladin-server
     to: backend
+  - from: build/supabase.json      # public URL + anon key only (written by scripts/build-backend.js)
+    to: supabase.json
   - from: ../frontend/dist
     to: ui
   - from: ../data

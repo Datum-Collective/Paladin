@@ -2,6 +2,7 @@ import os
 import subprocess
 
 from app import fixers, harness
+from conftest import sign_in
 
 SERVER = '''import hashlib
 from flask import Flask
@@ -47,7 +48,7 @@ def test_non_python_files_say_they_were_not_syntax_checked():
 def test_job_runs_independent_final_verification(client, tmp_path, monkeypatch):
     monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
     repo = _repo(tmp_path, {"server.py": SERVER})
-    client.post("/api/auth/demo")
+    sign_in(client)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     job = client.get(f"/api/harness/jobs/{j['id']}").json()
@@ -66,7 +67,7 @@ def test_job_runs_independent_final_verification(client, tmp_path, monkeypatch):
 def test_patched_file_endpoint_returns_content_and_is_path_safe(client, tmp_path, monkeypatch):
     monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
     repo = _repo(tmp_path, {"server.py": SERVER, "README.md": "hi"})
-    client.post("/api/auth/demo")
+    sign_in(client)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     ok = client.get(f"/api/harness/jobs/{j['id']}/file", params={"path": "server.py"})

@@ -1,6 +1,8 @@
 """Glue: events + inventory + applied fixes -> graph, ranked paths, fixes (computed, never stored)."""
 import time
 
+from pydantic import ValidationError
+
 from . import analyze, codescan, inventory, metrics, store
 from .models import Edge, Node
 from .correlate import correlate
@@ -17,9 +19,20 @@ def workspace_model(ws: int) -> tuple[list[Node], list[Edge]]:
         nodes += inv["nodes"]
         edges += inv["edges"]
     cm = codescan.load_model(ws)
-    nodes += [Node(**n) for n in cm["nodes"]]
-    edges += [Edge(**e) for e in cm["edges"]]
+    nodes += _valid(Node, cm["nodes"])
+    edges += _valid(Edge, cm["edges"])
     return nodes, edges
+
+
+def _valid(model, items: list) -> list:
+    """The stored code model is the user's own row and could have been edited through the API: skip bad items."""
+    out = []
+    for it in items:
+        try:
+            out.append(model(**it))
+        except (ValidationError, TypeError):
+            pass
+    return out
 
 
 def snapshot(ws: int, k: int = 10) -> dict:

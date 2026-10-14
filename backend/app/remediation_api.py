@@ -33,7 +33,7 @@ def list_all(u: dict = Depends(auth.require_user)):
 @router.post("")
 def propose(b: Propose, u: dict = Depends(auth.require_user)):
     try:
-        return rem.propose(u["id"], u["email"], b.edges, b.title)
+        return rem.propose(u["id"], u["actor"], b.edges, b.title)
     except ValueError as e:
         raise HTTPException(422, str(e))
 
@@ -49,19 +49,19 @@ def detail(rid: int, u: dict = Depends(auth.require_user)):
 def approve(rid: int, u: dict = Depends(auth.require_user)):
     if not can_approve(u):
         raise HTTPException(403, "approver role required")
-    return _guard(rem.approve, u["id"], rid, u["email"])
+    return _guard(rem.approve, u["id"], rid, u["actor"])
 
 
 @router.post("/{rid}/execute")
 def execute(rid: int, u: dict = Depends(auth.require_user)):
-    return _guard(rem.execute, u["id"], rid, u["email"])
+    return _guard(rem.execute, u["id"], rid, u["actor"])
 
 
 @router.post("/{rid}/verify")
 def verify(rid: int, u: dict = Depends(auth.require_user)):
-    return _guard(rem.verify, u["id"], rid, u["email"])
+    return _guard(rem.verify, u["id"], rid, u["actor"])
 
 
 @router.post("/{rid}/rollback")
 def rollback(rid: int, u: dict = Depends(auth.require_user)):
-    return _guard(rem.rollback, u["id"], rid, u["email"])
+    return _guard(rem.rollback, u["id"], rid, u["actor"])

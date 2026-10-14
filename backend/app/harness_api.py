@@ -1,8 +1,10 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import auth, harness
+from . import auth, github_access, harness
 
 router = APIRouter(prefix="/api/harness", tags=["harness"])
 
@@ -21,10 +23,23 @@ def jobs(u: dict = Depends(auth.require_user)):
     return {"jobs": harness.list_jobs(u["id"])}
 
 
+async def start_scan(u: dict, url: str) -> dict:
+    """Start a scan with the right clone credential: on the web a read-only token for this one repo, and only if it
+    is in the signed-in user's own GitHub App installation; otherwise none (public repos only)."""
+    token = None
+    if not auth.desktop_mode():
+        m = harness.URL_RE.match(url.strip())
+        if m:
+            token = await github_access.clone_token(u["user_id"], m[1], m[2])
+    if token is None:
+        return await asyncio.to_thread(harness.start, u["id"], url)
+    return await asyncio.to_thread(lambda: harness.start(u["id"], url, token=token))
+
+
 @router.post("/jobs")
-def start(b: StartBody, u: dict = Depends(auth.require_user)):
+async def start(b: StartBody, u: dict = Depends(auth.require_user)):
     try:
-        return harness.start(u["id"], b.repo_url)
+        return await start_scan(u, b.repo_url)
     except ValueError as e:
         raise HTTPException(422, str(e))
     except RuntimeError as e:
@@ -64,11 +79,7 @@ def patched_file(jid: int, path: str, u: dict = Depends(auth.require_user)):
 
 
 @router.post("/jobs/{jid}/pr")
-def pr(jid: int, u: dict = Depends(auth.require_user)):
-    _get(u["id"], jid)
-    try:
-        return harness.open_pr(u["id"], jid)
-    except PermissionError as e:
-        raise HTTPException(409, str(e))
-    except RuntimeError as e:
-        raise HTTPException(502 if "GitHub" in str(e) or "git " in str(e) else 409, str(e)[:200])
+async def pr(jid: int, u: dict = Depends(auth.require_user)):
+    """Commits the job's fixes to the repo's `fixes` branch (fast-forward only) and opens or reuses one PR.
+    Web: only for repos in the user's own GitHub App installation. Desktop: with the user's own token."""
+    return await github_access.open_job_pr(u, jid)

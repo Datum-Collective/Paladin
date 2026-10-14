@@ -49,6 +49,29 @@ function pushKeys() {
   })
 }
 
+/** Begin a GitHub sign-in and open it in the system browser (RFC 8252: never in an embedded window). */
+function startSignIn() {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: backend.port, path: '/api/auth/desktop/start', method: 'POST',
+      headers: { 'X-Desktop-Token': backend.token, 'Content-Length': 0 } }, (res) => {
+      let body = ''
+      res.on('data', (c) => { body += c })
+      res.on('end', async () => {
+        try {
+          if (res.statusCode !== 200) throw new Error(`sign-in could not start (${res.statusCode})`)
+          const url = new URL(JSON.parse(body).url)
+          // only ever open our own engine's login page; it redirects to Supabase and GitHub
+          if (url.origin !== backend.origin || url.pathname !== '/api/auth/login') throw new Error('unexpected sign-in URL')
+          await shell.openExternal(url.toString())
+          resolve(true)
+        } catch (e) { reject(e) }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 function trusted(e) {
   const f = e.senderFrame
   return Boolean(f && backend && sameOrigin(f.url))
@@ -56,10 +79,11 @@ function trusted(e) {
 
 function hardenSession() {
   const ses = session.defaultSession
-  // The renderer never holds the desktop token. The main process attaches it to exactly one request: the local
-  // sign-in. Key pushes are made by the main process itself (pushKeys), so the renderer cannot set or read keys.
+  // The renderer never holds the desktop token. The main process attaches it to exactly one request from our own
+  // page: collecting a finished GitHub sign-in. Starting a sign-in and pushing keys are done by the main process
+  // itself (startSignIn, pushKeys), so the renderer cannot start, finish or read either on its own.
   ses.webRequest.onBeforeSendHeaders({ urls: ['http://127.0.0.1/*'] }, (d, cb) => {
-    if (sameOrigin(d.url) && d.method === 'POST' && new URL(d.url).pathname === '/api/auth/local') {
+    if (sameOrigin(d.url) && d.method === 'POST' && new URL(d.url).pathname === '/api/auth/desktop/claim') {
       d.requestHeaders['X-Desktop-Token'] = backend.token
     }
     cb({ requestHeaders: d.requestHeaders })
@@ -136,7 +160,7 @@ function smokeTest(w) {
   w.webContents.once('did-finish-load', async () => {
     try {
       const r = await w.webContents.executeJavaScript(
-        `fetch('/api/auth/local',{method:'POST'}).then(r=>r.json()).then(b=>fetch('/api/me').then(r=>r.json()).then(m=>({local:b,me:m,bridge:typeof window.paladin,title:document.title})))`)
+        `fetch('/api/config').then(r=>r.json()).then(c=>fetch('/api/me').then(r=>({config:c,me:r.status,bridge:typeof window.paladin,title:document.title})))`)
       console.log('SMOKE', JSON.stringify(r))
       if (process.env.PALADIN_SCREENSHOT) {
         // optional: load a few real log lines, wait for the UI to settle, save a PNG of the window
@@ -189,7 +213,8 @@ function smokeTest(w) {
         const img = await w.webContents.capturePage()
         require('node:fs').writeFileSync(process.env.PALADIN_SCREENSHOT, img.toPNG())
       }
-      app.exit(r.me && r.me.email ? 0 : 1)
+      // signed out on a fresh profile: the engine answers, reports desktop mode and protects /api/me
+      app.exit(r.config && r.config.desktop && (r.me === 200 || r.me === 401) ? 0 : 1)
     } catch (e) {
       console.log('SMOKE_FAIL', String(e))
       app.exit(1)
@@ -215,6 +240,7 @@ function registerIpc() {
     version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged,
     dataDir: path.join(app.getPath('userData'), 'data'),
   }))
+  handle('auth:sign-in', () => startSignIn())
   handle('settings:get', () => settings.status())
   handle('settings:set', async (patch) => {
     settings.set(patch)   // persisted first: the keychain is the source of truth

@@ -1,3 +1,4 @@
+from conftest import sign_in
 """The graph must describe only what the workspace actually contains."""
 LOG = "May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2"
 HTML = ('<div id=a></div>\n<script>\n'
@@ -11,7 +12,7 @@ INVENTORY_IDS = {"internet", "WEB-BO-01", "nina.kapoor", "FILE-BO-01", "claims-d
 
 
 def scan(c, files):
-    c.post("/api/auth/demo")
+    sign_in(c)
     return c.post("/api/codescan", json={"repo": "t", "files": files}).json()
 
 
@@ -26,7 +27,7 @@ def test_code_only_workspace_contains_no_demo_company(client):
 
 
 def test_events_only_workspace_contains_no_code_nodes(client):
-    client.post("/api/auth/demo")
+    sign_in(client)
     client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
     ids = {n["id"] for n in client.get("/api/graph").json()["nodes"]}
     assert INVENTORY_IDS & ids and not any(i.startswith("code:") for i in ids)

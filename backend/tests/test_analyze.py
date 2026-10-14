@@ -2,6 +2,7 @@ import math
 
 from app.analyze import best_single_fix, build_graph, min_cut_fix, severity, top_paths, total_risk
 from app.models import Edge, Node
+from conftest import sign_in
 
 
 def N(i, kind, crit=1):
@@ -107,7 +108,7 @@ def test_combined_risk_is_a_probability_not_a_sum():
 
 
 def test_headline_severity_is_the_worst_path_not_the_aggregate(client):
-    client.post("/api/auth/demo")
+    sign_in(client)
     client.post("/api/ingest", json={"format": "web_access", "lines": [
         '185.199.110.42 - - [14/May/2024:13:00:01 +0000] "GET /.env HTTP/1.1" 404 153 "-" "Nikto/2.1.6"']})
     p = client.get("/api/paths").json()

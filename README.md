@@ -9,37 +9,130 @@ Objectives: `docs/OBJECTIVES.md`. Plan and decisions: `docs/MASTER_PLAN.md`. Con
 Benchmarks (measured, not typed): `docs/BENCHMARKS.md`.
 
 ## How it works
-`parsers` -> Event -> SQLite (append-only) -> `correlate` (events confirm inventory edges, raise p) ->
+`parsers` -> Event -> Supabase Postgres (append-only, per user under RLS) -> `correlate` (events confirm inventory edges, raise p) ->
 `analyze` (top-k paths by risk, cost-weighted min cut, best single fix) -> FastAPI + SSE -> React/Cytoscape.
 Risk = product(edge p) x target criticality / 10. Fixes follow `proposed > approved > executed > verified`.
 The repo harness clones a GitHub repo (hooks off, code never executed), scans, verifies each patch with code,
 commits to a branch and opens a PR only after a human approves.
 
 ## Run
+Needs a Supabase project set up as in "Sign-in, accounts and data" below.
 ```bash
-docker build -t apc . && docker run --rm -p 8000:8000 \
-  -e SECRET_KEY=dev -e DEMO_USER=demo@example.com -e DEMO_PASSWORD=change-me -e COOKIE_SECURE=0 \
-  -v apc-data:/var/lib/apc apc
-# open http://localhost:8000 -> "Use demo account"
+cp .env.example backend/.env        # fill in SUPABASE_*, APP_URL (and GITHUB_APP_* for repo access)
+docker build -t apc . && docker run --rm -p 8000:8000 --env-file backend/.env -e APP_URL=http://localhost:8000 \
+  -e COOKIE_SECURE=0 -v apc-data:/var/lib/apc apc
+# open http://localhost:8000 -> "Sign In with GitHub"
 ```
-Optional features (server env only): `ANTHROPIC_API_KEY` (Haiku triage and patch drafting), `GITHUB_TOKEN`
-(open PRs). Without them the app works with deterministic rules and patch download.
+Optional (server env only): `ANTHROPIC_API_KEY` (Haiku triage and patch drafting) and the `GITHUB_APP_*`
+settings (private repos and pull requests per user). Without them the app works with deterministic rules, public
+repos and patch download.
 
-Local dev: `cd backend && uv venv .venv && uv pip install -r requirements.txt && python -m pytest`;
-`cd frontend && npm ci && npm run dev` (proxies `/api` to :8000). Benchmarks: `python scripts/benchmark.py`.
+Local dev (first `cp .env.example backend/.env` and fill in `SUPABASE_*`; `APP_URL=http://localhost:5173`,
+`COOKIE_SECURE=0`):
+```bash
+# backend, terminal 1. The venv must be active, or call its python directly as shown
+cd backend
+uv venv .venv && uv pip install -r requirements.txt
+.venv/Scripts/python -m pytest          # Windows; macOS/Linux: .venv/bin/python -m pytest (offline: fake Supabase and GitHub)
+.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+
+# frontend, terminal 2
+cd frontend && npm ci && npm run dev    # proxies /api to :8000; open http://localhost:5173
+```
+Benchmarks: `python scripts/benchmark.py`.
+
+## Sign-in, accounts and data (Supabase)
+Sign-in is GitHub only, through Supabase Auth. The backend runs the OAuth flow itself (PKCE) and keeps the session
+in httpOnly cookies (`sb_access`, `sb_refresh`); the browser JS never sees a token, and GitHub always shows its
+account picker. Sign-in asks GitHub for identity only (`user:email`); repo access is a separate, opt-in step (below).
+There are no passwords and no shared demo account: judges and testers sign in with their own GitHub account.
+
+All data lives in Supabase Postgres. The backend talks to it **as the signed-in user** (their access token plus the
+public anon key), so row-level security is the main access control, on the web server and in the desktop app alike:
+a user can only read and write their own rows in workspaces they own. Caps, size checks and generated ids are
+enforced in the database too, since anyone can call the Supabase API directly with their own token. The service key
+is used only on the web server, for what a user must not do themselves (reading the GitHub identity they signed in
+with, GitHub App install states and links, the GitHub App audit log). Log shippers ingest with a per-workspace API
+key through a database function that checks the key; only its SHA-256 hash is stored and users cannot read it back.
+
+Setup, once per Supabase project:
+1. GitHub -> Settings -> Developer settings -> **OAuth Apps** -> New. Callback URL:
+   `https://<project-ref>.supabase.co/auth/v1/callback`.
+2. Supabase -> Authentication -> Sign In / Providers -> **GitHub**: enable it with that Client ID and secret. Disable
+   Email. Authentication -> URL Configuration -> Redirect URLs, add:
+   - `http://localhost:5173/api/auth/callback` (dev) and `https://<APP_DOMAIN>/api/auth/callback` (VPS)
+   - `http://127.0.0.1:*/api/auth/callback` (desktop app; its engine listens on a local port)
+3. SQL editor: run `supabase/migrations/0001_auth.sql`, `0002_github.sql`, `0003_app_data.sql` in order (each is safe
+   to re-run), then `supabase/tests/rls_test.sql`. It must end with "RLS checks passed"; it changes nothing.
+4. Fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY` (publishable key), `SUPABASE_SERVICE_KEY` (server only) and
+   `APP_URL` (the origin the browser uses) in `.env`.
+
+## GitHub repo access (GitHub App, web)
+On Integrations a user installs the Paladin GitHub App on their **personal** account and picks which repos it may
+access. Scans of those private repos clone with a read-only token limited to that one repo; "Open PR" commits the
+fixes to a `fixes` branch (fast-forward only, never force, never the default branch) and opens or reuses one PR.
+Every write is recorded in `github_audit_log` before it is sent and limited to 10 per minute per user. Anyone else's
+repo is a 404 on every route, and the server never asks GitHub "which installation has this repo". A server-wide
+`GITHUB_TOKEN` is ignored on the web: it would let every signed-in user reach whatever that token can see.
+
+> **Never install the app on the official hackathon org or repo.** Testing, judging and the bug bounty use a team
+> member's personal account with the app installed on **only** a private demo repo of fake data ("Only select
+> repositories", never "All repositories"). The backend links personal-account installations only, and
+> `GITHUB_BLOCKED_ACCOUNTS` makes it refuse listed accounts (the hackathon org) as a second safeguard. Uninstall
+> and delete the apps after the event.
+
+| Permission | Access | Used by |
+|---|---|---|
+| Metadata | Read | Mandatory; repo names, default branch |
+| Contents | Read & write | Read: clone for scans, file tree and contents. Write: the `fixes` branch and its commits |
+| Pull requests | Read & write | Find the open `fixes` PR to reuse it; open it |
+
+Not requested: Issues, Administration, Workflows, Secrets, Codespaces, Members or any organization permission
+(without Workflows, GitHub itself also rejects writes to `.github/workflows/`; the backend refuses them too).
+
+Create two apps while signed in to GitHub as the account that owns the demo repo (GitHub sends the user to the **first** callback URL
+when "Request user authorization during installation" is on, so dev and production each need their own):
+1. Settings -> Developer settings -> GitHub Apps -> New GitHub App, named e.g. `Paladin Dev` / `Paladin`.
+   Callback URL `http://localhost:5173/api/github/callback` (dev) or `https://<APP_DOMAIN>/api/github/callback`.
+   Tick **Expire user authorization tokens** and **Request user authorization (OAuth) during installation**; untick
+   Device Flow and the webhook; permissions exactly as above; installable on **Any account**.
+2. Note the App ID, Client ID and slug, generate a client secret and a private key. Put them in `.env`
+   (`GITHUB_APP_*`). Save the key as `backend/github-app-dev.private-key.pem` locally (`*.pem` is git-ignored); on the
+   VPS put it in `.env` as `GITHUB_APP_PRIVATE_KEY` with newlines written as `\n` (the container is read-only).
+
+Manual two-account check before each bug-bounty deploy (two browsers or profiles, each signed in to a different
+github.com account):
+1. As **A** (the demo repo's owner): Integrations -> Connect GitHub -> install on A's personal account, choose the demo repo.
+   Open it from Home, let the scan finish, Open PR: a `fixes` branch and one PR appear; the default branch is unchanged.
+2. Note A's workspace id (`GET /api/workspaces`), job id (`GET /api/harness/jobs`) and installation id
+   (`GET /api/github/installations`).
+3. As **B** (any other account): `GET /api/github/repos/<A>/<demo>/tree`, `.../file?path=README.md`,
+   `POST .../fixes`, `GET /api/github/manage-url/<A's installation>`, `DELETE /api/github/installations/<A's>`,
+   `GET /api/harness/jobs/<A's job>` and `.../patch`, `POST /api/workspaces/<A's workspace>/open` must all be 404, also
+   with the owner/repo in different letter case. `GET /api/graph` with `X-Workspace: <A's workspace>` shows B's own
+   (empty) data. Importing `<A>/<demo>` fails as not found.
+4. As B, start Connect and, when GitHub redirects back, change `installation_id` in the URL to A's: you land on the
+   app with "Could not connect GitHub", and the server log says `installation_id not in this user's /user/installations`.
+5. Back as A: everything is still there, the demo repo has no new commits from B, and `github_audit_log` has only
+   A's rows.
 
 ## Desktop app (macOS and Windows)
 `desktop/` is an Electron shell around the same backend and UI. The FastAPI server is frozen with PyInstaller and
 spawned by the main process on `127.0.0.1` with a random port; no Docker or Python is needed on the user's machine.
-The renderer is sandboxed (context isolation, no Node), and the main process adds a per-launch token to requests so
-only the app can open the single local account. Provider keys (Anthropic, GitHub) are stored with the OS keychain
-through Electron `safeStorage`; if it is unavailable they are not saved.
+The renderer is sandboxed (context isolation, no Node). Sign-in uses the same GitHub account as the web app and opens
+in the system browser (never an embedded window): the main process starts it with its per-launch token, the engine
+parks the finished session, and the app window collects it; only the main process can authorise that request, so the
+browser tab and other local programs never get the session. Data is the account's, in Supabase, so the desktop app
+needs internet. The engine receives only the public Supabase URL and anon key (`resources/supabase.json`, written
+by `npm run build:backend` from `SUPABASE_URL` / `SUPABASE_ANON_KEY`); server secrets are stripped from its
+environment and a secret key in that file is refused. Provider keys (Anthropic, OpenAI, a GitHub token for private
+repos and PRs) are stored with the OS keychain through Electron `safeStorage`; if it is unavailable they are not saved.
 ```bash
 cd backend && uv venv .venv && uv pip install -r requirements.txt      # once
 cd frontend && npm ci && npm run build                                  # once, and after UI changes
 cd desktop && npm ci && npm start                                       # run in development
 cd desktop && npm test                                                  # shell unit tests
-cd desktop && PALADIN_SMOKE_TEST=1 npm start                            # boots, signs in, exits 0 on success
+cd desktop && PALADIN_SMOKE_TEST=1 npm start                            # boots the engine and UI, exits 0 on success
 cd desktop && npm run dist                                              # installer for the current OS
 ```
 PyInstaller does not cross-compile: build the Windows installer on Windows and the macOS one on macOS.
@@ -72,18 +165,26 @@ keychain and pushes them over loopback with the per-launch token, and no endpoin
 in prompts are masked before anything leaves the machine. Design rules and sources: `docs/research/apple-hig-and-providers.md`.
 
 ## Environment
-`OPENAI_API_KEY`, `PORT`, `HOST` (desktop only), `DESKTOP_MODE`, `APC_DESKTOP_TOKEN`, `STATIC_DIR`, `SEED_DIR`, `DATA_DIR`, `SECRET_KEY`, `DEMO_USER`, `DEMO_PASSWORD`, `COOKIE_SECURE`,
-`ALLOWED_ORIGINS`, `ANTHROPIC_API_KEY`, `AI_MODEL`, `GITHUB_TOKEN` (see `.env.example`).
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY` (web server only), `SUPABASE_JWT_SECRET` (legacy HS256
+projects only), `APP_URL`, `COOKIE_SECURE`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
+`GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_BLOCKED_ACCOUNTS`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AI_MODEL`, `PORT`, `HOST` (desktop only), `DESKTOP_MODE`, `APC_DESKTOP_TOKEN`,
+`STATIC_DIR`, `SEED_DIR`, `DATA_DIR` (scan clones only), `ALLOWED_ORIGINS`. `GITHUB_TOKEN` is used only by the
+desktop app (see `.env.example`).
 
 ## API
-`/api/auth/*`, `POST /api/ingest`, `POST /api/simulate/{start,step,reset}`, `GET /api/graph`, `GET /api/paths`,
+`GET /api/auth/login`, `GET /api/auth/callback`, `POST /api/auth/logout`, `GET /api/me`,
+`POST /api/auth/desktop/{start,claim}` (desktop only), `GET/POST /api/keys`, `DELETE /api/keys/{id}`,
+`/api/github/*` (GitHub App: `install-url`, `callback`, `installations`, `repos`, `manage-url/{id}`,
+`repos/{owner}/{repo}/{tree,file,fixes}`, `status`), `POST /api/ingest`, `POST /api/simulate/{start,step,reset}`, `GET /api/graph`, `GET /api/paths`,
 `GET /api/paths/{id}`, `GET /api/fixes`, `/api/remediations/*`, `/api/codescan`, `/api/harness/*`,
-`GET /api/timeline`, `GET /api/metrics`, `GET /api/benchmarks`, `GET /api/stream` (SSE), `POST /api/keys`,
-`GET /api/config`, `POST /api/auth/local` and `PUT /api/providers/keys` (desktop only), `GET /api/providers`,
+`GET /api/timeline`, `GET /api/metrics`, `GET /api/benchmarks`, `GET /api/stream` (SSE),
+`GET /api/config`, `PUT /api/providers/keys` (desktop only), `GET /api/providers`,
 `GET /api/providers/{id}/models`, `POST /api/providers/{id}/validate`, `POST /api/assistant/chat` (SSE), `GET /health`.
 
 ## Ingest your own events
-Create a key under Sources, then `POST /api/ingest` with `X-API-Key`. Formats: `linux_auth`, `web_access`,
+Create a named key under Integrations -> Log ingestion (it writes into the workspace it was created in; it is shown
+once, and can be revoked there), then `POST /api/ingest` with `X-API-Key`. Formats: `linux_auth`, `web_access`,
 `snort_alert`, or `events` (Event JSON).
 
 ## Known limitations
@@ -94,12 +195,17 @@ Create a key under Sources, then `POST /api/ingest` with `X-API-Key`. Formats: `
 - Desktop builds are not code-signed until certificates are configured; unsigned builds cannot auto-update on macOS.
 - The desktop installer has been built only as the frozen backend so far; `npm run dist` has not been run end to end.
 - Edge priors in `data/inventory.yaml` are hand-set; code-scan reachability is a heuristic.
-- Recompute is from scratch per request (50k events: ~1 s on a laptop); single-process SQLite.
+- Recompute is from scratch per request (50k events: ~1 s on a laptop). Events are cached in memory per user and
+  workspace and refreshed incrementally, which assumes one backend process.
+- A scan keeps the session it started with; one that outlives the signed-in session (over ~15 minutes after the
+  last refresh) fails and can be retried.
+- The desktop end-to-end script (`desktop/e2e/run.js`) needs a profile that is already signed in.
 - Remediation "execute" closes the step in the model; the PR harness is the real delivery path.
 - Patches are not test-run (repo code is never executed); PR bodies say so.
 
 ## AI disclosure and third-party
-Claude Code (Claude Sonnet 5.5) assisted with the backend, frontend and scenario drafting; the team reviews and
-owns every module. The running product can call Claude Haiku (optional) for triage and patch drafting.
+Claude Code (Claude Sonnet 5.5) assisted with the backend, frontend and scenario drafting; Claude Code (Claude Opus
+5.5) wrote the Supabase sign-in and data layer, the GitHub App integration, the desktop sign-in handoff and their
+tests. The team reviews and owns every module. Reviewed by: _<team members>_. The running product can call Claude Haiku (optional) for triage and patch drafting.
 Third party: EvidenceForge (MIT, Cisco Talos), MITRE ATT&CK (`data/attack_subset.json`), FastAPI, networkx,
-bcrypt, httpx, React, Vite, Cytoscape.js.
+PyJWT, httpx, Supabase, React, Vite, Cytoscape.js.
