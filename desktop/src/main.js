@@ -74,8 +74,10 @@ function hardenSession() {
     }
     cb({ responseHeaders: h })
   })
-  ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
-  ses.setPermissionCheckHandler(() => false)
+  // deny everything except writing to the clipboard (Copy patch, Copy diagnostics) for our own page
+  const allowed = new Set(['clipboard-sanitized-write'])
+  ses.setPermissionRequestHandler((wc, perm, cb) => cb(allowed.has(perm) && sameOrigin(wc.getURL())))
+  ses.setPermissionCheckHandler((wc, perm, origin) => allowed.has(perm) && sameOrigin(origin || (wc && wc.getURL())))
 }
 
 function createWindow(origin) {
@@ -87,8 +89,8 @@ function createWindow(origin) {
     // vibrancy needs a transparent window; the content column paints its own opaque background
     backgroundColor: isMac ? '#00000000' : (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
-    trafficLightPosition: isMac ? { x: 20, y: 20 } : undefined, // centres the controls in the 52pt titlebar row
-    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 44 },
+    trafficLightPosition: isMac ? { x: 14, y: 14 } : undefined, // centres the controls in the 40pt titlebar row
+    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 40 },
     vibrancy: isMac ? 'sidebar' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -107,7 +109,26 @@ function createWindow(origin) {
   })
   win.on('closed', () => { win = null })
   if (process.env.PALADIN_SMOKE_TEST === '1') smokeTest(win)
+  if (process.env.PALADIN_E2E) e2e(win, process.env.PALADIN_E2E)
   win.loadURL(origin)
+}
+
+// `PALADIN_E2E=desktop/e2e/run.js npm start`: run a script inside the real window and print its results as JSON.
+// The script is plain renderer JavaScript that clicks real buttons; nothing is mocked.
+function e2e(w, file) {
+  w.webContents.once('did-finish-load', async () => {
+    try {
+      const src = require('node:fs').readFileSync(file, 'utf8')
+      const env = JSON.stringify({ REPO: process.env.E2E_REPO || '', BADREPO: process.env.E2E_BADREPO || '', LOG: process.env.E2E_LOG || '' })
+      await new Promise((r) => setTimeout(r, 1500))
+      const out = await w.webContents.executeJavaScript(`(async () => { const ENV = ${env}; ${src} })()`)
+      console.log(`E2E_RESULT ${JSON.stringify(out)}`)
+      app.exit(0)
+    } catch (e) {
+      console.log(`E2E_ERROR ${String(e)}`)
+      app.exit(1)
+    }
+  })
 }
 
 // `PALADIN_SMOKE_TEST=1 npm start`: prove the window loads the UI and the backend session works, then exit.
@@ -119,11 +140,21 @@ function smokeTest(w) {
       console.log('SMOKE', JSON.stringify(r))
       if (process.env.PALADIN_SCREENSHOT) {
         // optional: load a few real log lines, wait for the UI to settle, save a PNG of the window
-        await w.webContents.executeJavaScript(`fetch('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},
+        if (process.env.PALADIN_NO_INGEST !== '1') await w.webContents.executeJavaScript(`fetch('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({format:'linux_auth',lines:['May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2']})})`)
         await new Promise((res) => setTimeout(res, 2000))
+        if (process.env.PALADIN_SEED === '1') {   // a few realistic workspaces so list screens can be reviewed
+          await w.webContents.executeJavaScript(`(async () => { const post = (u, b) => fetch(u, { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+            await post('/api/workspaces', { name: 'payments-service', repo_url: 'https://github.com/acme/payments-service' });
+            await post('/api/workspaces', { name: 'incident-review' });
+            await post('/api/workspaces', { name: 'web-frontend', repo_url: 'https://github.com/acme/web-frontend' }); })()`)
+          await new Promise((res) => setTimeout(res, 800))
+          await w.webContents.executeJavaScript('location.reload()')
+          await new Promise((res) => setTimeout(res, 2200))
+        }
         // drive the same path as the menu bar: main -> renderer command channel
-        for (const id of (process.env.PALADIN_SCREENSHOT_VIEW || '').split(',').filter(Boolean)) {
+        for (const id of (process.env.PALADIN_SCREENSHOT_VIEW || '').split(/\s\|\s|,(?=[a-z-]+(?::|$))/).filter(Boolean)) {
           if (id.startsWith('pane:')) {   // click a Settings category by its label
             await w.webContents.executeJavaScript(`[...document.querySelectorAll('.settings-nav button')]
               .find((b) => b.textContent.includes(${JSON.stringify(id.slice(5))}))?.click()`)
@@ -137,6 +168,15 @@ function smokeTest(w) {
               document.head.appendChild(st) })()`)
             await new Promise((res) => setTimeout(res, 120))
             continue
+          } else if (id.startsWith('focus:')) {   // focus an element so its selected state renders
+            await w.webContents.executeJavaScript(`(() => { const e = document.querySelector(${JSON.stringify(id.slice(6))}); if (!e) return; e.focus(); e.dispatchEvent(new FocusEvent('focusin', { bubbles: true })) })()`)
+          } else if (id.startsWith('eval:')) {   // run a snippet in the page (capture helper)
+            await w.webContents.executeJavaScript(id.slice(5))
+          } else if (id.startsWith('css:')) {   // inject a style (used to freeze an animation for a screenshot)
+            await w.webContents.executeJavaScript(`(() => { const st = document.createElement('style'); st.textContent = ${JSON.stringify(id.slice(4))}; document.head.appendChild(st) })()`)
+          } else if (id.startsWith('press:')) {   // press a key in the focused element
+            await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',
+              { key: ${JSON.stringify(id.slice(6))}, bubbles: true }))`)
           } else if (id.startsWith('type:')) {   // type into the start-screen bar to show autocomplete
             await w.webContents.executeJavaScript(`(() => { const i = document.querySelector('.bar input'); i.focus();
               Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ${JSON.stringify(id.slice(5))});
@@ -186,6 +226,10 @@ function registerIpc() {
       }
     }
     return settings.status()
+  })
+  handle('dialog:choose-folder', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Open a Git repository', properties: ['openDirectory'] })
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
   })
   handle('update:check', () => updater.check())
   handle('update:install', () => updater.install())

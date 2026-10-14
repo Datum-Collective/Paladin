@@ -121,6 +121,14 @@ def list_(ws: int) -> list[dict]:
     return [_row(r) for r in store.q("SELECT * FROM remediations WHERE ws=? ORDER BY id DESC", (ws,))]
 
 
+def history(ws: int, limit: int = 100) -> list[dict]:
+    """Every remediation step for a workspace, newest first, with the remediation's title and current state."""
+    _ensure()
+    return [dict(r) for r in store.q(
+        "SELECT a.id,a.actor,a.action,a.detail,a.ts,m.title,m.state FROM audit a LEFT JOIN remediations m ON m.id=a.rem "
+        "WHERE a.ws=? ORDER BY a.id DESC LIMIT ?", (ws, limit))]
+
+
 def audit_log(ws: int, rid: int) -> list[dict]:
     _ensure()
     return [dict(r) for r in store.q("SELECT actor,action,detail,ts FROM audit WHERE ws=? AND rem=? ORDER BY id",

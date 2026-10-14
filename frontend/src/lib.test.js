@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, clamp, fuzzy, looksLikeRepo, pushRecent, rankCommands, toHistory } from './lib.js'
+import { ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -67,5 +67,59 @@ describe('looksLikeRepo', () => {
   it('recognises links and owner/name, rejects prose', () => {
     for (const ok of ['https://github.com/a/b', 'github.com/a/b', 'git@github.com:a/b.git', 'a/b', ' acme/api ']) expect(looksLikeRepo(ok)).toBe(true)
     for (const no of ['', 'hello', 'a b/c', 'https://gitlab.com/a/b', 'one', 'src/main.py', 'docs/readme.md', 'github.com/torvalds', 'a_b/c']) expect(looksLikeRepo(no)).toBe(false)
+  })
+})
+
+describe('classifyInput', () => {
+  it('separates paths, repos, searches and empty', () => {
+    expect(classifyInput('')).toBe('empty')
+    expect(classifyInput('   ')).toBe('empty')
+    expect(classifyInput('/Users/me/code/api')).toBe('path')
+    expect(classifyInput('~/code/api')).toBe('path')
+    expect(classifyInput('C:\\code\\api')).toBe('path')
+    expect(classifyInput('https://github.com/acme/api')).toBe('github')
+    expect(classifyInput('acme/api')).toBe('github')
+    expect(classifyInput('payments')).toBe('search')
+    expect(classifyInput('src/main.py')).toBe('search')
+  })
+})
+
+describe('workspaceStatus', () => {
+  const w = (kind, status, events = 0) => ({ kind, status, events })
+  it('never reports a failed or running import as ready', () => {
+    expect(workspaceStatus(w('github', { state: 'failed', error: 'clone failed' }))).toMatchObject({ tone: 'bad', label: 'Scan failed', detail: 'clone failed' })
+    expect(workspaceStatus(w('github', { state: 'cloning' }))).toMatchObject({ tone: 'info', busy: true })
+    expect(workspaceStatus(w('github', { state: 'scanning' }))).toMatchObject({ busy: true })
+  })
+  it('reports finished, unscanned and empty workspaces', () => {
+    expect(workspaceStatus(w('github', { state: 'done' }))).toMatchObject({ tone: 'ok', label: 'Scanned' })
+    expect(workspaceStatus(w('github', { state: 'ready' }))).toMatchObject({ label: 'Fixes ready' })
+    expect(workspaceStatus(w('local', null))).toMatchObject({ tone: 'warn', label: 'Not scanned' })
+    expect(workspaceStatus(w('empty', null, 0))).toMatchObject({ label: 'Empty' })
+    expect(workspaceStatus(w('empty', null, 5))).toMatchObject({ label: 'Log data' })
+  })
+})
+
+describe('filter and sort workspaces', () => {
+  const list = [
+    { id: 1, name: 'Zeta', kind: 'github', repo_url: 'https://github.com/acme/zeta', events: 2, opened: 10 },
+    { id: 2, name: 'alpha', kind: 'empty', repo_url: null, events: 9, opened: 30 },
+    { id: 3, name: 'Mid', kind: 'local', repo_url: '/code/mid', events: 0, opened: 20 },
+  ]
+  it('filters by text and kind', () => {
+    expect(filterWorkspaces(list, { q: 'acme' }).map((w) => w.id)).toEqual([1])
+    expect(filterWorkspaces(list, { kind: 'local' }).map((w) => w.id)).toEqual([3])
+    expect(filterWorkspaces(list, { q: 'MID', kind: 'local' }).map((w) => w.id)).toEqual([3])
+    expect(filterWorkspaces(list, {}).length).toBe(3)
+  })
+  it('sorts by recency, name (case-insensitive) and events without mutating', () => {
+    expect(sortWorkspaces(list, 'recent').map((w) => w.id)).toEqual([2, 3, 1])
+    expect(sortWorkspaces(list, 'name').map((w) => w.id)).toEqual([2, 3, 1])
+    expect(sortWorkspaces(list, 'events').map((w) => w.id)).toEqual([2, 1, 3])
+    expect(list.map((w) => w.id)).toEqual([1, 2, 3])
+  })
+  it('names a folder from its path', () => {
+    expect(folderName('/Users/me/code/api/')).toBe('api')
+    expect(folderName('C:\\code\\api')).toBe('api')
   })
 })

@@ -74,6 +74,7 @@ function buildEnv({ base, port, token, dataDir, staticDir, seedDir, version, ext
     DEMO_USER: '',
     DEMO_PASSWORD: '',
     PYTHONUNBUFFERED: '1',
+    APC_PARENT_PID: String(process.pid),   // the engine exits by itself if this app disappears
   }
 }
 

@@ -105,8 +105,10 @@ export default function RepoView({ onDone }) {
     try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const copy = async () => {
-    await navigator.clipboard.writeText(job.diff)
-    setCopied(true); setTimeout(() => setCopied(false), 1500)
+    try {
+      await navigator.clipboard.writeText(job.diff)
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    } catch { setErr('Could not copy to the clipboard. Use Download instead.') }
   }
   const running = job && RUNNING.includes(job.state)
   return (
@@ -154,7 +156,7 @@ export default function RepoView({ onDone }) {
                 <a className="btn" href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download</a>
                 {job.state === 'ready' && (
                   <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
-                    {busy ? 'Opening' : 'Open pull request'}
+                    {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}
               </div>

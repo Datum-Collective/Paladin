@@ -28,6 +28,14 @@ const P = {
   lock: 'M6 11h12v9H6zM8 11V8a4 4 0 118 0v3',
   home: 'M4 11l8-7 8 7v9h-5v-6H9v6H4z',
   return: 'M20 6v6a3 3 0 01-3 3H5M9 11l-4 4 4 4',
+  activity: 'M3 12h4l3-8 4 16 3-8h4',
+  plug: 'M9 3v5M15 3v5M6 8h12v4a6 6 0 01-12 0zM12 18v3',
+  search2: 'M11 18a7 7 0 100-14 7 7 0 000 14z',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4',
+  alert: 'M12 8v5M12 16.500h.01M12 3.500l9.500 16.500h-19z',
+  info: 'M12 11v5M12 8h.01M12 21a9 9 0 100-18 9 9 0 000 18z',
+  'chevrons-left': 'M11 17l-5-5 5-5M18 17l-5-5 5-5',
+  'chevrons-right': 'M13 17l5-5-5-5M6 17l5-5-5-5',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
 }
 

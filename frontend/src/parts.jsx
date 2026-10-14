@@ -91,7 +91,7 @@ export function Fixes({ fixes, onPropose }) {
         Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
         {' '}{f.mitigations.map((m) => m.mitigation).filter(Boolean).join(', ')}
       </p>
-      <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose fix</button>
+      <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose Fix</button>
     </div>
   )
   return (
@@ -151,7 +151,7 @@ export function Remediations({ items, onChange }) {
               </button>
             )}
             {['executed', 'verified', 'failed'].includes(r.state) && (
-              <button disabled={busy === r.id} onClick={() => step(r.id, 'rollback')}>Roll back</button>
+              <button disabled={busy === r.id} onClick={() => step(r.id, 'rollback')}>Roll Back</button>
             )}
           </div>
           {open === r.id && detail && (
@@ -216,10 +216,10 @@ export function Ingest({ onDone, desktop }) {
       <input type="file" onChange={file} aria-label="Log file" />
       <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste log lines" />
       <div className="actions">
-        <button className="primary" onClick={send} disabled={!text}>Ingest</button>
+        <button className="primary" onClick={send} disabled={!text}>Import Logs</button>
       </div>
       <h3>Send from your own system</h3>
-      <button onClick={makeKey}>Create API key</button>
+      <button onClick={makeKey}>Create API Key</button>
       {key && <pre className="runbook">{curl}</pre>}
       {key && desktop && (
         <p className="muted small">The desktop engine listens on this machine only, on a port that changes at each launch.</p>
@@ -235,9 +235,9 @@ export function Empty({ canPlay, onPlay, go }) {
       <h2>Nothing to analyse yet</h2>
       <p className="muted">Scan a repository or add log data, and the attack paths appear here.</p>
       <div className="actions center">
-        <button className="primary" onClick={() => go('repo')}>Scan a repository</button>
-        <button onClick={() => go('ingest')}>Add log data</button>
-        {canPlay && <button onClick={onPlay}>Play sample scenario</button>}
+        <button className="primary" onClick={() => go('repo')}>Scan a Repository</button>
+        <button onClick={() => go('ingest')}>Add Log Data</button>
+        {canPlay && <button onClick={onPlay}>Play Sample Scenario</button>}
       </div>
     </div>
   )

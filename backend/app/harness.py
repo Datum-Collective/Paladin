@@ -31,12 +31,14 @@ def parse_url(url: str) -> tuple[str, str, str]:
     m = URL_RE.match(url.strip())
     if m:
         return m[1], m[2], f"https://github.com/{m[1]}/{m[2]}.git"
-    if os.environ.get("APC_ALLOW_LOCAL") == "1" and os.path.isdir(url):
+    # local folders are read in place by the desktop app only; a web server never scans its own disk on request
+    if (os.environ.get("APC_ALLOW_LOCAL") == "1" or os.environ.get("DESKTOP_MODE") == "1") and os.path.isdir(url):
         return "local", Path(url).name, url
     raise ValueError("only https://github.com/<owner>/<repo> links are accepted")
 
 
-def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60):
+def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60,
+         allow_file: bool = False):
     env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/tmp"), "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"}
     if token:
@@ -44,8 +46,8 @@ def _git(args: list[str], cwd: Path | None = None, token: str | None = None, tim
         env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.https://github.com/.extraheader",
                    GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {hdr}")
     base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never"]
-    if os.environ.get("APC_ALLOW_LOCAL") != "1":
-        base += ["-c", "protocol.file.allow=never"]
+    # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
+    base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
     r = subprocess.run(base + args, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(f"git {args[0]} failed: {r.stderr.strip()[:200]}")
@@ -169,6 +171,24 @@ def _ensure() -> None:
     _ensured_for = c
 
 
+def ensure() -> None:
+    _ensure()
+
+
+RUNNING = ("queued", "cloning", "scanning", "fixing")
+
+
+def recover_interrupted() -> int:
+    """A scan runs in a thread of this process, so any job still 'running' at startup was cut off by a quit or
+    crash. Mark it failed with a reason the user can act on (Retry), instead of leaving it spinning forever."""
+    _ensure()
+    with store.lock():      # one statement: a job cannot slip between a count and an update
+        cur = store.conn().execute(
+            f"UPDATE jobs SET state='failed', error=?, updated=? WHERE state IN ({','.join('?' * len(RUNNING))})",
+            ("Interrupted: the app closed before this scan finished. Retry to run it again.", time.time(), *RUNNING))
+        return cur.rowcount
+
+
 def _upd(jid: int, **cols) -> None:
     cols["updated"] = time.time()
     store.run(f"UPDATE jobs SET {','.join(k + '=?' for k in cols)} WHERE id=?", (*cols.values(), jid))
@@ -229,8 +249,11 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         _upd(jid, state="cloning")
         _log(jid, f"cloning {owner}/{repo} (depth 1, hooks off, symlinks off)")
         token = keys.get("GITHUB_TOKEN") if owner != "local" else None
+        local = owner == "local"
+        # a file:// URL makes git copy objects (no hardlinks into the user's repo) and honour --depth
+        source = Path(clone_url).resolve().as_uri() if local else clone_url
         _git(["clone", "--depth", "1", "--no-tags", "--single-branch", "--no-recurse-submodules",
-              clone_url, str(src)], token=token, timeout=CLONE_TIMEOUT)
+              source, str(src)], token=token, timeout=CLONE_TIMEOUT, allow_file=local)
         if _dir_size(src) > MAX_REPO_BYTES:
             raise RuntimeError("repository too large")
         _upd(jid, state="scanning")
@@ -428,6 +451,8 @@ def open_pr(ws: int, jid: int) -> dict:
     token = keys.get("GITHUB_TOKEN")
     if not token:
         raise PermissionError("GITHUB_TOKEN is not configured on the server; download the patch instead")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", job["repo_url"]):
+        raise RuntimeError("Pull requests are only available for GitHub repositories. Download the patch instead.")
     owner, repo = job["repo_url"].split("/", 1)
     src = data_root() / str(jid) / "repo"
     info = gh_api("GET", f"/repos/{owner}/{repo}", token)

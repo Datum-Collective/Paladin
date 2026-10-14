@@ -47,6 +47,19 @@ Releases: macOS needs a Developer ID certificate and notarization (`APPLE_ID`, `
 `APPLE_TEAM_ID`); auto-update on macOS requires a signed app. Set the GitHub `publish` target in
 `desktop/electron-builder.yml`. Why bundled native rather than Docker: `docs/research/electron-docker.md`.
 
+## Workspaces, launcher and navigation
+Home is the launcher: a single input recognises GitHub links, `owner/name`, local folder paths (desktop) and workspace
+names, shows real repository details before anything is cloned, and surfaces failures with a way forward. Workspaces
+are first-class (`backend/app/workspaces.py`): each has its own events, scans and history, requests pin their
+workspace with `X-Workspace`, and listings report the newest scan's real status. Navigation exposes only what exists:
+Home, Workspaces, Analysis, Repository, Insights, Assistant, Activity (scan history and remediation audit),
+Integrations and Settings. Flows and the capability inventory are in `docs/USER_FLOWS.md`.
+
+Local folders must be Git repositories (committed code is scanned in place) and are desktop-only: the web build never
+reads its own disk. A scan that was running when the app quit is marked failed ("Interrupted") on next launch, and
+Retry restarts it. The interface uses a translucent functional layer (toolbar, popovers, dialogs) over opaque
+content; it is a CSS approximation plus macOS window vibrancy, not native Liquid Glass rendering.
+
 ## Assistant and providers
 The Assistant view streams answers from Claude or OpenAI, grounded in the paths and fixes Paladin computed (risk and
 fix ranking are never delegated to a model). Both providers sit behind one interface in `backend/app/providers/`
@@ -75,6 +88,7 @@ Create a key under Sources, then `POST /api/ingest` with `X-API-Key`. Formats: `
 
 ## Known limitations
 - Sample logs from EvidenceForge are not committed yet; Play needs them and is hidden until they exist.
+- Cancelling a running clone is not supported; a scan can only be left to finish or retried after it fails.
 - Provider wire formats follow the vendors' docs but were exercised only against mocked transports here, never a live key; OpenAI stream event names beyond the documented four are unverified. Use Settings > Providers > Check key against a real account.
 - Apple publishes no minimum window size, traffic-light geometry or command-palette guidance, so those are design choices (see the research note).
 - Desktop builds are not code-signed until certificates are configured; unsigned builds cannot auto-update on macOS.

@@ -4,6 +4,7 @@ import { ago } from './lib.js'
 import { PREF_DEFAULTS, usePrefs } from './prefs.jsx'
 import { useToast } from './toast.jsx'
 import Icon from './Icons.jsx'
+import { ConfirmDialog } from './Dialogs.jsx'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
 const noop = () => {}
@@ -24,9 +25,10 @@ export const PANES = [
 
 const SHORTCUTS = [
   ['Navigation', [['Start screen', `${M}⇧H`], ['Analysis', `${M}1`], ['Repository', `${M}2`], ['Insights', `${M}3`], ['Assistant', `${M}4`],
-    ['Command palette', `${M}K`], ['Settings', `${M},`]]],
-  ['Workspaces', [['New workspace', `${M}N`], ['Open repository', `${M}⇧O`], ['Add log data', `${M}O`], ['Refresh', `${M}R`]]],
-  ['View', [['Show or hide sidebar', isMac ? '⌃⌘S' : 'Ctrl+B'], ['Show or hide inspector', isMac ? '⌥⌘I' : 'Ctrl+Alt+I']]],
+    ['Activity', `${M}5`], ['Workspaces', `${M}6`], ['Integrations', `${M}7`], ['Command palette', `${M}K`], ['Settings', `${M},`]]],
+  ['Workspaces', [['New workspace', `${M}N`], ['Open repository', `${M}⇧O`], ['Open folder', `${M}O`], ['Add log data', `${M}⇧L`],
+    ['Refresh', `${M}R`]]],
+  ['View', [['Show or hide sidebar', `${M}B`], ['Collapse or expand sidebar', isMac ? '⌃⌘S' : 'Ctrl+Shift+B'], ['Show or hide inspector', isMac ? '⌥⌘I' : 'Ctrl+Alt+I']]],
   ['Assistant', [['Send message', 'Return'], ['New line', '⇧Return']]],
 ]
 
@@ -68,7 +70,7 @@ function Segmented({ value, options, onChange, label }) {
 }
 
 /* ---- panes ---- */
-function General({ config }) {
+function General({ config, onReset }) {
   const { prefs, set } = usePrefs()
   const [upd, setUpd] = useState({ phase: 'disabled' })
   useEffect(() => (bridge ? bridge.onUpdate(setUpd) : undefined), [])
@@ -87,6 +89,11 @@ function General({ config }) {
         <Row label="After importing a repository" help="Where to land once the scan starts.">
           <Segmented label="After importing" value={prefs['general.after_import']} onChange={(v) => set('general.after_import', v)}
                      options={[['repository', 'Scan progress'], ['analysis', 'Analysis']]} />
+        </Row>
+      </Group>
+      <Group title="Open workspace">
+        <Row label="Reset workspace" help="Deletes this workspace's events, scans, fixes and history. Other workspaces are kept.">
+          <button className="danger" onClick={onReset}>Reset…</button>
         </Row>
       </Group>
       {config.desktop && (
@@ -120,6 +127,7 @@ function Appearance() {
 
 function Workspaces({ wsl, onCreate }) {
   const toast = useToast()
+  const { prefs, set } = usePrefs()
   const [editing, setEditing] = useState(null)
   const [name, setName] = useState('')
   const [del, setDel] = useState(null)
@@ -130,6 +138,13 @@ function Workspaces({ wsl, onCreate }) {
   }
   return (
     <>
+      <Group title="Browsing">
+        <Row label="Default sort" help="How the Workspaces list and Home order your projects." htmlFor="s-sort">
+          <select id="s-sort" value={prefs['workspaces.sort']} onChange={(e) => set('workspaces.sort', e.target.value)}>
+            <option value="recent">Recently opened</option><option value="name">Name</option><option value="events">Most events</option>
+          </select>
+        </Row>
+      </Group>
       <Group title="Your workspaces" footer="Each workspace keeps its own events, scans, fixes and remediation history.">
         {wsl.workspaces.map((w) => (
           <div className="frow ws-row" key={w.id}>
@@ -152,21 +167,13 @@ function Workspaces({ wsl, onCreate }) {
           </div>
         ))}
         <div className="frow"><div className="frow-text" /><div className="frow-ctl">
-          <button onClick={async () => { const w = await onCreate(); if (w) toast(`Created ${w.name}`, 'ok') }}><Icon name="plus" size={14} />New Workspace</button>
+          <button onClick={onCreate}><Icon name="plus" size={14} />New Workspace…</button>
         </div></div>
       </Group>
       {del && (
-        <div className="scrim" onMouseDown={() => setDel(null)} onKeyDown={(e) => { if (e.key === 'Escape') setDel(null) }}>
-          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="del-t" tabIndex={-1}
-               ref={(el) => el && el.focus()} onMouseDown={(e) => e.stopPropagation()}>
-            <h2 id="del-t">Delete “{del.name}”?</h2>
-            <p className="muted">Its events, scans, fixes and remediation history are deleted. You can’t undo this.</p>
-            <div className="actions end">
-              <button onClick={() => setDel(null)}>Cancel</button>
-              <button className="danger" onClick={async () => { const d = del; setDel(null); await wsl.remove(d.id) }}>Delete Workspace</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog title={`Delete “${del.name}”?`} confirmLabel="Delete Workspace"
+                       body="Its events, scans, fixes and remediation history are deleted. You can’t undo this."
+                       onCancel={() => setDel(null)} onConfirm={async () => { const d = del; setDel(null); await wsl.remove(d.id) }} />
       )}
     </>
   )
@@ -370,27 +377,23 @@ function Privacy({ wsl }) {
         </Row>
       </Group>
       {confirm && (
-        <div className="scrim" onMouseDown={() => setConfirm(false)} onKeyDown={(e) => { if (e.key === 'Escape') setConfirm(false) }}>
-          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="clr-t" tabIndex={-1}
-               ref={(el) => el && el.focus()} onMouseDown={(e) => e.stopPropagation()}>
-            <h2 id="clr-t">Delete all workspace data?</h2>
-            <p className="muted">Every workspace and everything in it is deleted. You can’t undo this.</p>
-            <div className="actions end">
-              <button onClick={() => setConfirm(false)}>Cancel</button>
-              <button className="danger" onClick={clearAll}>Delete All Data</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog title="Delete all workspace data?" confirmLabel="Delete All Data"
+                       body="Every workspace and everything in it is deleted. You can’t undo this."
+                       onCancel={() => setConfirm(false)} onConfirm={clearAll} />
       )}
     </>
   )
 }
 
+const bytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} B`)
+
 function Advanced({ config, user }) {
   const toast = useToast()
-  const { set } = usePrefs()
   const [info, setInfo] = useState(null)
-  useEffect(() => { if (bridge) bridge.info().then(setInfo).catch(noop) }, [])
+  const [store, setStore] = useState(null)
+  const [confirmClones, setConfirmClones] = useState(false)
+  const loadStore = () => api.storage().then(setStore).catch(noop)
+  useEffect(() => { if (bridge) bridge.info().then(setInfo).catch(noop); loadStore() }, [])
   const diag = [
     `Paladin ${(info && info.version) || config.version}`, `Mode: ${config.desktop ? 'desktop' : 'web'}`,
     info ? `Platform: ${info.platform} ${info.arch}` : null, `Claude key: ${config.providers && config.providers.anthropic ? 'set' : 'not set'}`,
@@ -409,9 +412,24 @@ function Advanced({ config, user }) {
           <Row label="Data folder" help={info.dataDir} stack><button onClick={() => bridge.openDataFolder()}>Show in Finder</button></Row>
         )}
       </Group>
+      <Group title="Storage">
+        <Row label="Database" help="Events, findings, fixes and history.">{store ? bytes(store.database_bytes) : '…'}</Row>
+        <Row label="Cloned repositories" help={store ? `${store.clones.count} working ${store.clones.count === 1 ? 'copy' : 'copies'} from scans. Findings stay; patched-file previews for cleared scans stop working.` : ''}>
+          <span>{store ? bytes(store.clones.bytes) : '…'}</span>
+          <button disabled={!store || store.clones.count === 0} onClick={() => setConfirmClones(true)}>Clear…</button>
+        </Row>
+      </Group>
+      {confirmClones && (
+        <ConfirmDialog title="Clear cloned repositories?" confirmLabel="Clear Clones" danger={false}
+                       body="Working copies of finished scans are deleted. Findings and history are kept, and scans in progress are not touched."
+                       onCancel={() => setConfirmClones(false)}
+                       onConfirm={async () => { setConfirmClones(false); try { const r = await api.clearClones(); toast(`Removed ${r.removed} ${r.removed === 1 ? 'copy' : 'copies'}`, 'ok'); loadStore() } catch (e) { toast(e.message, 'bad') } }} />
+      )}
       <Group title="Support">
         <Row label="Diagnostics" help="Versions and which integrations are configured. No keys or workspace data.">
-          <button onClick={async () => { await navigator.clipboard.writeText(diag); toast('Diagnostics copied', 'ok') }}>Copy Diagnostics</button>
+          <button onClick={async () => {
+            try { await navigator.clipboard.writeText(diag); toast('Diagnostics copied', 'ok') } catch { toast('Could not copy. Select and copy it manually.', 'bad') }
+          }}>Copy Diagnostics</button>
         </Row>
       </Group>
       <Group title="Reset">
@@ -423,9 +441,9 @@ function Advanced({ config, user }) {
   )
 }
 
-export default function Settings({ pane, setPane, config, user, wsl, onCreate }) {
+export default function Settings({ pane, setPane, config, user, wsl, onCreate, onReset }) {
   const body = {
-    general: <General config={config} />, appearance: <Appearance />, workspaces: <Workspaces wsl={wsl} onCreate={onCreate} />,
+    general: <General config={config} onReset={onReset} />, appearance: <Appearance />, workspaces: <Workspaces wsl={wsl} onCreate={onCreate} />,
     github: <GitHub config={config} />, providers: <Providers config={config} />, code: <Code />, shortcuts: <Shortcuts />,
     privacy: <Privacy wsl={wsl} />, advanced: <Advanced config={config} user={user} />,
   }[pane]

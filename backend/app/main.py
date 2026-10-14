@@ -30,6 +30,7 @@ _hits: dict[int, deque] = defaultdict(deque)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.conn()
+    harness.recover_interrupted()
     auth.seed_demo()
     yield
 

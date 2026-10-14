@@ -20,7 +20,7 @@ function Timeline({ data }) {
         return Object.entries(r.by_source).map(([s, c]) => {
           const h = (c / max) * (H - 30)
           y -= h
-          return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h}
+          return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h} rx={Math.min(3, Math.max(1, bw - 2) / 2)}
                        style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }}><title>{`${s}: ${c}`}</title></rect>
         })
       })}
@@ -40,6 +40,30 @@ function Timeline({ data }) {
     </svg>
   )
 }
+
+/** Horizontal bars of how often each label occurs. Labels are plain text so nothing depends on colour alone. */
+function CountBars({ rows, label }) {
+  if (!rows.length) return <p className="muted">Nothing to show.</p>
+  const W = 640, ROW = 26, L = 220, R = 40
+  const max = Math.max(...rows.map((r) => r[1]), 1)
+  return (
+    <svg viewBox={`0 0 ${W} ${rows.length * ROW + 6}`} className="chart" role="img" aria-label={label}>
+      {rows.map(([name, n], i) => {
+        const w = Math.max(4, (n / max) * (W - L - R))
+        return (
+          <g key={name} transform={`translate(0 ${i * ROW + 3})`}>
+            <text x={L - 10} y={ROW / 2 + 3} fontSize="12" textAnchor="end" fill="currentColor">{name.length > 30 ? `${name.slice(0, 29)}…` : name}</text>
+            <rect x={L} y={4} width={w} height={ROW - 10} rx={(ROW - 10) / 2} style={{ fill: 'var(--accent)' }} />
+            <text x={L + w + 8} y={ROW / 2 + 3} fontSize="12" fill="currentColor">{n}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+const tally = (items, key) => Object.entries(items.reduce((a, f) => ({ ...a, [f[key]]: (a[f[key]] || 0) + 1 }), {}))
+  .sort((a, b) => b[1] - a[1]).slice(0, 8)
 
 function RiskLine({ series }) {
   const W = 640, H = 130, P = 30
@@ -72,10 +96,13 @@ function Table({ cols, rows }) {
 export default function Insights({ rems }) {
   const [t, setT] = useState(null)
   const [m, setM] = useState(null)
+  const [code, setCode] = useState(null)
   useEffect(() => {
     api.timeline().then(setT).catch(() => {})
     api.metrics().then(setM).catch(() => {})
+    api.codeReport().then(setCode).catch(() => {})
   }, [])
+  const findings = code && code.scanned ? code.findings : []
   const done = rems.filter((r) => r.risk_before != null)
   return (
     <div className="insights">
@@ -90,6 +117,21 @@ export default function Insights({ rems }) {
           </div>
         )}
       </section>
+      {findings.length > 0 && (
+        <section className="card wide-card">
+          <h3>Repository findings · {code.repo}</h3>
+          <div className="stats">
+            <div><b>{findings.length}</b><span>findings</span></div>
+            <div><b>{findings.filter((f) => f.fixed).length}</b><span>fixed</span></div>
+            <div><b>{findings.filter((f) => f.exploitable === false).length}</b><span>judged not exploitable</span></div>
+            <div><b>{code.files}</b><span>files scanned</span></div>
+          </div>
+          <div className="two-col">
+            <div><h4>By rule</h4><CountBars rows={tally(findings, 'title')} label="Findings by rule" /></div>
+            <div><h4>By file</h4><CountBars rows={tally(findings, 'file')} label="Findings by file" /></div>
+          </div>
+        </section>
+      )}
       <section className="card">
         <h3>Attack timeline</h3>
         {t && <Timeline data={t} />}

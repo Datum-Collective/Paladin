@@ -2,14 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import Analysis from './Analysis.jsx'
 import CommandPalette from './CommandPalette.jsx'
+import Resizer from './Resizer.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
 import Settings, { PANES } from './Settings.jsx'
 import Home from './Home.jsx'
+import WorkspacesView from './WorkspacesView.jsx'
+import ActivityView from './ActivityView.jsx'
+import IntegrationsView from './IntegrationsView.jsx'
+import { ConfirmDialog, NewWorkspaceDialog } from './Dialogs.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
-import { pushRecent } from './lib.js'
+import { classifyInput, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
@@ -32,15 +37,15 @@ function Login({ onDone, config }) {
     <form className="login" onSubmit={(e) => { e.preventDefault(); go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw))) }}>
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>}
+      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with Demo Account</button>}
       {config.demo && <div className="or">or</div>}
       <input placeholder="Email" aria-label="Email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
       <input placeholder="Password" aria-label="Password" type="password"
              autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={pw}
              onChange={(e) => setPw(e.target.value)} />
-      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign In' : 'Create Account'}</button>
       <button type="button" className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? 'Create an account' : 'I already have an account'}
+        {mode === 'login' ? 'Create an Account' : 'Sign In Instead'}
       </button>
       {err && <p className="err" role="alert">{err}</p>}
     </form>
@@ -54,14 +59,15 @@ function Splash({ error, onRetry }) {
       {error ? (
         <>
           <p className="err" role="alert">{error}</p>
-          <button onClick={onRetry}>Try again</button>
+          <button onClick={onRetry}>Try Again</button>
         </>
       ) : <p className="muted">Starting…</p>}
     </div>
   )
 }
 
-const TITLES = { analysis: 'Analysis', repo: 'Repository', insights: 'Insights', assistant: 'Assistant', settings: 'Settings' }
+const TITLES = { home: 'Home', workspaces: 'Workspaces', analysis: 'Analysis', repo: 'Repository', insights: 'Insights',
+  assistant: 'Assistant', activity: 'Activity', integrations: 'Integrations', settings: 'Settings' }
 
 function Shell({ config, user, onSignOut, onExpired }) {
   const toast = useToast()
@@ -74,7 +80,12 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [palette, setPalette] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const [homeFocus, setHomeFocus] = useState(0)
+  const [homeIntent, setHomeIntent] = useState(null)
+  const [newDlg, setNewDlg] = useState(false)
+  const [delTarget, setDelTarget] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
+  const [rail, setRail] = useStored('sidebar-rail', false)
+  const [sidebarW, setSidebarW] = useStored('sidebar-w', 248)
   const [inspectorOpen, setInspectorOpen] = useStored('inspector-open', true)
   const [pane, setPane] = useStored('settings-pane', 'general')
   const [recents, setRecents] = useStored('palette-recents', [])
@@ -93,29 +104,52 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const fx = ws.fixes
 
   const openWs = useCallback(async (id) => {
-    if (await wsl.open(id)) { setSelected(null); setTab('paths'); setView((v) => (v === 'home' || v === null ? 'analysis' : v)) }
+    // opening a workspace lands inside it; if you are already in one of its views, stay on that view
+    const inside = new Set(['analysis', 'repo', 'insights', 'assistant', 'activity'])
+    if (await wsl.open(id)) { setSelected(null); setTab('paths'); setView((v) => (inside.has(v) ? v : 'analysis')) }
   }, [wsl])
-  const createWs = useCallback(async () => {
-    const w = await wsl.create()
+  const createNamed = useCallback(async (name) => {
+    const w = await wsl.create(name)
     if (w) { setSelected(null); setView('analysis'); toast(`Created ${w.name}`, 'ok') }
+    else throw new Error('Could not create the workspace.')
     return w
   }, [wsl, toast])
+  const importLocal = useCallback(async (path) => {
+    const r = await wsl.importLocal(path)
+    setSelected(null)
+    setView(prefs['general.after_import'] === 'analysis' ? 'analysis' : 'repo')
+    toast(r.reopened ? `Scanning ${r.workspace.name} again` : `Scanning ${r.workspace.name}`, 'ok')
+  }, [wsl, prefs, toast])
+  const chooseFolder = useCallback(() => (bridge && bridge.chooseFolder ? bridge.chooseFolder() : Promise.resolve(null)), [])
+
   const importRepo = useCallback(async (q) => {
     const r = await wsl.importRepo(q)               // throws to Home, which shows the message inline
     setSelected(null)
     setView(prefs['general.after_import'] === 'analysis' ? 'analysis' : 'repo')
     toast(r.reopened ? `Opened ${r.workspace.name}` : `Scanning ${r.workspace.name}`, 'ok')
   }, [wsl, prefs, toast])
+  const retryScan = useCallback(async (target) => {      // stays where it is: the user is looking at Activity
+    if (classifyInput(target) === 'path') await api.importLocal(target)
+    else await api.importRepo(target)
+    await wsl.reload()
+    toast('Scan restarted', 'ok')
+  }, [wsl, toast])
 
   // One command table drives the menu bar, the palette and the keyboard, so they cannot drift apart.
   const run = useCallback((id) => {
     const table = {
       home: () => setView('home'), 'open-repo': () => { setView('home'); setHomeFocus((n) => n + 1) },
-      'new-workspace': () => createWs(),
+      'new-workspace': () => setNewDlg(true),
+      'open-folder': async () => {
+        const p = await chooseFolder()
+        if (p) { setView('home'); setHomeIntent({ id: Date.now(), path: p }) }
+        else if (!bridge) toast('Opening folders is available in the desktop app.', 'warn')
+      },
+      workspaces: () => setView('workspaces'), activity: () => setView('activity'), integrations: () => setView('integrations'),
       analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
       assistant: () => setView('assistant'), settings: () => goSettings(), ingest: () => go('ingest'),
       events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
-      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'toggle-inspector': () => setInspectorOpen((o) => !o),
+      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'collapse-sidebar': () => { setSidebarOpen(true); setRail((r) => !r) }, 'toggle-inspector': () => setInspectorOpen((o) => !o),
       play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
       refresh: () => ws.refresh(), reset: () => setConfirmReset(true),
       'fix-cheapest': () => (fx && fx.cheapest_cut ? ws.propose(fx.cheapest_cut.edges, 'Cheapest cut') : toast('There is no fix to propose yet.', 'warn')),
@@ -127,7 +161,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       },
     }
     if (table[id]) table[id]()
-  }, [ws, fx, go, goSettings, createWs, toast, setSidebarOpen, setInspectorOpen])
+  }, [ws, fx, go, goSettings, chooseFolder, toast, setSidebarOpen, setInspectorOpen, setRail])
 
   // native menu bar -> same table (desktop)
   const runRef = useRef(run)
@@ -137,7 +171,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
   // keyboard (web has no menu bar; desktop accelerators come from the menu, so only the web needs these)
   useEffect(() => {
     if (config.desktop) return undefined
-    const keys = { k: 'palette', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', ',': 'settings' }
+    const keys = { k: 'palette', b: 'toggle-sidebar', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', 5: 'activity', 6: 'workspaces', 7: 'integrations', ',': 'settings' }
     const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return
       const id = e.shiftKey && e.key.toLowerCase() === 'h' ? 'home' : keys[e.key.toLowerCase()]
@@ -155,7 +189,11 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const commands = useMemo(() => {
     const c = [
       { id: 'home', group: 'Go to', title: 'Start screen', icon: 'home', hint: 'Open a repository', keywords: 'home import github open' },
-      { id: 'new-workspace', group: 'Workspaces', title: 'New workspace', icon: 'plus' },
+      { id: 'workspaces', group: 'Go to', title: 'All workspaces', icon: 'folder', keywords: 'browse search projects' },
+      { id: 'activity', group: 'Go to', title: 'Activity', icon: 'activity', hint: 'Scan history and remediation', keywords: 'history log scans' },
+      { id: 'integrations', group: 'Go to', title: 'Integrations', icon: 'plug', hint: 'GitHub and model providers', keywords: 'github claude openai connect' },
+      { id: 'new-workspace', group: 'Workspaces', title: 'New workspace…', icon: 'plus' },
+      { id: 'open-folder', group: 'Workspaces', title: 'Open folder…', icon: 'folder', keywords: 'local project git' },
       { id: 'open-repo', group: 'Workspaces', title: 'Open repository…', icon: 'github', keywords: 'import github scan clone' },
       { id: 'analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes' },
       { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
@@ -166,6 +204,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
       { id: 'refresh', group: 'Actions', title: 'Refresh', icon: 'refresh' },
       { id: 'toggle-sidebar', group: 'View', title: 'Show or hide sidebar', icon: 'sidebar' },
+      { id: 'collapse-sidebar', group: 'View', title: 'Collapse or expand sidebar', icon: 'chevrons-left' },
       { id: 'toggle-inspector', group: 'View', title: 'Show or hide inspector', icon: 'inspector' },
       { id: 'reset', group: 'Actions', title: 'Reset workspace…', icon: 'trash' },
     ]
@@ -185,25 +224,19 @@ function Shell({ config, user, onSignOut, onExpired }) {
   }, [ws.canPlay, ws.paths, fx, run, openPath, wsl.workspaces, wsl.active, openWs])
 
   if (view === null || !ws.loaded) return <Splash />
-  if (view === 'home') {
-    return (
-      <>
-        <Home workspaces={wsl.workspaces} current={wsl.current} onOpen={openWs} onImport={importRepo} onCreate={createWs}
-              goSettings={goSettings} go={go} githubConfigured={Boolean(config.github)} focusToken={homeFocus}
-              onBack={wsl.current ? () => setView('analysis') : null} />
-        <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents} />
-      </>
-    )
-  }
   const showInspector = view === 'analysis'
   return (
-    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'} key={wsl.active}>
+    <div className="app" data-sidebar={sidebarOpen ? (rail ? 'rail' : 'open') : 'closed'} key={wsl.active}
+         style={sidebarOpen ? { gridTemplateColumns: `${rail ? 52 : sidebarW}px minmax(0, 1fr)` } : undefined}>
       {sidebarOpen && (
         <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
                  playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
-                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut}
-                 workspaces={wsl.workspaces} current={wsl.current} onOpenWs={openWs} onCreateWs={createWs}
-                 onHome={() => run('open-repo')} onManage={() => goSettings('workspaces')} />
+                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} rail={rail} onToggleRail={() => run('collapse-sidebar')}
+                 workspaces={wsl.workspaces} current={wsl.current} onOpenWs={openWs} onCreateWs={() => setNewDlg(true)}
+                 onHome={() => run('open-repo')} onManage={() => run('workspaces')} />
+      )}
+      {sidebarOpen && !rail && (
+        <Resizer side="left" value={sidebarW} min={200} max={360} onChange={setSidebarW} label="Resize sidebar" />
       )}
       <div className="content">
         <div className="toolbar drag" role="toolbar" aria-label={`${title} toolbar`}>
@@ -220,18 +253,38 @@ function Shell({ config, user, onSignOut, onExpired }) {
             <button className="tool nodrag" onClick={() => run('toggle-inspector')} aria-pressed={inspectorOpen}
                     aria-label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} title="Show or hide inspector"><Icon name="inspector" size={16} /></button>
           )}
-          <button className="tool nodrag" onClick={() => setPalette(true)} aria-label="Command palette" title="Command palette"><Icon name="search" size={16} /></button>
         </div>
+        {view === 'home' && (
+          <Home workspaces={wsl.workspaces} current={wsl.current} desktop={config.desktop} config={config} onOpen={openWs}
+                onImportRepo={importRepo} onImportFolder={importLocal} onChooseFolder={chooseFolder} onNew={() => setNewDlg(true)}
+                onRename={wsl.rename} onDelete={setDelTarget} go={go} goSettings={goSettings} focusToken={homeFocus} intent={homeIntent} />
+        )}
+        {view === 'workspaces' && (
+          <WorkspacesView wsl={wsl} onOpen={openWs} onRename={wsl.rename} onDelete={setDelTarget}
+                          onNew={() => setNewDlg(true)} onOpenRepo={() => run('open-repo')} />
+        )}
+        {view === 'activity' && <ActivityView key={wsl.active} onRetry={retryScan} goSettings={goSettings} />}
+        {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
         {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} />}
         {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} workspaceEmpty={ws.empty} />}
-        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={createWs} />}
+        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
                     desktop={config.desktop} inspectorOpen={inspectorOpen} />
         )}
       </div>
 
+      {newDlg && (
+        <NewWorkspaceDialog desktop={config.desktop} onCancel={() => setNewDlg(false)} onCreate={createNamed}
+                            onImportRepo={importRepo} onImportFolder={importLocal} onChooseFolder={chooseFolder} />
+      )}
+      {delTarget && (
+        <ConfirmDialog title={`Delete “${delTarget.name}”?`} confirmLabel="Delete Workspace"
+                       body="Its events, scans, fixes and remediation history are deleted. You can’t undo this."
+                       onCancel={() => setDelTarget(null)}
+                       onConfirm={async () => { const d = delTarget; setDelTarget(null); if (await wsl.remove(d.id)) toast(`Deleted ${d.name}`, 'ok') }} />
+      )}
       <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents}
                       onRun={(id) => { if (!id.startsWith('path-') && !id.startsWith('ws-')) setRecents((r) => pushRecent(r, id)) }} />
       {confirmReset && (

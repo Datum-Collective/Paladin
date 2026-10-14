@@ -15,9 +15,40 @@ class WorkspaceError(Exception):
         self.status, self.message = status, message
 
 
+def kind_of(repo_url: str | None) -> str:
+    if not repo_url:
+        return "empty"
+    return "github" if repo_url.startswith("https://github.com/") else "local"
+
+
+def _status_map(ids: list[int]) -> dict[int, dict]:
+    """Newest scan per workspace in one query, so listing N workspaces is not N+1 lookups."""
+    if not ids:
+        return {}
+    harness.ensure()
+    marks = ",".join("?" * len(ids))
+    rows = store.q(f"SELECT id,ws,state,error,updated FROM jobs WHERE id IN "
+                   f"(SELECT MAX(id) FROM jobs WHERE ws IN ({marks}) GROUP BY ws)", tuple(ids))
+    return {r["ws"]: {"job": r["id"], "state": r["state"], "error": r["error"], "updated": r["updated"]} for r in rows}
+
+
+def _event_counts(ids: list[int]) -> dict[int, int]:
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    return {r["ws"]: r["c"] for r in store.q(f"SELECT ws, COUNT(*) c FROM events WHERE ws IN ({marks}) GROUP BY ws", tuple(ids))}
+
+
+def _rows(rows) -> list[dict]:
+    ids = [r["id"] for r in rows]
+    st, ev = _status_map(ids), _event_counts(ids)
+    return [{"id": r["id"], "name": r["name"], "repo_url": r["repo_url"], "kind": kind_of(r["repo_url"]),
+             "created": r["created"], "opened": r["opened"], "events": ev.get(r["id"], 0), "status": st.get(r["id"])}
+            for r in rows]
+
+
 def _row(r) -> dict:
-    return {"id": r["id"], "name": r["name"], "repo_url": r["repo_url"], "created": r["created"], "opened": r["opened"],
-            "events": store.event_count(r["id"])}
+    return _rows([r])[0]
 
 
 def _next_id() -> int:
@@ -81,11 +112,13 @@ def _set_active(user_id: int, ws: int) -> None:
 def listing(user_id: int) -> dict:
     act = active(user_id)
     rows = store.q("SELECT * FROM workspaces WHERE owner=? ORDER BY opened DESC, id DESC", (user_id,))
-    return {"active": act, "workspaces": [_row(r) for r in rows]}
+    return {"active": act, "workspaces": _rows(rows)}
 
 
 def find_by_repo(user_id: int, repo_url: str):
-    r = store.q("SELECT * FROM workspaces WHERE owner=? AND lower(repo_url)=lower(?)", (user_id, repo_url))
+    # GitHub names are case-insensitive; filesystem paths are matched exactly
+    r = store.q("SELECT * FROM workspaces WHERE owner=? AND (repo_url=? OR "
+                "(repo_url LIKE 'https://github.com/%' AND lower(repo_url)=lower(?)))", (user_id, repo_url, repo_url))
     return r[0] if r else None
 
 

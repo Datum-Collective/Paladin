@@ -49,6 +49,7 @@ test('buildEnv pins loopback, desktop mode and drops the demo login', () => {
   assert.equal(env.DESKTOP_MODE, '1')
   assert.equal(env.APC_DESKTOP_TOKEN, 'tok')
   assert.equal(env.DEMO_USER, '')
+  assert.equal(env.APC_PARENT_PID, String(process.pid))
   assert.equal(env.GITHUB_TOKEN, 'g')
   assert.equal(env.PATH, '/bin')
   assert.equal(buildEnv({ base: { ANTHROPIC_API_KEY: 'leak' }, port: 1, token: 't', dataDir: '/d', staticDir: '/s',

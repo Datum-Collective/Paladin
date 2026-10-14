@@ -18,6 +18,11 @@ export function useWorkspaces(user) {
   }, [toast])
 
   const open = useCallback((id) => guard(async () => { take(await api.openWorkspace(id)); return true }), [guard, take])
+  const importLocal = useCallback(async (path) => {
+    const r = await api.importLocal(path)
+    take(r)
+    return r
+  }, [take])
   const create = useCallback((name) => guard(async () => {
     const r = await api.createWorkspace(name)
     take(r)
@@ -32,5 +37,5 @@ export function useWorkspaces(user) {
   }, [take])
 
   const current = state.workspaces.find((w) => w.id === state.active) || null
-  return { ...state, current, reload, open, create, rename, remove, importRepo }
+  return { ...state, current, reload, open, create, rename, remove, importRepo, importLocal }
 }

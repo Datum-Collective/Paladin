@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS prefs(user_id INTEGER NOT NULL, key TEXT NOT NULL, va
 """
 
 
+def db_path() -> Path:
+    return Path(os.environ.get("DATA_DIR", "./data_dir")) / "apc.db"
+
+
 def lock() -> threading.RLock:
     return _lock
 
@@ -34,9 +38,8 @@ def lock() -> threading.RLock:
 def conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        d = Path(os.environ.get("DATA_DIR", "./data_dir"))
-        d.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(d / "apc.db", check_same_thread=False, isolation_level=None)
+        db_path().parent.mkdir(parents=True, exist_ok=True)
+        _conn = sqlite3.connect(db_path(), check_same_thread=False, isolation_level=None)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
         try:  # keys are bound to the workspace they were created in

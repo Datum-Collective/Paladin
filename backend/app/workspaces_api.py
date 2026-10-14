@@ -1,8 +1,13 @@
 """HTTP surface for workspaces, repository onboarding (resolve, suggest, import), GitHub status and preferences."""
+import os
+import shutil
+import time
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import auth, github, harness, prefs, workspaces
+from . import auth, github, harness, prefs, remediation, store, workspaces
 
 router = APIRouter()
 GH_STATUS = {"not_found": 404, "auth": 424, "rate_limit": 429, "network": 502, "server": 502, "invalid": 422}
@@ -52,7 +57,6 @@ async def import_repo(b: QueryBody, u: dict = Depends(auth.require_user)):
     uid = u["user_id"]
     existing = workspaces.find_by_repo(uid, github.canonical(*parsed))
     if existing:
-        workspaces.open_(uid, existing["id"])
         jobs = harness.list_jobs(existing["id"])
         try:
             # reuse the latest scan unless there is none or it failed (the user is probably retrying after a fix)
@@ -62,6 +66,7 @@ async def import_repo(b: QueryBody, u: dict = Depends(auth.require_user)):
                 job = harness.start(existing["id"], existing["repo_url"])
         except (ValueError, RuntimeError) as e:
             raise HTTPException(409, str(e)) from None
+        workspaces.open_(uid, existing["id"])      # switch only once the scan is known to be running
         return {"workspace": workspaces._row(existing), "job": job, "reopened": True, **workspaces.listing(uid)}
     try:
         info = await github.repo(*parsed)
@@ -165,3 +170,118 @@ def put_prefs(body: dict, u: dict = Depends(auth.require_user)):
         return prefs.patch(u["user_id"], body)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
+
+
+# ---- local folders (desktop only) ----
+class PathBody(BaseModel):
+    path: str = Field(max_length=1000)
+
+
+def _local(path: str) -> Path:
+    if not auth.desktop_mode():
+        raise HTTPException(404, "Local folders are only available in the desktop app.")
+    p = os.path.expanduser((path or "").strip())
+    if not p:
+        raise HTTPException(422, "Choose a folder path.")
+    if not os.path.isabs(p):
+        raise HTTPException(422, "Use an absolute path.")
+    d = Path(p).expanduser()
+    if not d.is_dir():
+        raise HTTPException(422, "That folder does not exist or is not readable.")
+    d = d.resolve()
+    if not (d / ".git").exists():
+        raise HTTPException(422, "This folder is not a Git repository. Paladin scans committed code, so run `git init` "
+                                 "and commit first.")
+    return d
+
+
+@router.post("/api/repos/resolve-local")
+def resolve_local(b: PathBody, u: dict = Depends(auth.require_user)):
+    d = _local(b.path)
+    existing = workspaces.find_by_repo(u["user_id"], str(d))
+    return {"name": d.name, "path": str(d), "is_git": True, "workspace_id": existing["id"] if existing else None}
+
+
+@router.post("/api/workspaces/import-local")
+def import_local(b: PathBody, u: dict = Depends(auth.require_user)):
+    d = _local(b.path)
+    uid = u["user_id"]
+    existing = workspaces.find_by_repo(uid, str(d))
+    if existing:
+        try:
+            job = harness.start(existing["id"], str(d))
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(409, str(e)) from None
+        workspaces.open_(uid, existing["id"])
+        return {"workspace": workspaces._row(existing), "job": job, "reopened": True, **workspaces.listing(uid)}
+    previous = workspaces.active(uid)
+    ws = _ws(workspaces.create_for_repo, uid, d.name, str(d))
+    try:
+        job = harness.start(ws["id"], str(d))
+    except (ValueError, RuntimeError) as e:
+        try:
+            workspaces.delete(uid, ws["id"])
+            workspaces.open_(uid, previous)
+        except Exception:
+            pass
+        raise HTTPException(409 if isinstance(e, RuntimeError) else 422, str(e)) from None
+    return {"workspace": ws, "job": job, "reopened": False, **workspaces.listing(uid)}
+
+
+# ---- activity ----
+@router.get("/api/activity")
+def activity(limit: int = 100, u: dict = Depends(auth.require_user)):
+    """Scan history and remediation steps for the open workspace, newest first. Everything here is recorded
+    elsewhere (jobs, audit); this only merges it."""
+    ws, limit = u["id"], max(1, min(limit, 300))
+    harness.ensure()
+    items = []
+    for r in store.q("SELECT id,repo_url,state,error,updated FROM jobs WHERE ws=? ORDER BY id DESC LIMIT ?", (ws, limit)):
+        items.append({"kind": "scan", "id": r["id"], "title": f"Scan {r['repo_url']}", "state": r["state"],
+                      "detail": r["error"] or "", "ts": r["updated"],
+                      "retry": r["repo_url"] if r["state"] == "failed" else None})
+    for r in remediation.history(ws, limit):
+        items.append({"kind": "remediation", "id": r["id"], "title": r["title"] or "Remediation", "action": r["action"],
+                      "actor": r["actor"], "detail": r["detail"], "state": r["state"], "ts": r["ts"]})
+    items.sort(key=lambda i: i["ts"], reverse=True)
+    return {"items": items[:limit]}
+
+
+# ---- storage ----
+def _tree_bytes(p: Path) -> int:
+    total = 0
+    for f in p.rglob("*"):
+        try:
+            if f.is_file() and not f.is_symlink():
+                total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+@router.get("/api/storage")
+def storage(u: dict = Depends(auth.require_user)):
+    harness.ensure()
+    db = store.db_path()
+    db_bytes = sum(p.stat().st_size for p in (db, Path(f"{db}-wal"), Path(f"{db}-shm")) if p.exists())
+    mine = [r["id"] for r in store.q("SELECT j.id FROM jobs j JOIN workspaces w ON w.id=j.ws WHERE w.owner=?", (u["user_id"],))]
+    dirs = [harness.data_root() / str(j) for j in mine if (harness.data_root() / str(j)).exists()]
+    return {"database_bytes": db_bytes,
+            "clones": {"count": len(dirs), "bytes": sum(_tree_bytes(d) for d in dirs)}}
+
+
+@router.delete("/api/storage/clones")
+def clear_clones(u: dict = Depends(auth.require_user)):
+    """Delete cloned working copies of settled scans (done, failed, PR opened). Scans in progress and scans with
+    fixes awaiting approval are kept; findings and history always stay."""
+    harness.ensure()
+    # 'ready' jobs still hold the fix branch awaiting approval, so only settled scans are cleared
+    rows = store.q("SELECT j.id FROM jobs j JOIN workspaces w ON w.id=j.ws "
+                   "WHERE w.owner=? AND j.state IN ('done','failed','pr_opened')", (u["user_id"],))
+    removed = 0
+    for r in rows:
+        d = harness.data_root() / str(r["id"])
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+    return {"removed": removed, "at": time.time()}

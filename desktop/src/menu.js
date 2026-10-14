@@ -20,7 +20,8 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
     submenu: [
       { label: 'New Workspace', accelerator: 'CommandOrControl+N', click: cmd('new-workspace') },
       { label: 'Open Repository…', accelerator: 'CommandOrControl+Shift+O', click: cmd('open-repo') },
-      { label: 'Add Log Data…', accelerator: 'CommandOrControl+O', click: cmd('ingest') },
+      { label: 'Open Folder…', accelerator: 'CommandOrControl+O', click: cmd('open-folder') },
+      { label: 'Add Log Data…', accelerator: 'CommandOrControl+Shift+L', click: cmd('ingest') },
       { type: 'separator' },
       ...(isMac ? [{ role: 'close' }] : [settings, { type: 'separator' }, { role: 'quit' }]),
     ],
@@ -34,7 +35,8 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
   t.push({
     label: 'View',
     submenu: [
-      { label: 'Show or Hide Sidebar', accelerator: isMac ? 'Control+Command+S' : 'Control+B', click: cmd('toggle-sidebar') },
+      { label: 'Show or Hide Sidebar', accelerator: 'CommandOrControl+B', click: cmd('toggle-sidebar') },
+      { label: 'Collapse or Expand Sidebar', accelerator: isMac ? 'Control+Command+S' : 'Control+Shift+B', click: cmd('collapse-sidebar') },
       { label: 'Show or Hide Inspector', accelerator: isMac ? 'Alt+Command+I' : 'Control+Alt+I', click: cmd('toggle-inspector') },
       { type: 'separator' },
       { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
@@ -51,6 +53,9 @@ function buildTemplate({ isMac, isPackaged, send, appName = 'Paladin' }) {
       { label: 'Repository', accelerator: 'CommandOrControl+2', click: cmd('repo') },
       { label: 'Insights', accelerator: 'CommandOrControl+3', click: cmd('insights') },
       { label: 'Assistant', accelerator: 'CommandOrControl+4', click: cmd('assistant') },
+      { label: 'Activity', accelerator: 'CommandOrControl+5', click: cmd('activity') },
+      { label: 'Workspaces', accelerator: 'CommandOrControl+6', click: cmd('workspaces') },
+      { label: 'Integrations', accelerator: 'CommandOrControl+7', click: cmd('integrations') },
       { type: 'separator' },
       { label: 'Command Palette…', accelerator: 'CommandOrControl+K', click: cmd('palette') },
     ],

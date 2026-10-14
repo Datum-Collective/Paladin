@@ -26,7 +26,7 @@ function ErrorNote({ e, onRetry, goSettings }) {
       {e.hint && <span className="muted"> {e.hint}</span>}
       <div className="actions">
         {auth && <button onClick={goSettings}>Open Settings</button>}
-        {e.retryable && <button onClick={onRetry}>Try again</button>}
+        {e.retryable && <button onClick={onRetry}>Try Again</button>}
         {e.request_id && <span className="muted small mono">Request {e.request_id}</span>}
       </div>
     </div>
