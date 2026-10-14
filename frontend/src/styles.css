@@ -160,3 +160,10 @@ mark { color: inherit; border-radius: 3px; padding: 0 1px; }
   .topbar { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.checks { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px; }
+.checks li { color: var(--text-2); } .checks .pass span { color: var(--ok); } .checks .fail span { color: var(--bad); }
+.diff-tools { padding: 4px 12px; border-top: 1px solid var(--line); background: var(--bg-2); text-align: right; }
+.diff-tools .link { min-height: 28px; padding: 0 4px; }
+.notice.warn { background: var(--warn-bg); }
+table.diff.full td.code { white-space: pre; overflow-x: auto; }

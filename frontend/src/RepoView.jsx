@@ -36,6 +36,20 @@ function ScanReport({ r }) {
   )
 }
 
+function Verification({ v }) {
+  if (!v) return null
+  const ok = v.python_files_compiled === v.python_files_changed && v.fixed_rules_still_matching.length === 0
+  return (
+    <p className={ok ? 'notice' : 'notice warn'}>
+      <b>Verified on the patched files:</b> {v.python_files_compiled} of {v.python_files_changed} changed Python
+      file(s) compile; {v.changed_files - v.python_files_changed} other file(s) are not syntax-checked; findings in
+      changed files went from {v.findings_before} to {v.findings_after}
+      {v.fixed_rules_still_matching.length ? `; still matching: ${v.fixed_rules_still_matching.join(', ')}` : ''}.
+      Tests were not run.
+    </p>
+  )
+}
+
 function Findings({ items }) {
   if (!items || !items.length) return null
   const verdict = (f) => (f.fixed ? ['fixed', 'ok'] : f.exploitable === false ? ['not exploitable', 'mute'] :
@@ -145,10 +159,11 @@ export default function RepoView({ onDone }) {
                 )}
               </div>
             </div>
+            <Verification v={job.report && job.report.verification} />
             {job.pr_url && (
               <p className="notice">Pull request opened: <a href={job.pr_url} target="_blank" rel="noreferrer">{job.pr_url}</a></p>
             )}
-            <DiffView diff={job.diff} fixes={job.fixes} />
+            <DiffView diff={job.diff} fixes={job.fixes} jobId={job.id} />
           </>
         )}
       </main>

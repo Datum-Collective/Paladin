@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Icon from './Icons.jsx'
 import { parseDiff, withInline } from './diffParse.js'
+import { api } from './api.js'
 
 function Code({ line }) {
   if (!line.mark || line.mark[0] >= line.mark[1]) return <>{line.text || ' '}</>
@@ -14,8 +15,45 @@ function Code({ line }) {
   )
 }
 
-function FileDiff({ file, fixes, defaultOpen }) {
+function Checks({ checks }) {
+  if (!checks || !checks.length) return null
+  return (
+    <ul className="checks">
+      {checks.map((c, i) => (
+        <li key={i} className={c.passed === false ? 'fail' : c.passed === null ? 'skip' : 'pass'}>
+          <span aria-hidden="true">{c.passed === false ? '✕' : c.passed === null ? '–' : '✓'}</span> {c.name}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function FullFile({ jobId, path }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    let live = true
+    api.hFile(jobId, path).then((d) => live && setData(d)).catch((e) => live && setErr(e.message))
+    return () => { live = false }
+  }, [jobId, path])
+  if (err) return <p className="err">{err}</p>
+  if (!data) return <p className="muted">Loading file…</p>
+  const changed = new Set(data.changed_lines)
+  return (
+    <table className="diff full"><tbody>
+      {data.content.split('\n').map((t, i) => (
+        <tr key={i} className={changed.has(i + 1) ? 'row-add' : ''}>
+          <td className="ln">{i + 1}</td><td className="sign">{changed.has(i + 1) ? '+' : ''}</td>
+          <td className="code">{t || ' '}</td>
+        </tr>
+      ))}
+    </tbody></table>
+  )
+}
+
+function FileDiff({ file, fixes, defaultOpen, jobId }) {
   const [open, setOpen] = useState(defaultOpen)
+  const [full, setFull] = useState(false)
   const hunks = useMemo(() => file.hunks.map((h) => ({ ...h, lines: withInline(h.lines) })), [file])
   return (
     <section className="diff-file">
@@ -33,11 +71,18 @@ function FileDiff({ file, fixes, defaultOpen }) {
               <span className="tag">{f.method === 'haiku' ? 'AI-drafted' : 'rule'}</span>
               <b>{f.rule}</b> <span className="muted">{f.cwe} · {f.technique}</span>
               <div className="muted">{f.explanation}</div>
+              <Checks checks={f.checks} />
             </li>
           ))}
         </ul>
       )}
-      {open && hunks.map((h, hi) => (
+      {open && jobId && (
+        <div className="diff-tools">
+          <button className="link" onClick={() => setFull(!full)}>{full ? 'Show changes only' : 'Show full file'}</button>
+        </div>
+      )}
+      {open && full && <FullFile jobId={jobId} path={file.path} />}
+      {open && !full && hunks.map((h, hi) => (
         <div key={hi} className="hunk">
           <div className="hunk-head">{h.header || `change ${hi + 1}`}</div>
           <table className="diff"><tbody>
@@ -56,7 +101,7 @@ function FileDiff({ file, fixes, defaultOpen }) {
   )
 }
 
-export default function DiffView({ diff, fixes }) {
+export default function DiffView({ diff, fixes, jobId }) {
   const files = useMemo(() => parseDiff(diff), [diff])
   if (!files.length) return <p className="muted">No code changes.</p>
   const add = files.reduce((s, f) => s + f.add, 0)
@@ -66,7 +111,7 @@ export default function DiffView({ diff, fixes }) {
     <div>
       <p className="muted">{files.length} file{files.length > 1 ? 's' : ''} changed, <span className="add">+{add}</span>{' '}
         <span className="del">−{del}</span></p>
-      {files.map((f, i) => <FileDiff key={f.path} file={f} fixes={byFile(f.path)} defaultOpen={i < 4} />)}
+      {files.map((f, i) => <FileDiff key={f.path} file={f} fixes={byFile(f.path)} defaultOpen={i < 4} jobId={jobId} />)}
     </div>
   )
 }

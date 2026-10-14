@@ -201,6 +201,7 @@ def list_jobs(ws: int) -> list[dict]:
 def start(ws: int, url: str) -> dict:
     _ensure()
     owner, repo, clone_url = parse_url(url)
+    cleanup_old()
     busy = store.q("SELECT 1 FROM jobs WHERE ws=? AND state IN ('queued','cloning','scanning','fixing')", (ws,))
     if busy:
         raise RuntimeError("a job is already running for this workspace")
@@ -279,6 +280,12 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         _git(["checkout", "-q", "-b", branch], cwd=src)
         for p, new in _final_contents(files, fixes).items():
             (src / p).write_text(new, encoding="utf-8")
+        verification = _verify_tree(src, files, fixes, findings)
+        rep["verification"] = verification
+        _upd(jid, report=json.dumps(rep))
+        _log(jid, f"verified on disk: {verification['python_files_compiled']}/{verification['python_files_changed']} "
+                  f"changed Python file(s) compile; findings {verification['findings_before']} -> "
+                  f"{verification['findings_after']}")
         _git(["add", "-A"], cwd=src)
         msg = f"Fix {len(fixes)} security finding(s) found by Attack Path Compiler"
         _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg], cwd=src)
@@ -308,9 +315,75 @@ def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict]) -> li
         f["fixed"] = True
         done.append({"id": f["id"], "file": f["file"], "line": f["line"], "rule": f["rule"], "cwe": f["cwe"],
                      "technique": f["technique"], "method": res["method"], "explanation": res["explanation"],
-                     "content": res["content"]})
+                     "checks": res["checks"], "content": res["content"]})
         _log(jid, f"fixed {f['rule']} at {f['file']}:{f['line']} via {res['method']}")
     return done
+
+
+def _verify_tree(src: Path, files: list[dict], fixes: list[dict], findings: list[dict]) -> dict:
+    """Independent re-check of what is now ON DISK: compile changed Python, then re-scan the changed files."""
+    changed = sorted({f["file"] for f in fixes})
+    py = [p for p in changed if p.endswith(".py")]
+    compiled = 0
+    for p in py:
+        try:
+            compile((src / p).read_text(encoding="utf-8"), p, "exec")
+            compiled += 1
+        except (SyntaxError, ValueError, OSError):
+            pass
+    now = []
+    for p in changed:
+        try:
+            now.append({"path": p, "content": (src / p).read_text(encoding="utf-8")})
+        except OSError:
+            pass
+    after = codescan.static_scan(now) if now else []
+    before = [f for f in findings if f["file"] in changed and f["triaged_by"] != "haiku-review"]
+    fixed_rules = {f["rule"] for f in fixes}
+    still = sorted({a["rule"] for a in after if a["rule"] in fixed_rules})
+    return {"changed_files": len(changed), "python_files_changed": len(py), "python_files_compiled": compiled,
+            "findings_before": len(before), "findings_after": len(after), "fixed_rules_still_matching": still}
+
+
+def patched_file(ws: int, jid: int, path: str) -> dict:
+    """Content of a file as it is on the job's branch, restricted to files the job actually changed."""
+    job = get(ws, jid)
+    changed = {f["file"] for f in job["fixes"]}
+    if path not in changed:
+        raise KeyError(path)
+    root = (data_root() / str(jid) / "repo").resolve()
+    target = (root / path).resolve()
+    if root not in target.parents or not target.is_file() or target.is_symlink():
+        raise KeyError(path)
+    text = target.read_text(encoding="utf-8")
+    import re as _re
+    changed_lines: list[int] = []
+    for m in _re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", _file_diff(job["diff"], path), _re.M):
+        start, n = int(m[1]), int(m[2] or 1)
+        changed_lines += list(range(start, start + n))
+    return {"path": path, "content": text[:400_000], "changed_lines": sorted(set(changed_lines))}
+
+
+def _file_diff(diff: str, path: str) -> str:
+    parts = diff.split("diff --git ")
+    for part in parts:
+        if part.startswith(f"a/{path} b/{path}"):
+            return part
+    return ""
+
+
+def cleanup_old(max_age_s: float = 86400) -> None:
+    """Delete job clones nobody is waiting on. Called when a new job starts, so disk use stays bounded."""
+    root = data_root()
+    if not root.exists():
+        return
+    now = time.time()
+    for d in root.iterdir():
+        try:
+            if d.is_dir() and now - d.stat().st_mtime > max_age_s:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def _final_contents(files: list[dict], fixes: list[dict]) -> dict[str, str]:

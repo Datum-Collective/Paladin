@@ -128,8 +128,28 @@ def _flagged_line_changed(old: str, new: str, f: dict) -> bool:
     return all(codescan.line_hash(ln) != h for ln in new.split("\n"))
 
 
+def _syntax_check(path: str, content: str) -> dict:
+    if path.endswith(".py"):
+        return {"name": "file still parses", "passed": _syntax_ok(path, content)}
+    if path.endswith(".json"):
+        try:
+            json.loads(content)
+            return {"name": "file still parses", "passed": True}
+        except ValueError:
+            return {"name": "file still parses", "passed": False}
+    if path.endswith((".yml", ".yaml")):
+        try:
+            import yaml
+            list(yaml.safe_load_all(content))
+            return {"name": "file still parses", "passed": True}
+        except Exception:  # noqa: BLE001
+            return {"name": "file still parses", "passed": False}
+    return {"name": "syntax not checked for this file type (not syntax-checked)", "passed": None}
+
+
 def try_fix(content: str, f: dict) -> dict | None:
-    """Return {content, method, explanation} for an accepted patch, or None."""
+    """Return {content, method, explanation, checks} for an accepted patch, or None. Every check that decided
+    acceptance is returned by name so a reviewer can see exactly what was verified (and what was not)."""
     path, rule = f["file"], f["rule"]
     known = any(r[0] == rule for r in codescan.RULES)
     before_rule, before_total = (_count(rule, content, path) if known else 0), _total(content, path)
@@ -149,13 +169,24 @@ def try_fix(content: str, f: dict) -> dict | None:
         candidates.append(("haiku", edit[0], edit[1]))
     for method, new_content, why in candidates:
         new_content = _ensure_os_import(path, new_content)
-        if not _syntax_ok(path, new_content):
+        syn = _syntax_check(path, new_content)
+        if syn["passed"] is False:
             continue
+        checks = [{"name": "edit located and applied exactly once" if method == "haiku"
+                   else "deterministic rewrite of the flagged line", "passed": True}, syn]
+        total_after = _total(new_content, path)
         if known:
-            ok = _count(rule, new_content, path) < before_rule and _total(new_content, path) <= before_total - 1
-        else:  # AI-review finding: the flagged line itself must be gone, and nothing new may appear
-            ok = (new_content != content and _total(new_content, path) <= before_total
-                  and _flagged_line_changed(content, new_content, f))
-        if ok:
-            return {"content": new_content, "method": method, "explanation": why}
+            rule_after = _count(rule, new_content, path)
+            checks.append({"name": "rule no longer matches", "passed": rule_after < before_rule})
+            ok = rule_after < before_rule and total_after <= before_total - 1
+        else:
+            changed = _flagged_line_changed(content, new_content, f)
+            checks.append({"name": "flagged line is gone", "passed": changed})
+            ok = new_content != content and total_after <= before_total and changed
+        checks.append({"name": "no new findings introduced", "passed": total_after <= before_total})
+        if method == "haiku":
+            checks.append({"name": "user input not left in an executor",
+                           "passed": not STILL_TAINTED.search(new_content)})
+        if ok and all(c["passed"] is not False for c in checks):
+            return {"content": new_content, "method": method, "explanation": why, "checks": checks}
     return None
