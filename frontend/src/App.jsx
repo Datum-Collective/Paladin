@@ -168,6 +168,57 @@ function Upload({ onDone }) {
   )
 }
 
+const CODE_EXT = /\.(py|js|jsx|ts|tsx|java|go|rb|php|cs|sh|ya?ml)$/i
+const SKIP = /(node_modules|\.git|\.venv|venv|__pycache__|dist|build|vendor)\//
+
+function CodeScan({ onDone }) {
+  const [rep, setRep] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  useEffect(() => { api.codeReport().then(setRep).catch(() => {}) }, [])
+  const pick = async (e) => {
+    const all = Array.from(e.target.files)
+    const chosen = all.filter((f) => CODE_EXT.test(f.name) && !SKIP.test(f.webkitRelativePath + '/') && f.size < 200000)
+    if (!chosen.length) { setMsg('no source files found'); return }
+    setBusy(true); setMsg(`scanning ${chosen.length} files…`)
+    try {
+      const files = await Promise.all(chosen.slice(0, 300).map(async (f) => ({
+        path: f.webkitRelativePath || f.name, content: await f.text() })))
+      const root = (chosen[0].webkitRelativePath || 'upload').split('/')[0]
+      const r = await api.codeScan(root, files)
+      setRep(r); setMsg(''); onDone()
+    } catch (err) { setMsg(err.message) } finally { setBusy(false) }
+  }
+  return (
+    <div>
+      <h4>Code scan</h4>
+      <p className="muted">Choose a project folder. Static rules flag candidates; Claude Haiku (if configured on the
+        server) triages them. Files are sent to the server and, when AI is on, snippets to the Claude API.</p>
+      <input type="file" webkitdirectory="" directory="" multiple onChange={pick} disabled={busy} />
+      <span className="muted"> {msg}</span>
+      {rep && rep.scanned && (
+        <>
+          <p className="muted">{rep.repo}: {rep.files} files, {rep.findings.length} findings
+            {rep.ai_used ? ' · AI-triaged' : ' · static only'}</p>
+          <ul className="paths">
+            {rep.findings.map((f) => (
+              <li key={f.id}>
+                <b>{f.title}</b> <span className="muted">{f.cwe} · {f.technique}</span>
+                <div className="muted">{f.file}:{f.line} {f.exploitable === false ? '· judged not exploitable' : ''}</div>
+                <code>{f.snippet}</code>
+                {f.reason && <div className="muted">{f.triaged_by}: {f.reason}</div>}
+              </li>
+            ))}
+          </ul>
+          <button onClick={async () => { await api.codeClear(); setRep({ scanned: false, findings: [] }); onDone() }}>
+            Clear scan
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
 function Sources() {
   const [key, setKey] = useState('')
   const make = async () => setKey((await api.createKey('source')).key)
@@ -241,7 +292,7 @@ export default function App() {
       <main>
         <aside>
           <div className="tabs">
-            {['paths', 'ingest', 'sources'].map((t) => (
+            {['paths', 'ingest', 'code', 'sources'].map((t) => (
               <button key={t} className={tab === t ? 'tab on' : 'tab'} onClick={() => setTab(t)}>{t}</button>
             ))}
           </div>
@@ -256,6 +307,7 @@ export default function App() {
             </ul>
           ))}
           {tab === 'ingest' && <Upload onDone={refresh} />}
+          {tab === 'code' && <CodeScan onDone={refresh} />}
           {tab === 'sources' && <Sources />}
         </aside>
         <section>

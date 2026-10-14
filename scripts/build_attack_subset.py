@@ -15,8 +15,12 @@ def ext_id(o):
             return r.get("external_id")
 
 
+# techniques referenced by backend/app/codescan.py rules (a test keeps these in sync)
+CODESCAN = {"T1552.001", "T1059", "T1190", "T1557", "T1110", "T1189", "T1005"}
+
+
 def main(stix_path, inv_path, out_path):
-    wanted = {e["technique"] for e in yaml.safe_load(open(inv_path))["edges"]}
+    wanted = {e["technique"] for e in yaml.safe_load(open(inv_path))["edges"]} | CODESCAN
     objs = json.load(open(stix_path))["objects"]
     live = [o for o in objs if not o.get("revoked") and not o.get("x_mitre_deprecated")]
     tech = {o["id"]: o for o in live if o["type"] == "attack-pattern" and ext_id(o) in wanted}

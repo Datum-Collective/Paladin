@@ -6,7 +6,7 @@ connector, and verifies against later events. Every transition is audited.
 import json
 import time
 
-from . import ai, engine, inventory, store
+from . import ai, codescan, engine, inventory, store
 from .correlate import matches
 from .narrate import mitigation_name, technique
 
@@ -80,7 +80,7 @@ def template_runbook(facts: dict) -> str:
 
 def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     _ensure()
-    valid = {e.id for e in inventory.load()["edges"]}
+    valid = {e.id for e in inventory.load()["edges"]} | {e["id"] for e in codescan.load_model(ws)["edges"]}
     if not edge_ids or any(e not in valid for e in edge_ids):
         raise ValueError("unknown edge id")
     facts = _facts(ws, edge_ids)
@@ -145,7 +145,9 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
     if cur["state"] != "executed":
         raise ValueError(f"cannot go from {cur['state']} to verified")
+    from .models import Edge
     inv = {e.id: e for e in inventory.load()["edges"]}
+    inv.update({e["id"]: Edge(**e) for e in codescan.load_model(ws)["edges"]})
     later = store.get_events(ws)[cur["mark"]:]
     still = [ev.id for ev in later for eid in cur["edges"] if matches(inv[eid], ev)]
     closed = set(cur["edges"]) <= store.applied_fixes(ws)

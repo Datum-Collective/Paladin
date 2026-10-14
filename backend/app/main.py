@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyze, auth, engine, inventory, store
+from . import analyze, auth, codescan, engine, inventory, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from .remediation_api import router as remediation_router
@@ -242,6 +242,28 @@ def apply_fix(b: FixBody, u: dict = Depends(auth.require_user)):
     store.apply_fix(u["id"], b.edges)
     s = engine.snapshot(u["id"])
     return {"risk": s["risk"], "severity": analyze.severity(s["risk"]), "applied": sorted(s["fixed"])}
+
+
+class ScanBody(BaseModel):
+    repo: str = Field(default="uploaded", max_length=120)
+    files: list[dict] = Field(max_length=codescan.MAX_FILES * 3)
+
+
+@app.post("/api/codescan")
+def code_scan(b: ScanBody, u: dict = Depends(auth.require_user)):
+    _rate(u["id"])
+    return codescan.run(u["id"], b.repo, b.files)
+
+
+@app.get("/api/codescan")
+def code_report(u: dict = Depends(auth.require_user)):
+    return codescan.report(u["id"])
+
+
+@app.delete("/api/codescan")
+def code_clear(u: dict = Depends(auth.require_user)):
+    codescan.clear(u["id"])
+    return {"ok": True}
 
 
 @app.post("/api/keys")

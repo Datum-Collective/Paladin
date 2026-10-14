@@ -32,5 +32,8 @@ export const api = {
   remediation: (id) => req('GET', `/api/remediations/${id}`),
   propose: (edges, title) => req('POST', '/api/remediations', { edges, title }),
   rstep: (id, action) => req('POST', `/api/remediations/${id}/${action}`),
+  codeScan: (repo, files) => req('POST', '/api/codescan', { repo, files }),
+  codeReport: () => req('GET', '/api/codescan'),
+  codeClear: () => req('DELETE', '/api/codescan'),
   createKey: (label) => req('POST', '/api/keys', { label }),
 }
