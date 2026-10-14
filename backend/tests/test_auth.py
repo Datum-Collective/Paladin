@@ -79,15 +79,18 @@ def test_refresh_also_reaches_streaming_responses(client, world, monkeypatch):
         assert any(h.startswith("sb_refresh=") for h in r.headers.get_list("set-cookie"))
 
 
-def test_concurrent_requests_share_one_refresh(client, world):
-    """Supabase rotates refresh tokens and treats reuse as theft; a burst of requests must refresh once."""
+def test_concurrent_requests_never_reuse_a_refresh_token(client, world):
+    """Supabase rotates refresh tokens and treats reuse as theft (it revokes the session). A burst of requests with
+    the same expiring session must send each refresh token to Supabase at most once. (A request that already carries
+    the NEW token from the first refresh may legitimately refresh again with it.)"""
     sign_in(client, ALICE)
     client.cookies.set("sb_access", access_token(ALICE, exp_in=5))
     statuses = []
     ts = [threading.Thread(target=lambda: statuses.append(client.get("/api/me").status_code)) for _ in range(6)]
     [t.start() for t in ts]
     [t.join() for t in ts]
-    assert statuses == [200] * 6 and len(set(world.db.refreshed)) == 1
+    assert statuses == [200] * 6
+    assert world.db.refreshed and len(world.db.refreshed) == len(set(world.db.refreshed)), world.db.refreshed
 
 
 def test_rejected_refresh_signs_out(client, world):

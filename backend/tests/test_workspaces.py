@@ -146,8 +146,11 @@ def test_resolve_returns_repo_facts(client, monkeypatch):
 
 
 def test_launcher_public_and_private_import_auth_flow(client, monkeypatch):
-    """Regression for the real-account flow: public preview works anonymously; private import needs a token."""
+    """Regression for the real-account flow: public preview works anonymously; private import needs a token.
+    A personal token is the desktop app's path (on the web, private repos come through the GitHub App, and a token
+    is ignored: see test_isolation.py::test_server_github_token_is_never_used_on_the_web)."""
     login(client)
+    monkeypatch.setenv("DESKTOP_MODE", "1")
     seen = []
 
     def handler(request):
