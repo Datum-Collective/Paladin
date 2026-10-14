@@ -5,6 +5,7 @@ import subprocess
 import pytest
 
 from app import codescan, fixers, harness
+from conftest import sign_in
 
 CORS_PY = ('from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\napp = FastAPI()\n'
            'app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True)\n')
@@ -83,7 +84,7 @@ def test_scan_report_explains_coverage_and_skips(client, tmp_path, monkeypatch):
         "node_modules/lib/index.js": "x=1", "dist/app.min.js": "x=1", "bundle.js.map": "{}",
         "app/main.py": CORS_PY, "app/util.py": "def f():\n    return 1\n",
     })
-    client.post("/api/auth/demo")
+    sign_in(client)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     job = client.get(f"/api/harness/jobs/{j['id']}").json()
@@ -102,7 +103,7 @@ def test_scan_report_explains_coverage_and_skips(client, tmp_path, monkeypatch):
 def test_zero_findings_still_reports_what_was_checked(client, tmp_path, monkeypatch):
     monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
     repo = _git_repo(tmp_path, {"app/util.py": "def f():\n    return 1\n", "README.md": "x"})
-    client.post("/api/auth/demo")
+    sign_in(client)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     job = client.get(f"/api/harness/jobs/{j['id']}").json()
@@ -169,7 +170,7 @@ def test_report_labels_credential_files_and_counts_truncation(client, tmp_path, 
     monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
     big = "def f():\n" + "    x = 1\n" * 3000
     repo = _git_repo(tmp_path, {".env": "A=1", "server.key": "k", "app/big.py": big, "poetry.lock": "x"})
-    client.post("/api/auth/demo")
+    sign_in(client)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     rep = client.get(f"/api/harness/jobs/{j['id']}").json()["report"]

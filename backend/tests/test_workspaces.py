@@ -5,12 +5,14 @@ import httpx
 import pytest
 
 from app import github, harness, keys, prefs
+from conftest import sign_in
+from fakes import DEMO, OTHER
 
 LOG = ("May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2")
 
 
 def login(c):
-    assert c.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo-password"}).status_code == 200
+    sign_in(c)
 
 
 def gh(monkeypatch, handler):
@@ -83,7 +85,7 @@ def test_users_cannot_touch_each_others_workspaces(client):
     login(client)
     mine = client.get("/api/workspaces").json()["active"]
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "other@example.com", "password": "longenough1"})
+    sign_in(client, OTHER)
     for call in (lambda: client.post(f"/api/workspaces/{mine}/open"),
                  lambda: client.patch(f"/api/workspaces/{mine}", json={"name": "x"}),
                  lambda: client.delete(f"/api/workspaces/{mine}")):
@@ -147,7 +149,7 @@ def test_resolve_errors_say_how_to_fix(client, monkeypatch):
     login(client)
     gh(monkeypatch, lambda r: httpx.Response(404, json={"message": "Not Found"}))
     r = client.post("/api/repos/resolve", json={"query": "acme/missing"})
-    assert r.status_code == 404 and "token" in r.json()["detail"].lower()
+    assert r.status_code == 404 and "github app" in r.json()["detail"].lower()   # web: private repos come via the App
     assert client.post("/api/repos/resolve", json={"query": "not a repo"}).status_code == 422
     gh(monkeypatch, lambda r: httpx.Response(403, headers={"x-ratelimit-remaining": "0"}, json={"message": "rate limit"}))
     assert client.post("/api/repos/resolve", json={"query": "acme/api"}).status_code == 429
@@ -219,6 +221,7 @@ def test_import_scan_start_failure_rolls_back_a_new_workspace(client, monkeypatc
 
 def test_suggest_combines_workspaces_github_and_the_typed_url(client, monkeypatch):
     login(client)
+    monkeypatch.setenv("DESKTOP_MODE", "1")      # a personal token is desktop-only
     keys.set_many({"github": "ghp_x"})
     client.post("/api/workspaces", json={"name": "payments-service", "repo_url": "https://github.com/acme/payments-service"})
 
@@ -246,6 +249,7 @@ def test_suggest_combines_workspaces_github_and_the_typed_url(client, monkeypatc
 
 def test_suggest_survives_github_being_unreachable(client, monkeypatch):
     login(client)
+    monkeypatch.setenv("DESKTOP_MODE", "1")
     keys.set_many({"github": "ghp_x"})
     gh(monkeypatch, lambda r: (_ for _ in ()).throw(httpx.ConnectError("offline")))
     r = client.get("/api/repos/suggest", params={"q": ""})
@@ -260,11 +264,12 @@ def test_suggest_without_a_token_skips_github(client, monkeypatch):
 
 def test_github_whoami(client, monkeypatch):
     login(client)
+    monkeypatch.setenv("DESKTOP_MODE", "1")
     keys.set_many({"github": "ghp_x"})
     gh(monkeypatch, lambda r: httpx.Response(200, headers={"x-oauth-scopes": "repo, read:org"},
                                              json={"login": "octo", "name": "Octo"}))
     r = client.get("/api/github/status").json()
-    assert r == {"configured": True, "ok": True, "login": "octo", "scopes": ["repo", "read:org"]}
+    assert r == {"mode": "token", "configured": True, "ok": True, "login": "octo", "scopes": ["repo", "read:org"]}
     gh(monkeypatch, lambda r: httpx.Response(401, json={"message": "Bad credentials"}))
     r = client.get("/api/github/status").json()
     assert r["configured"] is True and r["ok"] is False and "token" in r["error"].lower()
@@ -297,7 +302,7 @@ def test_prefs_require_auth_and_are_per_user(client):
     login(client)
     client.put("/api/prefs", json={"appearance.density": "compact"})
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "o@example.com", "password": "longenough1"})
+    sign_in(client, OTHER)
     assert client.get("/api/prefs").json()["appearance.density"] == "comfortable"
 
 
@@ -341,16 +346,18 @@ def test_reimport_after_a_failed_scan_starts_a_new_one(client, monkeypatch):
     assert len(calls) == 2                                           # a finished scan is reused, not repeated
 
 
-def test_concurrent_first_requests_create_exactly_one_default_workspace(client):
+def test_concurrent_first_requests_create_exactly_one_default_workspace(client, world):
     import threading
-    from app import store, workspaces
-    uid = store.q("SELECT id FROM users WHERE email=?", ("demo@example.com",))[0]["id"]
-    store.run("DELETE FROM workspaces WHERE owner=?", (uid,))
+    from app import supa, workspaces
+    from fakes import access_token
+    login(client)
+    world.db.tables["workspaces"].clear()
     ids, errs = [], []
 
     def go():
         try:
-            ids.append(workspaces.ensure_default(uid))
+            supa.set_user(access_token(DEMO), DEMO)
+            ids.append(workspaces.ensure_default(DEMO))
         except Exception as e:  # pragma: no cover
             errs.append(e)
 
@@ -358,4 +365,4 @@ def test_concurrent_first_requests_create_exactly_one_default_workspace(client):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errs and len(set(ids)) == 1
-    assert store.q("SELECT COUNT(*) c FROM workspaces WHERE owner=?", (uid,))[0]["c"] == 1
+    assert len(world.db.rows("workspaces", user_id=DEMO)) == 1

@@ -4,6 +4,8 @@ import time
 import pytest
 
 from app import fixers, harness
+from conftest import sign_in
+from fakes import ALICE, OTHER
 
 SERVER = '''import os
 import hashlib
@@ -68,7 +70,7 @@ def test_unsafe_ai_patch_is_rejected(monkeypatch):
 
 
 def _login(c):
-    c.post("/api/auth/demo")
+    sign_in(c)
 
 
 def _wait(c, jid):
@@ -76,8 +78,8 @@ def _wait(c, jid):
     return c.get(f"/api/harness/jobs/{jid}").json()
 
 
-def test_end_to_end_local_branch_and_pr(client, repo, monkeypatch):
-    _login(client)
+def test_end_to_end_local_branch_and_pr(client, world, repo, monkeypatch):
+    sign_in(client, ALICE)
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     job = _wait(client, j["id"])
     assert job["state"] == "ready", job["error"] or job["log"]
@@ -91,26 +93,25 @@ def test_end_to_end_local_branch_and_pr(client, repo, monkeypatch):
     compile(new, "server.py", "exec")
     # findings reached the graph
     assert any(n.startswith("code:") for p in client.get("/api/paths").json()["paths"] for n in p["nodes"])
-    # PR needs a token, then goes through the GitHub API (mocked) once approved
-    assert client.post(f"/api/harness/jobs/{job['id']}/pr").status_code == 409
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
-    calls = []
-
-    def fake_api(method, path, token, body=None):
-        calls.append((method, path))
-        if path.endswith("/pulls"):
-            assert body["head"] == job["branch"] and "Tests were not run" in body["body"]
-            return {"html_url": "https://github.com/local/victim/pull/1"}
-        return {"default_branch": "main", "permissions": {"push": True}}
-
-    monkeypatch.setattr(harness, "gh_api", fake_api)
-    monkeypatch.setattr(harness, "_git", lambda args, **k: "")
-    monkeypatch.setattr(harness, "get", harness.get)
-    # open_pr splits repo_url as owner/repo; local jobs store the path, so use a github-style name
-    harness._upd(job["id"], repo_url="local/victim")
-    r = client.post(f"/api/harness/jobs/{job['id']}/pr").json()
-    assert r["state"] == "pr_opened" and r["pr_url"].endswith("/pull/1")
-    assert ("POST", "/repos/local/victim/pulls") in calls
+    # A PR goes through the GitHub App, and only for a repo in the user's own installation
+    # local jobs store a path; pretend this one was cloned from GitHub
+    world.db.rows("jobs", id=job["id"])[0]["repo_url"] = "alice-gh/demo"
+    r = client.post(f"/api/harness/jobs/{job['id']}/pr")
+    assert r.status_code == 409 and "github app" in r.json()["detail"].lower()
+    world.db.add("github_installations", {"user_id": ALICE, "installation_id": 1001,
+                                          "github_account_login": "alice-gh"})
+    r = client.post(f"/api/harness/jobs/{job['id']}/pr")
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "pr_opened" and r.json()["pr_url"] == "https://github.com/alice-gh/demo/pull/1"
+    _, gh_repo = world.gh.repo_by_name("alice-gh/demo")
+    assert gh_repo["branches"]["main"] == "root5001", "the default branch never moves"
+    assert gh_repo["commit_parents"][gh_repo["branches"]["fixes"]] == ["root5001"]      # fast-forward on fixes
+    assert "sha256" in gh_repo["written_content"]["server.py"]
+    [pr] = gh_repo["pulls"]
+    assert pr["head"] == "fixes" and pr["base"] == "main"
+    assert [(a["action"], a["detail"]["status"]) for a in world.db.tables["github_audit_log"]] == [
+        ("create_branch", "attempted"), ("create_branch", "ok"), ("commit", "attempted"), ("commit", "ok"),
+        ("open_pr", "attempted"), ("open_pr", "ok")]
 
 
 def test_validation_isolation_and_busy(client, repo):
@@ -120,7 +121,7 @@ def test_validation_isolation_and_busy(client, repo):
     j = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     harness.wait(j["id"])
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
+    sign_in(client, OTHER)
     assert client.get(f"/api/harness/jobs/{j['id']}").status_code == 404
     assert client.get(f"/api/harness/jobs/{j['id']}/patch").status_code == 404
 
@@ -152,7 +153,7 @@ def test_clean_and_unscannable_repos_say_so(client, tmp_path, monkeypatch):
             subprocess.run(["git", *cmd], cwd=r, env=env, check=True)
         return r
 
-    client.post("/api/auth/demo")
+    sign_in(client)
     cases = [(mk("docs_only", {"README.md": "hi"}), "nothing to scan"),
              (mk("clean", {"index.html": '<a target="_blank" rel="noopener" href="x">x</a>'}), "no issues found")]
     for repo_dir, expect in cases:

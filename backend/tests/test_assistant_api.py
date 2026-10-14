@@ -6,6 +6,7 @@ import pytest
 
 from app import keys
 from app.providers import anthropic_api, openai_api
+from conftest import sign_in
 
 TOKEN = "t" * 40
 LOG = ("May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2")
@@ -19,7 +20,7 @@ def _clean_keys():
 
 
 def login(c):
-    assert c.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo-password"}).status_code == 200
+    sign_in(c)
 
 
 def sse(*events):
@@ -141,10 +142,11 @@ def test_context_is_valid_json_and_keeps_fixes_when_over_budget(client):
     from app import assistant
     login(client)
     client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
-    ws = client.get("/api/me")  # session exists; resolve the workspace id through the store
-    from app import store
-    uid = store.q("SELECT id FROM users WHERE email=?", ("demo@example.com",))[0]["id"]
+    ws = client.get("/api/workspaces").json()["active"]
+    from app import supa
+    from fakes import DEMO, access_token
+    supa.set_user(access_token(DEMO), DEMO)   # outside a request: act as the signed-in user, as a request would
     for limit in (7000, 1500, 600):
-        data = json.loads(assistant.context(uid, limit=limit))
+        data = json.loads(assistant.context(ws, limit=limit))
         assert "fixes" in data and "paths" in data
-        assert len(assistant.context(uid, limit=limit)) <= max(limit, len(json.dumps({"fixes": data["fixes"]})) + 200)
+        assert len(assistant.context(ws, limit=limit)) <= max(limit, len(json.dumps({"fixes": data["fixes"]})) + 200)
