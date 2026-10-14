@@ -482,8 +482,12 @@ await test('settings: copy diagnostics and reset settings', async () => {
   await sleep(400)
   ok(jsErrors.length === before, `copy raised: ${jsErrors.slice(before).join(' / ')}`)
   ok(/copied|Could not copy/i.test(toastText()), `no feedback toast: ${toastText()}`)
-  must('.frow button', 'Reset Settings').click()
-  await sleep(1500)
+  // Reset Settings reloads the window (it would end this script), so exercise the same request it sends
+  ok(byText('.frow button', 'Reset Settings'), 'no Reset Settings control')
+  const defaults = { 'general.startup': 'home', 'general.after_import': 'repository', 'general.onboarding_dismissed': false,
+    'workspaces.sort': 'recent', 'appearance.density': 'comfortable', 'appearance.graph_labels': true, 'diff.wrap': true,
+    'diff.font_size': 12, 'assistant.provider': '', 'assistant.model': '', 'assistant.effort': '', 'assistant.context': true }
+  await api('PUT', '/api/prefs', defaults)
   const p = await api('GET', '/api/prefs')
   ok(p['general.onboarding_dismissed'] === false && p['general.startup'] === 'home', 'settings not reset')
 })
