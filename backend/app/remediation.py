@@ -3,10 +3,9 @@
 Deciding WHAT to cut is analyze.py (deterministic). This module records, approves, executes through a
 connector, and verifies against later events. Every transition is audited.
 """
-import json
 import time
 
-from . import ai, codescan, engine, inventory, store
+from . import ai, codescan, engine, inventory, store, supa
 from .correlate import matches
 from .narrate import mitigation_name, technique
 
@@ -31,38 +30,15 @@ STEPS = {
 }
 
 
-_ensured_for = None
-
-
-def _ensure() -> None:
-    global _ensured_for
-    c = store.conn()
-    if _ensured_for is c:
-        return
-    store.run("""CREATE TABLE IF NOT EXISTS remediations(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, edges TEXT NOT NULL, state TEXT NOT NULL,
-        title TEXT NOT NULL, runbook TEXT NOT NULL, ai_drafted INTEGER NOT NULL DEFAULT 0,
-        connector TEXT NOT NULL, mark INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
-        created REAL NOT NULL, updated REAL NOT NULL)""")
-    have = {r["name"] for r in store.q("PRAGMA table_info(remediations)")}
-    for col, typ in (("risk_before", "REAL"), ("risk_after", "REAL"), ("paths_before", "INTEGER"),
-                     ("paths_after", "INTEGER")):
-        if col not in have:
-            store.run(f"ALTER TABLE remediations ADD COLUMN {col} {typ}")
-    store.run("""CREATE TABLE IF NOT EXISTS audit(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, rem INTEGER NOT NULL, actor TEXT NOT NULL,
-        action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ts REAL NOT NULL)""")
-    _ensured_for = c
-
-
 def _audit(ws: int, rem: int, actor: str, action: str, detail: str = "") -> None:
-    store.run("INSERT INTO audit(ws,rem,actor,action,detail,ts) VALUES(?,?,?,?,?,?)",
-              (ws, rem, actor, action, detail[:500], time.time()))
+    supa.insert("audit", {"ws": ws, "user_id": supa.user_id(), "rem": rem, "actor": actor[:320], "action": action,
+                          "detail": detail[:500], "ts": time.time()}, returning=None)
 
 
 def _row(r) -> dict:
     d = dict(r)
-    d["edges"] = json.loads(d["edges"])
+    d.pop("user_id", None)
+    d["edges"] = [e for e in d["edges"] if isinstance(e, str)] if isinstance(d.get("edges"), list) else []
     d["ai_drafted"] = bool(d["ai_drafted"])
     return d
 
@@ -92,7 +68,6 @@ def template_runbook(facts: dict) -> str:
 
 
 def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
-    _ensure()
     valid = {e.id for e in engine.workspace_model(ws)[1]}
     if not edge_ids or any(e not in valid for e in edge_ids):
         raise ValueError("unknown edge id")
@@ -100,48 +75,50 @@ def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     text = ai.draft(facts)
     runbook, used_ai = (text, True) if text else (template_runbook(facts), False)
     now = time.time()
-    rid = store.run(
-        "INSERT INTO remediations(ws,edges,state,title,runbook,ai_drafted,connector,created,updated) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (ws, json.dumps(sorted(set(edge_ids))), "proposed", title[:120], runbook, int(used_ai), "model", now, now))
+    rid = supa.insert("remediations", {
+        "ws": ws, "user_id": supa.user_id(), "edges": sorted(set(edge_ids)), "state": "proposed", "title": title[:120],
+        "runbook": runbook[:20000], "ai_drafted": bool(used_ai), "connector": "model", "created": now, "updated": now,
+    }, returning="id")[0]["id"]
     _audit(ws, rid, actor, "proposed", ",".join(edge_ids))
     return get(ws, rid)
 
 
 def get(ws: int, rid: int) -> dict:
-    _ensure()
-    r = store.q("SELECT * FROM remediations WHERE id=? AND ws=?", (rid, ws))
+    r = supa.first("remediations", {"id": supa.eq(rid), "ws": supa.eq(ws)})
     if not r:
         raise KeyError(rid)
-    return _row(r[0])
+    return _row(r)
 
 
 def list_(ws: int) -> list[dict]:
-    _ensure()
-    return [_row(r) for r in store.q("SELECT * FROM remediations WHERE ws=? ORDER BY id DESC", (ws,))]
+    return [_row(r) for r in supa.select("remediations", {"ws": supa.eq(ws)}, order="id.desc")]
 
 
 def history(ws: int, limit: int = 100) -> list[dict]:
     """Every remediation step for a workspace, newest first, with the remediation's title and current state."""
-    _ensure()
-    return [dict(r) for r in store.q(
-        "SELECT a.id,a.actor,a.action,a.detail,a.ts,m.title,m.state FROM audit a LEFT JOIN remediations m ON m.id=a.rem "
-        "WHERE a.ws=? ORDER BY a.id DESC LIMIT ?", (ws, limit))]
+    steps = supa.select("audit", {"ws": supa.eq(ws)}, columns="id,rem,actor,action,detail,ts", order="id.desc",
+                        limit=limit)
+    rems = {r["id"]: r for r in supa.select("remediations", {"ws": supa.eq(ws), "id": supa.in_({a["rem"] for a in steps})},
+                                            columns="id,title,state")} if steps else {}
+    return [{"id": a["id"], "actor": a["actor"], "action": a["action"], "detail": a["detail"], "ts": a["ts"],
+             "title": (rems.get(a["rem"]) or {}).get("title"), "state": (rems.get(a["rem"]) or {}).get("state")}
+            for a in steps]
 
 
 def audit_log(ws: int, rid: int) -> list[dict]:
-    _ensure()
-    return [dict(r) for r in store.q("SELECT actor,action,detail,ts FROM audit WHERE ws=? AND rem=? ORDER BY id",
-                                     (ws, rid))]
+    return supa.select("audit", {"ws": supa.eq(ws), "rem": supa.eq(rid)}, columns="actor,action,detail,ts",
+                       order="id.asc")
 
 
 def _set(ws: int, rid: int, state: str, actor: str, detail: str = "", **cols) -> dict:
     cur = get(ws, rid)
     if state not in NEXT[cur["state"]]:
         raise ValueError(f"cannot go from {cur['state']} to {state}")
-    sets = ["state=?", "updated=?"] + [f"{k}=?" for k in cols]
-    store.run(f"UPDATE remediations SET {','.join(sets)} WHERE id=? AND ws=?",
-              (state, time.time(), *cols.values(), rid, ws))
+    # conditional on the state we checked, so two concurrent clicks cannot both make the same transition
+    done = supa.update("remediations", {"id": supa.eq(rid), "ws": supa.eq(ws), "state": supa.eq(cur["state"])},
+                       {"state": state, "updated": time.time(), **cols}, returning="id")
+    if not done:
+        raise ValueError(f"cannot go from {cur['state']} to {state}: it changed meanwhile")
     _audit(ws, rid, actor, state, detail)
     return get(ws, rid)
 
@@ -192,6 +169,5 @@ def rollback(ws: int, rid: int, actor: str) -> dict:
     for other in list_(ws):
         if other["id"] != rid and other["state"] in ("executed", "verified"):
             keep |= set(other["edges"])
-    for e in set(cur["edges"]) - keep:
-        store.run("DELETE FROM fixes WHERE ws=? AND edge=?", (ws, e))
+    store.remove_fixes(ws, sorted(set(cur["edges"]) - keep))
     return out

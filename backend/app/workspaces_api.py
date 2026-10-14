@@ -1,4 +1,5 @@
 """HTTP surface for workspaces, repository onboarding (resolve, suggest, import), GitHub status and preferences."""
+import asyncio
 import os
 import shutil
 import time
@@ -7,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from . import auth, github, harness, prefs, remediation, store, workspaces
+from . import auth, github, github_access, harness, harness_api, prefs, remediation, supa, workspaces
 
 router = APIRouter()
 GH_STATUS = {"not_found": 404, "auth": 424, "rate_limit": 429, "network": 502, "server": 502, "invalid": 422}
@@ -37,6 +38,22 @@ def _gh_error(e: github.GitHubError) -> HTTPException:
     return HTTPException(GH_STATUS.get(e.kind, 502), e.message)
 
 
+T = asyncio.to_thread   # Supabase calls block: keep them off the event loop (the thread inherits the user's session)
+
+
+async def _repo_info(uid: str, owner: str, name: str) -> dict:
+    """Web: a repo from the user's own GitHub App installation (private allowed), else a public lookup with no
+    credentials at all. Desktop: the user's own token."""
+    if not auth.desktop_mode():
+        info = await github_access.repo_info(uid, owner, name)
+        if info:
+            return info
+    try:
+        return await github.repo(owner, name)
+    except github.GitHubError as e:
+        raise _gh_error(e) from None
+
+
 @router.get("/api/workspaces")
 def list_workspaces(u: dict = Depends(auth.require_user)):
     return workspaces.listing(u["user_id"])
@@ -55,35 +72,34 @@ async def import_repo(b: QueryBody, u: dict = Depends(auth.require_user)):
     if not parsed:
         raise HTTPException(422, "Enter a GitHub repository link or owner/name.")
     uid = u["user_id"]
-    existing = workspaces.find_by_repo(uid, github.canonical(*parsed))
+    existing = await T(workspaces.find_by_repo, uid, github.canonical(*parsed))
     if existing:
-        jobs = harness.list_jobs(existing["id"])
+        jobs = await T(harness.list_jobs, existing["id"])
         try:
             # reuse the latest scan unless there is none or it failed (the user is probably retrying after a fix)
             if jobs and jobs[0].get("state") != "failed":
-                job = harness.get(existing["id"], jobs[0]["id"])
+                job = await T(harness.get, existing["id"], jobs[0]["id"])
             else:
-                job = harness.start(existing["id"], existing["repo_url"])
+                job = await harness_api.start_scan({**u, "id": existing["id"]}, existing["repo_url"])
         except (ValueError, RuntimeError) as e:
             raise HTTPException(409, str(e)) from None
-        workspaces.open_(uid, existing["id"])      # switch only once the scan is known to be running
-        return {"workspace": workspaces._row(existing), "job": job, "reopened": True, **workspaces.listing(uid)}
+        await T(workspaces.open_, uid, existing["id"])      # switch only once the scan is known to be running
+        return {"workspace": await T(workspaces._row, existing), "job": job, "reopened": True,
+                **await T(workspaces.listing, uid)}
+    info = await _repo_info(uid, *parsed)
+    previous = await T(workspaces.active, uid)
+    ws = await T(_ws, workspaces.create_for_repo, uid, info["full_name"],
+                 github.canonical(*info["full_name"].split("/", 1)))
     try:
-        info = await github.repo(*parsed)
-    except github.GitHubError as e:
-        raise _gh_error(e) from None
-    previous = workspaces.active(uid)
-    ws = _ws(workspaces.create_for_repo, uid, info["full_name"], github.canonical(*info["full_name"].split("/", 1)))
-    try:
-        job = harness.start(ws["id"], ws["repo_url"])
+        job = await harness_api.start_scan({**u, "id": ws["id"]}, ws["repo_url"])
     except (ValueError, RuntimeError) as e:
         try:               # best effort: never let cleanup mask the real error
-            workspaces.delete(uid, ws["id"])
-            workspaces.open_(uid, previous)
+            await T(workspaces.delete, uid, ws["id"])
+            await T(workspaces.open_, uid, previous)
         except Exception:
             pass
         raise HTTPException(409 if isinstance(e, RuntimeError) else 422, str(e)) from None
-    return {"workspace": ws, "job": job, "reopened": False, **workspaces.listing(uid)}
+    return {"workspace": ws, "job": job, "reopened": False, **await T(workspaces.listing, uid)}
 
 
 @router.post("/api/workspaces/{ws}/open")
@@ -106,12 +122,9 @@ async def resolve(b: QueryBody, u: dict = Depends(auth.require_user)):
     parsed = github.parse(b.query)
     if not parsed:
         raise HTTPException(422, "Enter a GitHub repository link or owner/name.")
-    try:
-        info = await github.repo(*parsed)
-    except github.GitHubError as e:
-        raise _gh_error(e) from None
+    info = await _repo_info(u["user_id"], *parsed)
     owner, name = info["full_name"].split("/", 1)
-    existing = workspaces.find_by_repo(u["user_id"], github.canonical(owner, name))
+    existing = await T(workspaces.find_by_repo, u["user_id"], github.canonical(owner, name))
     return {"owner": owner, "repo": name, "full_name": info["full_name"], "private": info["private"],
             "default_branch": info["default_branch"], "description": info["description"], "url": info["url"],
             "workspace_id": existing["id"] if existing else None}
@@ -127,7 +140,7 @@ async def suggest(q: str = "", u: dict = Depends(auth.require_user)):
         out.append({"kind": "url", "title": f"Open {parsed[0]}/{parsed[1]}", "subtitle": "github.com",
                     "url": github.canonical(*parsed)})
     have = set()
-    for w in workspaces.listing(u["user_id"])["workspaces"]:
+    for w in (await T(workspaces.listing, u["user_id"]))["workspaces"]:
         hay = f"{w['name']} {w['repo_url'] or ''}".lower()
         if not low or low in hay:
             out.append({"kind": "workspace", "title": w["name"], "subtitle": w["repo_url"] or f"{w['events']} events",
@@ -136,7 +149,9 @@ async def suggest(q: str = "", u: dict = Depends(auth.require_user)):
             have.add(w["repo_url"].lower())
     err = None
     try:
-        for r in await github.user_repos():
+        # web: only repos from the user's own GitHub App installations; desktop: the user's own token
+        repos = await github.user_repos() if auth.desktop_mode() else await github_access.user_repos(u["user_id"])
+        for r in repos:
             if r["url"].lower() in have:
                 continue
             if not low or low in f"{r['full_name']} {r['description'] or ''}".lower():
@@ -152,11 +167,6 @@ async def suggest(q: str = "", u: dict = Depends(auth.require_user)):
         if seen[i["kind"]] <= (6 if i["kind"] != "url" else 1):
             items.append(i)
     return {"suggestions": items, "github_error": err}
-
-
-@router.get("/api/github/status")
-async def github_status(_: dict = Depends(auth.require_user)):
-    return await github.whoami()
 
 
 @router.get("/api/prefs")
@@ -234,9 +244,10 @@ def activity(limit: int = 100, u: dict = Depends(auth.require_user)):
     """Scan history and remediation steps for the open workspace, newest first. Everything here is recorded
     elsewhere (jobs, audit); this only merges it."""
     ws, limit = u["id"], max(1, min(limit, 300))
-    harness.ensure()
     items = []
-    for r in store.q("SELECT id,repo_url,state,error,updated FROM jobs WHERE ws=? ORDER BY id DESC LIMIT ?", (ws, limit)):
+    for r in supa.select("jobs", {"ws": supa.eq(ws)}, columns="id,repo_url,state,error,updated", order="id.desc",
+                         limit=limit):
+        r["state"] = harness.effective_state(r)
         items.append({"kind": "scan", "id": r["id"], "title": f"Scan {r['repo_url']}", "state": r["state"],
                       "detail": r["error"] or "", "ts": r["updated"],
                       "retry": r["repo_url"] if r["state"] == "failed" else None})
@@ -261,12 +272,10 @@ def _tree_bytes(p: Path) -> int:
 
 @router.get("/api/storage")
 def storage(u: dict = Depends(auth.require_user)):
-    harness.ensure()
-    db = store.db_path()
-    db_bytes = sum(p.stat().st_size for p in (db, Path(f"{db}-wal"), Path(f"{db}-shm")) if p.exists())
-    mine = [r["id"] for r in store.q("SELECT j.id FROM jobs j JOIN workspaces w ON w.id=j.ws WHERE w.owner=?", (u["user_id"],))]
+    # workspace data lives in Supabase now; only cloned working copies take space on this machine
+    mine = [r["id"] for r in supa.select("jobs", {"user_id": supa.eq(u["user_id"])}, columns="id")]
     dirs = [harness.data_root() / str(j) for j in mine if (harness.data_root() / str(j)).exists()]
-    return {"database_bytes": db_bytes,
+    return {"database_bytes": None,
             "clones": {"count": len(dirs), "bytes": sum(_tree_bytes(d) for d in dirs)}}
 
 
@@ -274,10 +283,9 @@ def storage(u: dict = Depends(auth.require_user)):
 def clear_clones(u: dict = Depends(auth.require_user)):
     """Delete cloned working copies of settled scans (done, failed, PR opened). Scans in progress and scans with
     fixes awaiting approval are kept; findings and history always stay."""
-    harness.ensure()
     # 'ready' jobs still hold the fix branch awaiting approval, so only settled scans are cleared
-    rows = store.q("SELECT j.id FROM jobs j JOIN workspaces w ON w.id=j.ws "
-                   "WHERE w.owner=? AND j.state IN ('done','failed','pr_opened')", (u["user_id"],))
+    rows = supa.select("jobs", {"user_id": supa.eq(u["user_id"]), "state": supa.in_(("done", "failed", "pr_opened"))},
+                       columns="id")
     removed = 0
     for r in rows:
         d = harness.data_root() / str(r["id"])

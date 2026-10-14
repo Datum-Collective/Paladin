@@ -2,6 +2,8 @@ import json
 
 from app import codescan
 from app.narrate import technique
+from conftest import sign_in
+from fakes import OTHER
 
 VULN = '''
 from flask import Flask, request
@@ -51,7 +53,7 @@ def test_triage_validates_model_output(monkeypatch):
 
 
 def test_api_scan_builds_paths_and_isolated(client):
-    client.post("/api/auth/demo")
+    sign_in(client)
     r = client.post("/api/codescan", json={"repo": "t", "files": FILES}).json()
     assert r["scanned"] and r["ai_used"] is False and len(r["findings"]) >= 4
     ps = client.get("/api/paths").json()
@@ -61,7 +63,7 @@ def test_api_scan_builds_paths_and_isolated(client):
     rid = client.post("/api/remediations", json={"edges": edges}).json()["id"]  # code edges are targetable
     assert client.post(f"/api/remediations/{rid}/approve").status_code == 200
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
+    sign_in(client, OTHER)
     assert client.get("/api/codescan").json()["scanned"] is False
 
 

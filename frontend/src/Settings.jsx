@@ -5,6 +5,7 @@ import { PREF_DEFAULTS, usePrefs } from './prefs.jsx'
 import { useToast } from './toast.jsx'
 import Icon from './Icons.jsx'
 import { ConfirmDialog } from './Dialogs.jsx'
+import GitHubApp from './GitHubApp.jsx'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
 const noop = () => {}
@@ -238,6 +239,17 @@ function useKeys(config) {
 }
 
 function GitHub({ config }) {
+  if (config.github_mode === 'app') {
+    return (
+      <Group title="Repository access" footer="Disconnecting here stops Paladin using the installation. To revoke access completely, uninstall the app on GitHub (Choose Repositories, then Uninstall).">
+        <GitHubApp configured={Boolean(config.github)} />
+      </Group>
+    )
+  }
+  return <GitHubToken config={config} />
+}
+
+function GitHubToken({ config }) {
   const k = useKeys(config)
   const [st, setSt] = useState(null)
   const verify = async () => {
@@ -407,13 +419,14 @@ function Advanced({ config, user }) {
       <Group title="Engine">
         <Row label="Version">{(info && info.version) || config.version}</Row>
         <Row label="Mode">{config.desktop ? `Desktop${info ? `, ${info.platform} ${info.arch}` : ''}` : 'Web'}</Row>
-        {!config.desktop && user && <Row label="Account">{user.email}</Row>}
+        {user && <Row label="Account" help="Signed in with GitHub">{user.login || user.email}</Row>}
         {config.desktop && info && (
           <Row label="Data folder" help={info.dataDir} stack><button onClick={() => bridge.openDataFolder()}>Show in Finder</button></Row>
         )}
       </Group>
       <Group title="Storage">
-        <Row label="Database" help="Events, findings, fixes and history.">{store ? bytes(store.database_bytes) : '…'}</Row>
+        <Row label="Database" help="Events, findings, fixes and history are stored in your Paladin account, not on this machine.">
+          {store ? (store.database_bytes == null ? 'In your account' : bytes(store.database_bytes)) : '…'}</Row>
         <Row label="Cloned repositories" help={store ? `${store.clones.count} working ${store.clones.count === 1 ? 'copy' : 'copies'} from scans. Findings stay; patched-file previews for cleared scans stop working.` : ''}>
           <span>{store ? bytes(store.clones.bytes) : '…'}</span>
           <button disabled={!store || store.clones.count === 0} onClick={() => setConfirmClones(true)}>Clear…</button>

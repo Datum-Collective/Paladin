@@ -728,3 +728,5 @@ kbd { border-radius: 6px; }
 .switch { border-radius: 999px; }
 ::-webkit-scrollbar-thumb { border-radius: 999px; }
 .frow + .frow { border-radius: 0; }
+.keylist { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.keylist li { display: flex; align-items: center; gap: 8px; }

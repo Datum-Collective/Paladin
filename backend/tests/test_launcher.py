@@ -6,21 +6,30 @@ from pathlib import Path
 import pytest
 
 from app import harness, store
+from conftest import sign_in
+from fakes import DEMO, OTHER
 
 TOKEN = "t" * 40
 LOG = ("May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2")
 
 
 def login(c):
-    assert c.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo-password"}).status_code == 200
+    sign_in(c)
 
 
 @pytest.fixture()
 def desktop(client, monkeypatch):
+    login(client)      # the web flow; desktop sign-in itself is covered in test_desktop.py
     monkeypatch.setenv("DESKTOP_MODE", "1")
     monkeypatch.setenv("APC_DESKTOP_TOKEN", TOKEN)
-    login(client)
     return client
+
+
+def add_job(world, ws, repo_url, state, error="", t=None, user=DEMO):
+    """A job row written straight to the (fake) database, like a scan from another process."""
+    t = time.time() if t is None else t
+    return world.db.add("jobs", {"ws": ws, "user_id": user, "repo_url": repo_url, "state": state, "error": error,
+                                 "created": t, "updated": t})
 
 
 def git_repo(tmp_path: Path, name="proj") -> Path:
@@ -30,14 +39,12 @@ def git_repo(tmp_path: Path, name="proj") -> Path:
 
 
 # ---- workspace listing carries source kind and scan status ----
-def test_listing_reports_kind_and_status(client, monkeypatch):
+def test_listing_reports_kind_and_status(client, world, monkeypatch):
     login(client)
     ws = client.post("/api/workspaces", json={"name": "Repo", "repo_url": "https://github.com/acme/api"}).json()["workspace"]
     assert ws["kind"] == "github" and ws["status"] is None
-    harness._ensure()
     now = time.time()
-    store.run("INSERT INTO jobs(ws,repo_url,state,error,created,updated) VALUES(?,?,?,?,?,?)",
-              (ws["id"], "acme/api", "failed", "clone failed: repository not found", now, now))
+    add_job(world, ws["id"], "acme/api", "failed", error="clone failed: repository not found", t=now)
     row = [w for w in client.get("/api/workspaces").json()["workspaces"] if w["id"] == ws["id"]][0]
     assert row["status"]["state"] == "failed" and "not found" in row["status"]["error"]
     empty = client.post("/api/workspaces", json={"name": "Blank"}).json()["workspace"]
@@ -89,16 +96,14 @@ def test_local_import_failure_leaves_no_workspace(desktop, tmp_path, monkeypatch
 
 
 # ---- activity ----
-def test_activity_lists_scans_and_remediation_steps_newest_first(client):
+def test_activity_lists_scans_and_remediation_steps_newest_first(client, world):
     login(client)
     client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
     fx = client.get("/api/fixes").json()
     client.post("/api/remediations", json={"edges": fx["cheapest_cut"]["edges"], "title": "Close the door"})
-    harness._ensure()
     ws = client.get("/api/workspaces").json()["active"]
     now = time.time()
-    store.run("INSERT INTO jobs(ws,repo_url,state,error,created,updated) VALUES(?,?,?,?,?,?)",
-              (ws, "acme/api", "failed", "boom", now - 5, now - 5))
+    add_job(world, ws, "acme/api", "failed", error="boom", t=now - 5)
     items = client.get("/api/activity").json()["items"]
     kinds = {i["kind"] for i in items}
     assert kinds == {"scan", "remediation"}
@@ -109,32 +114,30 @@ def test_activity_lists_scans_and_remediation_steps_newest_first(client):
     assert rem["title"] == "Close the door" and rem["action"] == "proposed"
 
 
-def test_activity_is_scoped_to_the_workspace(client):
+def test_activity_is_scoped_to_the_workspace(client, world):
     login(client)
-    harness._ensure()
     a = client.get("/api/workspaces").json()["active"]
     now = time.time()
-    store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)", (a, "acme/api", "done", now, now))
+    add_job(world, a, "acme/api", "done")
     assert len(client.get("/api/activity").json()["items"]) == 1
     client.post("/api/workspaces", json={"name": "Other"})
     assert client.get("/api/activity").json()["items"] == []
 
 
 # ---- storage ----
-def test_storage_reports_sizes_and_clears_finished_clones(client, tmp_path):
+def test_storage_reports_sizes_and_clears_finished_clones(client, world, tmp_path):
     login(client)
-    harness._ensure()
     ws = client.get("/api/workspaces").json()["active"]
     now = time.time()
-    done = store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)", (ws, "a/b", "done", now, now))
-    live = store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)", (ws, "a/c", "cloning", now, now))
+    done = add_job(world, ws, "a/b", "done")
+    live = add_job(world, ws, "a/c", "cloning")
     for jid in (done, live):
         d = harness.data_root() / str(jid) / "repo"
         d.mkdir(parents=True)
         (d / "f.txt").write_text("x" * 1000)
     s = client.get("/api/storage").json()
-    assert s["clones"]["count"] == 2 and s["clones"]["bytes"] >= 2000 and s["database_bytes"] > 0
-    pending = store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)", (ws, "a/d", "ready", now, now))
+    assert s["clones"]["count"] == 2 and s["clones"]["bytes"] >= 2000 and s["database_bytes"] is None   # workspace data lives in Supabase
+    pending = add_job(world, ws, "a/d", "ready")
     (harness.data_root() / str(pending) / "repo").mkdir(parents=True)
     r = client.delete("/api/storage/clones").json()
     assert r["removed"] == 1
@@ -143,17 +146,25 @@ def test_storage_reports_sizes_and_clears_finished_clones(client, tmp_path):
 
 
 # ---- recovery ----
-def test_interrupted_jobs_are_marked_failed_on_startup(client):
-    harness._ensure()
-    now = time.time()
-    ids = [store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)", (1, "a/b", st, now, now))
-           for st in ("queued", "cloning", "scanning", "fixing", "done", "failed")]
-    n = harness.recover_interrupted()
-    assert n == 4
-    states = {r["id"]: (r["state"], r["error"]) for r in store.q("SELECT id,state,error FROM jobs")}
+def test_interrupted_jobs_are_marked_failed(client, world):
+    """A scan runs in a thread of the process that started it. A row still 'running' with no live thread and no
+    progress for a while was cut off (quit, crash, deploy): it is reported and stored as failed, so Retry works."""
+    login(client)
+    ws = client.get("/api/workspaces").json()["active"]
+    old = time.time() - harness.STALE_S - 5
+    ids = [add_job(world, ws, "a/b", st, t=old) for st in ("queued", "cloning", "scanning", "fixing", "done", "failed")]
+    fresh = add_job(world, ws, "a/c", "scanning")          # recent progress: maybe running elsewhere, left alone
+    other = add_job(world, ws, "a/d", "scanning", t=old, user=OTHER)   # another user's row is never touched
+    listed = {j["id"]: j for j in client.get("/api/harness/jobs").json()["jobs"]}
     for jid in ids[:4]:
-        assert states[jid][0] == "failed" and "interrupted" in states[jid][1].lower()
-    assert states[ids[4]][0] == "done"
+        assert listed[jid]["state"] == "failed" and "interrupted" in listed[jid]["error"].lower()
+    assert listed[ids[4]]["state"] == "done" and listed[fresh]["state"] == "scanning"
+    from app import supa
+    from fakes import access_token
+    supa.set_user(access_token(DEMO), DEMO)
+    assert harness.recover_interrupted() == 4
+    states = {r["id"]: r["state"] for r in world.db.tables["jobs"]}
+    assert [states[j] for j in ids[:4]] == ["failed"] * 4 and states[fresh] == "scanning" and states[other] == "scanning"
 
 
 # ---- new preferences ----
@@ -168,18 +179,17 @@ def test_new_preferences(client):
 def test_tilde_paths_are_expanded(desktop, tmp_path, monkeypatch):
     repo = git_repo(tmp_path, "home-proj")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))   # what os.path.expanduser reads on Windows
     r = desktop.post("/api/repos/resolve-local", json={"path": "~/home-proj"})
     assert r.status_code == 200 and r.json()["path"] == str(repo.resolve())
 
 
-def test_pull_requests_are_refused_for_local_scans(client, monkeypatch):
-    harness._ensure()
-    now = time.time()
-    jid = store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)",
-                    (1, "/Users/me/proj", "ready", now, now))
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_x")
-    with pytest.raises(RuntimeError, match="only available for GitHub"):
-        harness.open_pr(1, jid)
+def test_pull_requests_are_refused_for_local_scans(client, world):
+    login(client)
+    ws = client.get("/api/workspaces").json()["active"]
+    jid = add_job(world, ws, "/Users/me/proj", "ready")
+    r = client.post(f"/api/harness/jobs/{jid}/pr")
+    assert r.status_code == 409 and "only available for github" in r.json()["detail"].lower()
 
 
 def test_existing_workspace_is_not_switched_when_its_scan_cannot_start(desktop, tmp_path, monkeypatch):

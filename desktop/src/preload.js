@@ -10,6 +10,7 @@ const on = (channel) => (cb) => {
 contextBridge.exposeInMainWorld('paladin', {
   platform: process.platform,
   info: () => ipcRenderer.invoke('app:info'),
+  signIn: () => ipcRenderer.invoke('auth:sign-in'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
