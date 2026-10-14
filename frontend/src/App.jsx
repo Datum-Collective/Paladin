@@ -295,7 +295,7 @@ export default function App() {
         {!empty && graph && (
           <span className="status-inline">
             <Severity level={graph.severity} />
-            <span className="muted">worst path {graph.worst.toFixed(2)} · combined {graph.risk.toFixed(2)} · {graph.events} events</span>
+            <span className="muted">worst path {graph.worst.toFixed(2)} · combined {graph.risk.toFixed(2)}{graph.events > 0 ? ` · ${graph.events} events` : ''}</span>
           </span>
         )}
         {canPlay && (

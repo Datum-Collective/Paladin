@@ -165,6 +165,30 @@ flowchart LR
   that **tests were not run**.
 - Repos with nothing scannable or no findings say so explicitly instead of ending silently.
 
+### How it works once deployed
+
+```mermaid
+flowchart LR
+    U[Browser] --> C[Caddy HTTPS]
+    C --> A["App container (non-root user)"]
+    A --> V[("Volume /var/lib/apc<br/>SQLite + job clones")]
+    A -- "git clone / push (GITHUB_TOKEN)" --> GH[GitHub]
+    A -- "optional" --> AI[Claude API]
+```
+
+- The app runs **inside its own container** and works on a **temporary clone** under `DATA_DIR/jobs/<id>/repo`
+  on the volume. It never edits your laptop or the original repository; the only way a change leaves the server
+  is a branch push and a pull request that a human opens.
+- It needs `git` (included in the image), outbound HTTPS to github.com, and a `GITHUB_TOKEN` in server env
+  (read for private repos, write to push the branch and open the PR). Without a token you still get the diff and a
+  patch download.
+- A PR is always attributed to the token's owner. A multi-user deployment should use a GitHub App or per-user
+  OAuth instead of one shared token; that is not built yet.
+- Clones older than 24 hours are deleted when a new job starts, and each user has one running job at a time.
+- Every fix lists the checks it passed (unique edit, file still parses, rule stopped matching, no new findings,
+  no user input left in an executor), and the job re-verifies the files **on disk** before committing. Only
+  Python, JSON and YAML are syntax-checked; other file types are labelled "not syntax-checked".
+
 ## 8. What happens on each action
 
 ```mermaid

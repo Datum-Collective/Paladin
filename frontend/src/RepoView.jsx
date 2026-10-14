@@ -42,7 +42,7 @@ function Verification({ v }) {
   return (
     <p className={ok ? 'notice' : 'notice warn'}>
       <b>Verified on the patched files:</b> {v.python_files_compiled} of {v.python_files_changed} changed Python
-      file(s) compile; {v.changed_files - v.python_files_changed} other file(s) are not syntax-checked; findings in
+      file(s) compile; {v.changed_files - v.python_files_changed} other file(s) are not syntax-checked; rule hits in
       changed files went from {v.findings_before} to {v.findings_after}
       {v.fixed_rules_still_matching.length ? `; still matching: ${v.fixed_rules_still_matching.join(', ')}` : ''}.
       Tests were not run.
