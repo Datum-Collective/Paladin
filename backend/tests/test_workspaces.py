@@ -143,6 +143,44 @@ def test_resolve_returns_repo_facts(client, monkeypatch):
                         "workspace_id": None}
 
 
+def test_launcher_public_and_private_import_auth_flow(client, monkeypatch):
+    """Regression for the real-account flow: public preview works anonymously; private import needs a token."""
+    login(client)
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("authorization")))
+        name = request.url.path.rsplit("/", 1)[-1]
+        if name == "private" and request.headers.get("authorization") != "Bearer ghp_test":
+            return httpx.Response(404, json={"message": "Not Found"})
+        return httpx.Response(200, json={
+            "full_name": f"acme/{name}", "private": name == "private", "default_branch": "main",
+            "description": f"{name} fixture", "html_url": f"https://github.com/acme/{name}",
+        })
+
+    gh(monkeypatch, handler)
+    public = client.post("/api/repos/resolve", json={"query": "acme/public"})
+    assert public.status_code == 200 and public.json()["private"] is False
+
+    hidden = client.post("/api/repos/resolve", json={"query": "acme/private"})
+    assert hidden.status_code == 404 and "add a GitHub token" in hidden.json()["detail"]
+
+    keys.set_many({"github": "ghp_test"})
+    private = client.post("/api/repos/resolve", json={"query": "acme/private"})
+    assert private.status_code == 200 and private.json()["private"] is True
+
+    monkeypatch.setattr(harness, "start", lambda ws, url: {"id": 9, "state": "queued", "repo_url": "acme/private"})
+    imported = client.post("/api/workspaces/import", json={"query": "acme/private"})
+    assert imported.status_code == 200
+    assert imported.json()["workspace"]["repo_url"] == "https://github.com/acme/private"
+    assert seen == [
+        ("/repos/acme/public", None),
+        ("/repos/acme/private", None),
+        ("/repos/acme/private", "Bearer ghp_test"),
+        ("/repos/acme/private", "Bearer ghp_test"),
+    ]
+
+
 def test_resolve_errors_say_how_to_fix(client, monkeypatch):
     login(client)
     gh(monkeypatch, lambda r: httpx.Response(404, json={"message": "Not Found"}))
