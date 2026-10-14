@@ -52,11 +52,20 @@ SINKS = {
     "sessions": ("code:sessions", "data", "User sessions", 8),
 }
 class _Redact:
-    """Mask string literals but keep a hint of their shape so triage can still recognise a real secret."""
+    """Mask string literals that could be secrets but keep a hint of shape, so triage can still recognise a real
+    key. Plain URLs and file paths stay readable; anything carrying credentials or a token-like query is masked."""
     rx = re.compile(r"""(['"])([^'"\s]{8,})\1""")
+    _public = re.compile(r"^(https?://|/|\./|\.\./)")
+    _tokeny = re.compile(r"(@|[?&;](token|key|secret|password|passwd|pwd|auth|sig|signature|api[_-]?key)=)", re.I)
+
+    def _one(self, m: re.Match) -> str:
+        v = m[2]
+        if self._public.match(v) and not self._tokeny.search(v):
+            return m[0]
+        return f"{m[1]}{v[:3]}***[{len(v)} chars]{m[1]}"
 
     def sub(self, _repl, text: str) -> str:
-        return self.rx.sub(lambda m: f"{m[1]}{m[2][:3]}***[{len(m[2])} chars]{m[1]}", text)
+        return self.rx.sub(self._one, text)
 
 
 REDACT = _Redact()

@@ -236,14 +236,16 @@ def graph(u: dict = Depends(auth.require_user)):
     return {
         "nodes": [_node(n) for n in s["nodes"]],
         "edges": [{**e.model_dump(exclude={"match"}), "fixed": e.id in s["fixed"]} for e in s["edges"]],
-        "risk": s["risk"], "severity": analyze.severity(s["risk"]), "events": s["events"],
+        "risk": s["risk"], "worst": analyze.worst_risk(s["paths"]),
+        "severity": analyze.severity(analyze.worst_risk(s["paths"])), "events": s["events"],
     }
 
 
 @app.get("/api/paths")
 def paths(k: int = 10, u: dict = Depends(auth.require_user)):
     s = engine.snapshot(u["id"], k)
-    return {"paths": s["paths"], "risk": s["risk"], "severity": analyze.severity(s["risk"])}
+    w = analyze.worst_risk(s["paths"])
+    return {"paths": s["paths"], "risk": s["risk"], "worst": w, "severity": analyze.severity(w)}
 
 
 @app.get("/api/paths/{pid}")
@@ -266,7 +268,8 @@ def apply_fix(b: FixBody, u: dict = Depends(auth.require_user)):
         raise HTTPException(422, "unknown edge id")
     store.apply_fix(u["id"], b.edges)
     s = engine.snapshot(u["id"])
-    return {"risk": s["risk"], "severity": analyze.severity(s["risk"]), "applied": sorted(s["fixed"])}
+    w = analyze.worst_risk(s["paths"])
+    return {"risk": s["risk"], "worst": w, "severity": analyze.severity(w), "applied": sorted(s["fixed"])}
 
 
 class ScanBody(BaseModel):
@@ -324,7 +327,7 @@ async def stream(request: Request, u: dict = Depends(auth.require_user)):
             if ver != last:
                 last = ver
                 s = await asyncio.to_thread(engine.snapshot, ws)
-                yield f"data: {json.dumps({'events': ver[0], 'risk': s['risk'], 'severity': analyze.severity(s['risk'])})}\n\n"
+                yield f"data: {json.dumps({'events': ver[0], 'risk': s['risk'], 'severity': analyze.severity(analyze.worst_risk(s['paths']))})}\n\n"
             else:
                 yield ": keepalive\n\n"
             await asyncio.sleep(0.5)

@@ -181,3 +181,12 @@ def test_job_columns_default_to_the_right_json_type():
     import app.harness as h
     assert h._json_default("log") == [] and h._json_default("findings") == []
     assert h._json_default("fixes") == [] and h._json_default("report") == {}
+
+
+def test_redaction_keeps_urls_and_paths_but_masks_secrets():
+    r = codescan.REDACT
+    assert r.sub(r"\1***\1", '<a href="https://example.com/page">') == '<a href="https://example.com/page">'
+    assert r.sub(r"\1***\1", 'open("/var/log/app/output.log")') == 'open("/var/log/app/output.log")'
+    assert "abcdef1234567890" not in r.sub(r"\1***\1", 'KEY = "sk-live-abcdef1234567890"')
+    assert "hunter2hunter2" not in r.sub(r"\1***\1", 'url = "https://user:hunter2hunter2@host/db"')   # creds in URL
+    assert "token=abcdef12345" not in r.sub(r"\1***\1", 'u = "https://x.com/cb?token=abcdef12345"')

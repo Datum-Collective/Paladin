@@ -91,7 +91,16 @@ def top_paths(g: nx.DiGraph, k: int = 10, budget_s: float = TIME_BUDGET_S) -> li
 
 
 def total_risk(paths: list[dict]) -> float:
-    return min(1.0, sum(p["risk"] for p in paths))
+    """Combined likelihood-weighted risk that at least one path materialises: 1 - prod(1 - risk_i).
+    Bounded in [0,1], monotone, and many tiny paths cannot add up to a critical headline the way a sum would."""
+    keep = 1.0
+    for p in paths:
+        keep *= 1.0 - max(0.0, min(1.0, p["risk"]))
+    return 1.0 - keep
+
+
+def worst_risk(paths: list[dict]) -> float:
+    return max((p["risk"] for p in paths), default=0.0)
 
 
 def _dangerous_edges(paths: list[dict]) -> set[str]:
