@@ -159,7 +159,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
             return
         findings, ai_used, n = codescan.scan(files)
         _log(jid, f"scanned {n} files: {len(findings)} candidate findings"
-                  f"{' (Haiku triaged)' if ai_used else ' (static only)'}")
+                  f"{' (Haiku triaged)' if ai_used else ' (static only)' if findings else ''}")
         codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
         _upd(jid, state="fixing", ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings)
