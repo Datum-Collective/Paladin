@@ -33,3 +33,6 @@ section { min-width:0; }
 .curl { white-space:pre-wrap; word-break:break-all; font-size:11px; background:var(--bg); padding:8px; border-radius:6px; }
 textarea { width:100%; margin:8px 0; }
 @media (max-width: 900px) { main { grid-template-columns:1fr; grid-auto-rows:minmax(300px,auto); } .graph { height:360px; } }
+
+.state { font-size:11px; padding:1px 7px; border-radius:10px; background:var(--bg); border:1px solid var(--line); }
+.st-verified { color:#22c55e; } .st-failed { color:#ef4444; } .st-executed { color:#f59e0b; } .st-rolled_back { color:var(--muted); }

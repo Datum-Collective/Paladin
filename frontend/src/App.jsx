@@ -81,7 +81,7 @@ function Fixes({ fixes, onApply }) {
           <div>Cut {f.edges.join(', ')} · cost {f.total_cost} · breaks {f.paths_broken} path(s) ·
             removes {f.risk_removed_pct}% of risk</div>
           <div className="muted">{f.mitigations.map((m) => `${m.technique} → ${m.mitigation}`).join('; ')}</div>
-          <button onClick={() => onApply(f.edges)}>Apply fix</button>
+          <button onClick={() => onApply(f.edges, title)}>Propose fix</button>
         </>
       ) : <div className="muted">No cuttable fix available.</div>}
     </div>
@@ -94,6 +94,49 @@ function Fixes({ fixes, onApply }) {
         <p className="muted">A count-minimising cut would cost {fixes.edge_count_cut_cost}.</p>
       )}
       {fixes.applied.length > 0 && <p className="muted">Applied: {fixes.applied.join(', ')}</p>}
+    </div>
+  )
+}
+
+const NEXT_ACTION = { proposed: 'approve', approved: 'execute', executed: 'verify' }
+
+function Remediations({ items, aiEnabled, onChange }) {
+  const [open, setOpen] = useState(null)
+  const [detail, setDetail] = useState(null)
+  const [err, setErr] = useState('')
+  const show = async (id) => {
+    if (open === id) { setOpen(null); return }
+    setOpen(id); setDetail(await api.remediation(id))
+  }
+  const step = async (id, action) => {
+    setErr('')
+    try { await api.rstep(id, action); setDetail(await api.remediation(id)); onChange() } catch (e) { setErr(e.message) }
+  }
+  if (!items.length) return <p className="muted">No remediations yet. Propose a fix above.</p>
+  return (
+    <div>
+      <h4>Remediations {aiEnabled && <span className="muted">(AI drafting on)</span>}</h4>
+      {err && <p className="err">{err}</p>}
+      {items.map((r) => (
+        <div key={r.id} className="fix">
+          <div onClick={() => show(r.id)} style={{ cursor: 'pointer' }}>
+            <b>#{r.id}</b> {r.title} <span className={`state st-${r.state}`}>{r.state}</span>
+            <div className="muted">{r.edges.join(', ')}{r.ai_drafted ? ' · AI-drafted' : ''}</div>
+          </div>
+          {r.note && <div className="err">{r.note}</div>}
+          {NEXT_ACTION[r.state] && <button onClick={() => step(r.id, NEXT_ACTION[r.state])}>{NEXT_ACTION[r.state]}</button>}
+          {['executed', 'verified', 'failed'].includes(r.state) &&
+            <button onClick={() => step(r.id, 'rollback')}>rollback</button>}
+          {open === r.id && detail && (
+            <>
+              <pre className="curl">{detail.runbook}</pre>
+              <ul className="hops">
+                {detail.audit.map((a, i) => <li key={i}>{a.action} by {a.actor}<span className="muted"> {a.detail}</span></li>)}
+              </ul>
+            </>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
@@ -144,14 +187,15 @@ export default function App() {
   const [graph, setGraph] = useState(null)
   const [paths, setPaths] = useState([])
   const [fixes, setFixes] = useState(null)
+  const [rems, setRems] = useState({ remediations: [], ai_enabled: false })
   const [sel, setSel] = useState(null)
   const [playing, setPlaying] = useState(false)
   const [tab, setTab] = useState('paths')
   const timer = useRef(null)
 
   const refresh = useCallback(async () => {
-    const [g, p, f] = await Promise.all([api.graph(), api.paths(), api.fixes()])
-    setGraph(g); setPaths(p.paths); setFixes(f)
+    const [g, p, f, r] = await Promise.all([api.graph(), api.paths(), api.fixes(), api.remediations()])
+    setGraph(g); setPaths(p.paths); setFixes(f); setRems(r)
   }, [])
 
   useEffect(() => {
@@ -219,7 +263,8 @@ export default function App() {
         </section>
         <aside className="right">
           <PathDetail path={selected} />
-          <Fixes fixes={fixes} onApply={async (edges) => { await api.applyFix(edges); refresh() }} />
+          <Fixes fixes={fixes} onApply={async (edges, title) => { await api.propose(edges, title); refresh() }} />
+          <Remediations items={rems.remediations} aiEnabled={rems.ai_enabled} onChange={refresh} />
         </aside>
       </main>
     </div>

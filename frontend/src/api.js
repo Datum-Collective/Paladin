@@ -28,5 +28,9 @@ export const api = {
   simStep: (n = 20) => req('POST', `/api/simulate/step?n=${n}`),
   simReset: () => req('POST', '/api/simulate/reset'),
   ingest: (format, lines) => req('POST', '/api/ingest', { format, lines }),
+  remediations: () => req('GET', '/api/remediations'),
+  remediation: (id) => req('GET', `/api/remediations/${id}`),
+  propose: (edges, title) => req('POST', '/api/remediations', { edges, title }),
+  rstep: (id, action) => req('POST', `/api/remediations/${id}/${action}`),
   createKey: (label) => req('POST', '/api/keys', { label }),
 }
