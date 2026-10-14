@@ -672,3 +672,70 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
   .seg button:hover:not(.on) { background: rgba(70, 86, 190, 0.10); }
 }
 @media (prefers-reduced-transparency: reduce) { .seg button.on { background: #2a2f6b; } }
+
+/* ---- liquid glass elements ----
+   Translucent, lightly blurred surfaces with a bright specular top edge, a faint lower shade and soft depth. A very
+   quiet dusk wash sits behind the content so the glass has something to pick up. Reduce Transparency: solid fills. */
+:root {
+  --lg-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+  --lg-fill-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.07));
+  --lg-border: rgba(255, 255, 255, 0.13);
+  --lg-edge: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  --lg-depth: 0 8px 20px -10px rgba(0, 0, 0, 0.6);
+  --lg-blur: blur(14px) saturate(165%);
+  --lg-accent: linear-gradient(180deg, rgba(104, 150, 255, 0.95), rgba(52, 100, 230, 0.92));
+  --wash: radial-gradient(900px 520px at 12% -8%, rgba(78, 98, 214, 0.16), transparent 62%),
+          radial-gradient(760px 520px at 105% 108%, rgba(146, 84, 168, 0.10), transparent 62%);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --lg-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.5));
+    --lg-fill-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.66));
+    --lg-border: rgba(30, 40, 100, 0.14);
+    --lg-edge: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 0 rgba(30, 40, 100, 0.08);
+    --lg-depth: 0 8px 18px -10px rgba(30, 40, 100, 0.28);
+    --wash: radial-gradient(900px 520px at 12% -8%, rgba(110, 130, 240, 0.18), transparent 62%),
+            radial-gradient(760px 520px at 105% 108%, rgba(190, 130, 210, 0.14), transparent 62%);
+  }
+}
+.content { background: var(--wash), var(--bg); }
+
+/* controls */
+button:not(.primary):not(.link):not(.nav-item):not(.tool):not(.wrow-main):not(.row-btn):not(.cap):not(.pop-item):not(.recent):not(.switcher-btn):not(.seg *):not(.toast-x):not(.switch):not(.diff-head):not(.palette-trigger),
+.btn {
+  background: var(--lg-fill); border-color: var(--lg-border); box-shadow: var(--lg-edge), var(--lg-depth);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); }
+button:not(.primary):not(.link):not(.nav-item):not(.tool):not(.wrow-main):not(.row-btn):not(.cap):not(.pop-item):not(.recent):not(.switcher-btn):not(.seg *):not(.toast-x):not(.switch):not(.diff-head):not(.palette-trigger):hover:not(:disabled) {
+  background: var(--lg-fill-hover); }
+button.primary { background: var(--lg-accent); border-color: rgba(150, 190, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 20, 90, 0.35), 0 8px 18px -8px rgba(40, 90, 230, 0.6); }
+button.primary:hover { filter: brightness(1.06); }
+input, select, textarea { background: var(--lg-fill); border-color: var(--lg-border);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); }
+.bar input, .search-field input, .palette-input input { background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.bar, .search-field { background: var(--lg-fill); border-color: var(--lg-border); box-shadow: var(--lg-edge), var(--lg-depth);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); }
+.palette-trigger { background: var(--lg-fill); border: 1px solid var(--lg-border); box-shadow: var(--lg-edge); }
+
+/* surfaces */
+.card, .frows, .resume, .preview, .rows.selectable > li, .msg-error, .diff-file {
+  background: var(--lg-fill); border-color: var(--lg-border); box-shadow: var(--lg-edge), var(--lg-depth); }
+.frows, .resume, .preview, .card { -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur); }
+.rows.selectable > li.on { background: var(--lg-fill-hover); }
+.wrow:hover, .wrow.on { background: var(--lg-fill); box-shadow: var(--lg-edge); }
+.recent:hover, .cap:hover { background: var(--lg-fill); box-shadow: var(--lg-edge); }
+.nav-item.on { background: var(--lg-fill-hover); box-shadow: var(--lg-edge); }
+.nav-item:hover:not(.on) { background: var(--lg-fill); }
+.pill { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+.pill.mute { background: var(--lg-fill); }
+kbd { background: var(--lg-fill); box-shadow: var(--lg-edge); }
+.switch { background: var(--lg-fill); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--lg-border); }
+.switch.on { background: var(--lg-accent); }
+.snippet, .runbook, .diff-preview { background: var(--lg-fill); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25); }
+
+@media (prefers-reduced-transparency: reduce) {
+  button, .btn, input, select, textarea, .bar, .search-field, .card, .frows, .resume, .preview {
+    -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg-2); }
+  button.primary { background: var(--accent); }
+}
