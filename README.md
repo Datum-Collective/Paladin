@@ -65,9 +65,11 @@ Every write is recorded in `github_audit_log` before it is sent and limited to 1
 repo is a 404 on every route, and the server never asks GitHub "which installation has this repo". A server-wide
 `GITHUB_TOKEN` is ignored on the web: it would let every signed-in user reach whatever that token can see.
 
-> **Never install the app on the official hackathon org or repo.** Testing, judging and the bug bounty use a dummy
-> account with private demo repos of fake data. `GITHUB_BLOCKED_ACCOUNTS` makes the backend refuse to link listed
-> accounts as a safeguard.
+> **Never install the app on the official hackathon org or repo.** Testing, judging and the bug bounty use a team
+> member's personal account with the app installed on **only** a private demo repo of fake data ("Only select
+> repositories", never "All repositories"). The backend links personal-account installations only, and
+> `GITHUB_BLOCKED_ACCOUNTS` makes it refuse listed accounts (the hackathon org) as a second safeguard. Uninstall
+> and delete the apps after the event.
 
 | Permission | Access | Used by |
 |---|---|---|
@@ -78,7 +80,7 @@ repo is a 404 on every route, and the server never asks GitHub "which installati
 Not requested: Issues, Administration, Workflows, Secrets, Codespaces, Members or any organization permission
 (without Workflows, GitHub itself also rejects writes to `.github/workflows/`; the backend refuses them too).
 
-Create two apps while signed in to GitHub as the dummy account (GitHub sends the user to the **first** callback URL
+Create two apps while signed in to GitHub as the account that owns the demo repo (GitHub sends the user to the **first** callback URL
 when "Request user authorization during installation" is on, so dev and production each need their own):
 1. Settings -> Developer settings -> GitHub Apps -> New GitHub App, named e.g. `Paladin Dev` / `Paladin`.
    Callback URL `http://localhost:5173/api/github/callback` (dev) or `https://<APP_DOMAIN>/api/github/callback`.
@@ -90,7 +92,7 @@ when "Request user authorization during installation" is on, so dev and producti
 
 Manual two-account check before each bug-bounty deploy (two browsers or profiles, each signed in to a different
 github.com account):
-1. As **A** (dummy account): Integrations -> Connect GitHub -> install on A's personal account, choose the demo repo.
+1. As **A** (the demo repo's owner): Integrations -> Connect GitHub -> install on A's personal account, choose the demo repo.
    Open it from Home, let the scan finish, Open PR: a `fixes` branch and one PR appear; the default branch is unchanged.
 2. Note A's workspace id (`GET /api/workspaces`), job id (`GET /api/harness/jobs`) and installation id
    (`GET /api/github/installations`).
