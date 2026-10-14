@@ -1,19 +1,19 @@
 import Icon from './Icons.jsx'
 import { Severity } from './parts.jsx'
+import WorkspaceSwitcher from './WorkspaceSwitcher.jsx'
 
 const NAV = [['analysis', 'Analysis', 'graph', '1'], ['repo', 'Repository', 'repo', '2'], ['insights', 'Insights', 'chart', '3'],
   ['assistant', 'Assistant', 'chat', '4']]
 const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 
 export default function Sidebar({ view, setView, graph, empty, severity, canPlay, playing, onPlay, onReset, onPalette,
-                                  rems, desktop, user, onSignOut }) {
+                                  rems, desktop, user, onSignOut, workspaces, current, onOpenWs, onCreateWs, onHome, onManage }) {
   const open = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
   return (
     <aside className="sidebar">
       <div className="sidebar-top drag" aria-hidden="true" />
-      <div className="brand-row">
-        <span className="brand"><span className="brand-mark" aria-hidden="true" />Paladin</span>
-      </div>
+      <WorkspaceSwitcher workspaces={workspaces} current={current} onOpen={onOpenWs} onCreate={onCreateWs}
+                         onHome={onHome} onManage={onManage} />
       <button className="palette-trigger nodrag" onClick={onPalette} aria-label="Open command palette">
         <Icon name="search" size={14} /><span>Search</span><kbd>{mod}K</kbd>
       </button>
@@ -30,7 +30,7 @@ export default function Sidebar({ view, setView, graph, empty, severity, canPlay
 
       <section className="side-group" aria-label="Workspace status">
         <div className="side-head">Workspace</div>
-        {empty ? <p className="muted small">No data yet. Scan a repository or add logs.</p> : (
+        {empty ? <p className="muted small">No data yet. Import a repository or add logs.</p> : (
           <>
             <div className="row-top"><Severity level={graph.severity} />
               <span className="muted small">{graph.events} {graph.events === 1 ? 'event' : 'events'}</span></div>

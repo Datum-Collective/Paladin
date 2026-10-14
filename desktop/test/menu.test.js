@@ -46,3 +46,8 @@ test('dev tools only appear in unpackaged builds', () => {
   assert.equal(has(true), false)
   assert.equal(has(false), true)
 })
+
+test('no explicit accelerator collides with a role that has a standard one (zoom reset is Command-0)', () => {
+  const acc = flat(buildTemplate({ isMac: true, isPackaged: true, send: () => {} })).map((i) => i.accelerator)
+  assert.ok(!acc.includes('CommandOrControl+0'))
+})

@@ -66,3 +66,15 @@ export function toHistory(msgs) {
   }
   return out
 }
+
+/** Local, instant read of what the landing input contains, so the UI can react before any network call. */
+export function looksLikeRepo(text) {
+  const t = (text || '').trim()
+  if (/^(https:\/\/(www\.)?github\.com\/|git@github\.com:)[A-Za-z0-9-]+\/[\w.-]+/.test(t)) return true
+  const m = /^(?:github\.com\/)?([A-Za-z0-9-]+)\/([\w.-]+)$/.exec(t)
+  if (!m) return false
+  const ext = m[2].includes('.') ? m[2].split('.').pop().toLowerCase() : ''
+  return !FILE_EXT.has(ext)      // "src/main.py" is a path, not a repository
+}
+const FILE_EXT = new Set(['py', 'js', 'ts', 'tsx', 'jsx', 'md', 'json', 'txt', 'yml', 'yaml', 'toml', 'html', 'css', 'go', 'rs',
+  'java', 'c', 'h', 'sh', 'ini', 'cfg', 'lock', 'xml', 'csv'])

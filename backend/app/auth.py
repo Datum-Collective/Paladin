@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 import bcrypt
 from fastapi import HTTPException, Request
 
-from . import store
+from . import store, workspaces
 
 COOKIE = "apc_session"
 SESSION_TTL = 7 * 86400
@@ -92,13 +92,25 @@ def logout(tok: str | None) -> None:
         store.run("DELETE FROM sessions WHERE token=?", (tok,))
 
 
+def _scope(user_id: int, email: str, req: Request | None = None) -> dict:
+    """The caller's identity AND the workspace every endpoint operates on. `id` is the workspace id (what all data
+    is keyed by); `user_id` is the account. A request names its workspace with X-Workspace (or ?ws= for streams)
+    so a second window cannot redirect this one; without it, the account's active workspace is used."""
+    ws = workspaces.active(user_id)
+    if req is not None:
+        raw = req.headers.get("x-workspace") or req.query_params.get("ws") or ""
+        if raw.isdigit() and workspaces.owns(user_id, int(raw)):
+            ws = int(raw)
+    return {"id": ws, "user_id": user_id, "email": email}
+
+
 def user_from_request(req: Request) -> dict | None:
     tok = req.cookies.get(COOKIE)
     if tok:
         r = store.q("SELECT u.id,u.email,s.created FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?",
                     (tok,))
         if r and time.time() - r[0]["created"] < SESSION_TTL:
-            return {"id": r[0]["id"], "email": r[0]["email"]}
+            return _scope(r[0]["id"], r[0]["email"], req)
     return None
 
 
@@ -116,15 +128,20 @@ def user_or_key(req: Request) -> dict:
         return u
     k = req.headers.get("x-api-key")
     if k:
-        r = store.q("SELECT u.id,u.email FROM api_keys a JOIN users u ON u.id=a.user_id WHERE a.hash=?",
+        r = store.q("SELECT u.id,u.email,a.ws FROM api_keys a JOIN users u ON u.id=a.user_id WHERE a.hash=?",
                     (hashlib.sha256(k.encode()).hexdigest(),))
         if r:
-            return {"id": r[0]["id"], "email": r[0]["email"]}
+            sc = _scope(r[0]["id"], r[0]["email"])
+            # a key ingests into the workspace it was created in; older keys (no binding) use the account's first
+            bound = r[0]["ws"] if r[0]["ws"] and workspaces.owns(r[0]["id"], r[0]["ws"]) else workspaces.oldest(r[0]["id"])
+            if bound:
+                sc["id"] = bound
+            return sc
     raise HTTPException(401, "authentication required")
 
 
-def create_key(user_id: int, label: str) -> str:
+def create_key(user_id: int, label: str, ws: int | None = None) -> str:
     key = "apc_" + secrets.token_urlsafe(24)
-    store.run("INSERT INTO api_keys(hash,user_id,label,created) VALUES(?,?,?,?)",
-              (hashlib.sha256(key.encode()).hexdigest(), user_id, label[:64], time.time()))
+    store.run("INSERT INTO api_keys(hash,user_id,label,created,ws) VALUES(?,?,?,?,?)",
+              (hashlib.sha256(key.encode()).hexdigest(), user_id, label[:64], time.time(), ws))
     return key

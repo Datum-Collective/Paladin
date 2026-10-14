@@ -3,7 +3,7 @@ import { api } from './api.js'
 import { useToast } from './toast.jsx'
 
 /** All server state for the active workspace plus the actions that change it. */
-export function useWorkspace(user, onExpired) {
+export function useWorkspace(user, onExpired, activeId) {
   const toast = useToast()
   const [data, setData] = useState({ graph: null, paths: [], fixes: null, events: null, rems: [] })
   const [loaded, setLoaded] = useState(false)
@@ -30,12 +30,17 @@ export function useWorkspace(user, onExpired) {
   useEffect(() => {
     alive.current = true
     if (!user) return undefined
+    setLoaded(false)
     refresh()
     api.simStatus().then((s) => setCanPlay(s.total > 0)).catch(() => {})
-    const es = new EventSource('/api/stream')
+    const es = new EventSource(`/api/stream?ws=${activeId || ''}`)
     es.onmessage = () => refresh()
-    return () => { alive.current = false; es.close(); clearTimeout(timer.current) }
-  }, [user, refresh])
+    return () => {
+      alive.current = false; es.close(); clearTimeout(timer.current)
+      run.current += 1          // a play loop belongs to the workspace it started in; never let it step another
+      setPlaying(false)
+    }
+  }, [user, activeId, refresh])
 
   const play = useCallback(async () => {
     const mine = ++run.current // a reset or a newer play invalidates this loop

@@ -12,13 +12,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, analyze, auth, keys, codescan, engine, inventory, metrics, store
+from . import ai, analyze, auth, keys, workspaces, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from . import harness
 from .harness_api import router as harness_router
 from .remediation_api import router as remediation_router
 from .providers_api import router as providers_router
+from .workspaces_api import router as workspaces_router
 
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
@@ -37,6 +38,7 @@ app = FastAPI(title="Attack Path Compiler", lifespan=lifespan)
 app.include_router(remediation_router)
 app.include_router(harness_router)
 app.include_router(providers_router)
+app.include_router(workspaces_router)
 origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
@@ -124,8 +126,9 @@ def demo(response: Response, request: Request):
     out = _login(Creds(email=u, password=p), response, request)
     row = store.q("SELECT id FROM users WHERE email=?", (u.lower(),))
     if row:  # the shared demo account always opens on an empty workspace
-        harness.wipe(row[0]["id"])
-        store.wipe_workspace(row[0]["id"])
+        ws = workspaces.active(row[0]["id"])
+        harness.wipe(ws)
+        store.wipe_workspace(ws)
     return out
 
 
@@ -177,7 +180,7 @@ def _rate(ws: int) -> None:
 
 @app.post("/api/ingest")
 def ingest(b: IngestBody, u: dict = Depends(auth.user_or_key)):
-    _rate(u["id"])
+    _rate(u["user_id"])        # per account: switching or multiplying workspaces must not multiply the budget
     bad: list[dict] = []
     if b.lines:
         if b.format not in PARSERS:
@@ -300,7 +303,7 @@ class ScanBody(BaseModel):
 
 @app.post("/api/codescan")
 def code_scan(b: ScanBody, u: dict = Depends(auth.require_user)):
-    _rate(u["id"])
+    _rate(u["user_id"])
     return codescan.run(u["id"], b.repo, b.files)
 
 
@@ -334,7 +337,7 @@ def get_benchmarks(u: dict = Depends(auth.require_user)):
 
 @app.post("/api/keys")
 def make_key(b: KeyBody, u: dict = Depends(auth.require_user)):
-    return {"key": auth.create_key(u["id"], b.label)}
+    return {"key": auth.create_key(u["user_id"], b.label, u["id"])}
 
 
 @app.get("/api/stream")
