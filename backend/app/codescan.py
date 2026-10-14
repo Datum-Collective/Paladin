@@ -89,9 +89,11 @@ def accept_files(files: list[dict]) -> list[dict]:
     return out
 
 
-def static_scan(files: list[dict]) -> list[dict]:
+def static_scan(files: list[dict], cancelled=lambda: False) -> list[dict]:
     findings = []
     for f in files:
+        if cancelled():
+            raise InterruptedError("scan cancelled")
         lines = f["content"].splitlines()
         routed = bool(ROUTE.search(f["content"]))
         for i, line in enumerate(lines, 1):
@@ -118,13 +120,17 @@ TRIAGE_SYSTEM = (
     "hard-coded secret and is exploitable.")
 
 
-def triage(findings: list[dict]) -> bool:
+def triage(findings: list[dict], cancelled=lambda: False) -> bool:
     """Annotate findings in place using Haiku. Returns True when AI was used successfully."""
+    if cancelled():
+        raise InterruptedError("scan cancelled")
     if not findings or not ai.enabled():
         return False
     payload = [{"id": f["id"], "rule": f["rule"], "cwe": f["cwe"], "file": f["file"], "code": f["context"]}
                for f in findings]
     text = ai.complete(TRIAGE_SYSTEM, json.dumps(payload), 2500)
+    if cancelled():
+        raise InterruptedError("scan cancelled")
     if not text:
         return False
     try:
@@ -227,7 +233,7 @@ def line_hash(line: str) -> str:
     return hashlib.sha1(_norm(line).encode()).hexdigest()[:16]
 
 
-def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict]:
+def ai_review(files: list[dict], existing: list[dict], cancelled=lambda: False) -> tuple[list[dict], dict]:
     """Ask Haiku to review the most exposed files. Every claim must quote a real line at the stated position;
     anything that does not match the file is discarded (no hallucinated findings reach the report)."""
     stats = {"files_reviewed": 0, "claims": 0, "claims_rejected": 0, "files": [], "truncated": []}
@@ -238,6 +244,8 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
                                           len(f["content"])))
     out: list[dict] = []
     for f in ranked[:REVIEW_MAX_FILES]:
+        if cancelled():
+            raise InterruptedError("scan cancelled")
         lines = f["content"].splitlines()
         red = [REDACT.sub(r"\1***\1", ln) for ln in lines]      # secrets never leave the process
         full = "\n".join(f"{i}| {ln}" for i, ln in enumerate(red, 1))
@@ -245,6 +253,8 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
         if len(full) > REVIEW_MAX_CHARS:
             stats["truncated"].append(f["path"])
         text = ai.complete(REVIEW_SYSTEM, json.dumps({"file": f["path"], "code": body}), 1800)
+        if cancelled():
+            raise InterruptedError("scan cancelled")
         if text is None:
             continue
         stats["files_reviewed"] += 1
@@ -281,11 +291,11 @@ def scan(files: list[dict]) -> tuple[list[dict], bool, int]:
     return findings, ai_used, n
 
 
-def scan_full(files: list[dict]) -> tuple[list[dict], bool, int, dict]:
+def scan_full(files: list[dict], cancelled=lambda: False) -> tuple[list[dict], bool, int, dict]:
     kept = accept_files(files)
-    findings = static_scan(kept)
-    triaged = triage(findings)
-    reviewed, stats = ai_review(kept, findings)
+    findings = static_scan(kept, cancelled)
+    triaged = triage(findings, cancelled)
+    reviewed, stats = ai_review(kept, findings, cancelled)
     for r in reviewed:
         r["id"] = f"f{len(findings) + 1}"
         findings.append(r)

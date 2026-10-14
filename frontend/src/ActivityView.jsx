@@ -3,9 +3,9 @@ import { api } from './api.js'
 import { ago } from './lib.js'
 import Icon from './Icons.jsx'
 
-const TONE = { failed: 'bad', done: 'ok', ready: 'ok', pr_opened: 'ok', queued: 'info', cloning: 'info', scanning: 'info', fixing: 'info' }
+const TONE = { failed: 'bad', cancelled: 'mute', done: 'ok', ready: 'ok', pr_opened: 'ok', queued: 'info', cloning: 'info', scanning: 'info', fixing: 'info' }
 const LABEL = { failed: 'Failed', done: 'Scanned', ready: 'Fixes ready', pr_opened: 'Pull request opened', queued: 'Queued',
-  cloning: 'Cloning', scanning: 'Scanning', fixing: 'Preparing fixes' }
+  cloning: 'Cloning', scanning: 'Scanning', fixing: 'Preparing fixes', cancelled: 'Cancelled' }
 const RUNNING = new Set(['queued', 'cloning', 'scanning', 'fixing'])
 const ACTION = { proposed: 'Proposed', approved: 'Approved', executed: 'Executed', verified: 'Verified', rolled_back: 'Rolled back' }
 
@@ -29,6 +29,10 @@ export default function ActivityView({ onRetry, goSettings }) {
   const retry = async (it) => {
     setRetrying(it.id)
     try { await onRetry(it.retry) } catch (e) { setErr(e.message) } finally { setRetrying(null); load() }
+  }
+  const cancel = async (it) => {
+    setRetrying(it.id)
+    try { await api.hCancel(it.id) } catch (e) { setErr(e.message) } finally { setRetrying(null); load() }
   }
   const shown = (items || []).filter((i) => filter === 'all' || (filter === 'scans' ? i.kind === 'scan' : i.kind === 'remediation'))
   return (
@@ -70,6 +74,11 @@ export default function ActivityView({ onRetry, goSettings }) {
                   <div className="actions">
                     <button disabled={retrying === it.id} onClick={() => retry(it)}>{retrying === it.id ? 'Retrying…' : 'Retry scan'}</button>
                     {/token|private|not found/i.test(it.detail) && <button onClick={() => goSettings('github')}>Open GitHub Settings</button>}
+                  </div>
+                )}
+                {it.cancel && (
+                  <div className="actions">
+                    <button disabled={retrying === it.id} onClick={() => cancel(it)}>{retrying === it.id ? 'Cancelling…' : 'Cancel scan'}</button>
                   </div>
                 )}
               </div>

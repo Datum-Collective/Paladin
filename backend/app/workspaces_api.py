@@ -239,7 +239,8 @@ def activity(limit: int = 100, u: dict = Depends(auth.require_user)):
     for r in store.q("SELECT id,repo_url,state,error,updated FROM jobs WHERE ws=? ORDER BY id DESC LIMIT ?", (ws, limit)):
         items.append({"kind": "scan", "id": r["id"], "title": f"Scan {r['repo_url']}", "state": r["state"],
                       "detail": r["error"] or "", "ts": r["updated"],
-                      "retry": r["repo_url"] if r["state"] == "failed" else None})
+                      "retry": r["repo_url"] if r["state"] == "failed" else None,
+                      "cancel": r["state"] in harness.RUNNING})
     for r in remediation.history(ws, limit):
         items.append({"kind": "remediation", "id": r["id"], "title": r["title"] or "Remediation", "action": r["action"],
                       "actor": r["actor"], "detail": r["detail"], "state": r["state"], "ts": r["ts"]})
@@ -277,7 +278,7 @@ def clear_clones(u: dict = Depends(auth.require_user)):
     harness.ensure()
     # 'ready' jobs still hold the fix branch awaiting approval, so only settled scans are cleared
     rows = store.q("SELECT j.id FROM jobs j JOIN workspaces w ON w.id=j.ws "
-                   "WHERE w.owner=? AND j.state IN ('done','failed','pr_opened')", (u["user_id"],))
+                   "WHERE w.owner=? AND j.state IN ('done','failed','cancelled','pr_opened')", (u["user_id"],))
     removed = 0
     for r in rows:
         d = harness.data_root() / str(r["id"])

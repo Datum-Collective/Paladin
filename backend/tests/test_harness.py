@@ -1,4 +1,5 @@
 import subprocess
+import threading
 import time
 
 import pytest
@@ -123,6 +124,67 @@ def test_validation_isolation_and_busy(client, repo):
     client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
     assert client.get(f"/api/harness/jobs/{j['id']}").status_code == 404
     assert client.get(f"/api/harness/jobs/{j['id']}/patch").status_code == 404
+
+
+def test_cancel_during_clone_terminates_worker_and_keeps_workspace(client, repo, monkeypatch):
+    _login(client)
+    cloning = threading.Event()
+
+    def blocked_clone(args, **kwargs):
+        cloning.set()
+        assert kwargs["cancel"].wait(3), "clone did not receive cancellation"
+        raise harness.Cancelled()
+
+    monkeypatch.setattr(harness, "_git", blocked_clone)
+    job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
+    assert cloning.wait(2)
+
+    stopped = client.post(f"/api/harness/jobs/{job['id']}/cancel")
+    harness.wait(job["id"], 3)
+
+    assert stopped.status_code == 200
+    assert client.get(f"/api/harness/jobs/{job['id']}").json()["state"] == "cancelled"
+    assert (harness.data_root() / str(job["id"])).is_dir()
+
+
+def test_cancel_during_scan_stops_before_results_are_persisted(client, repo, monkeypatch):
+    _login(client)
+    scanning = threading.Event()
+
+    def clone(args, **kwargs):
+        import shutil
+        shutil.copytree(repo, args[-1])
+        return ""
+
+    def blocked_scan(files, cancelled):
+        scanning.set()
+        while not cancelled():
+            time.sleep(0.01)
+        raise InterruptedError("scan cancelled")
+
+    monkeypatch.setattr(harness, "_git", clone)
+    monkeypatch.setattr(harness.codescan, "scan_full", blocked_scan)
+    job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
+    assert scanning.wait(2)
+
+    stopped = client.post(f"/api/harness/jobs/{job['id']}/cancel")
+    harness.wait(job["id"], 3)
+
+    current = client.get(f"/api/harness/jobs/{job['id']}").json()
+    assert stopped.status_code == 200 and current["state"] == "cancelled"
+    assert current["findings"] == [] and current["fixes"] == []
+
+
+def test_cancel_finished_job_is_a_noop(client, repo):
+    _login(client)
+    job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
+    finished = _wait(client, job["id"])
+    assert finished["state"] in ("done", "ready")
+
+    response = client.post(f"/api/harness/jobs/{job['id']}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == finished["state"]
 
 
 def test_html_rules_and_fixers():

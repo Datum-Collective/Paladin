@@ -94,6 +94,7 @@ describe('workspaceStatus', () => {
   it('reports finished, unscanned and empty workspaces', () => {
     expect(workspaceStatus(w('github', { state: 'done' }))).toMatchObject({ tone: 'ok', label: 'Scanned' })
     expect(workspaceStatus(w('github', { state: 'ready' }))).toMatchObject({ label: 'Fixes ready' })
+    expect(workspaceStatus(w('github', { state: 'cancelled' }))).toMatchObject({ tone: 'mute', label: 'Cancelled', busy: false })
     expect(workspaceStatus(w('local', null))).toMatchObject({ tone: 'warn', label: 'Not scanned' })
     expect(workspaceStatus(w('empty', null, 0))).toMatchObject({ label: 'Empty' })
     expect(workspaceStatus(w('empty', null, 5))).toMatchObject({ label: 'Log data' })
