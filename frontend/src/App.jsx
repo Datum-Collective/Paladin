@@ -244,7 +244,9 @@ function Repo({ onDone }) {
         <>
           <p><b>{job.repo_url}</b> <span className={`state st-${job.state}`}>{job.state}</span></p>
           {job.error && <p className="err">{job.error}</p>}
-          <ul className="hops">{job.log.slice(-6).map((l, i) => <li key={i} className="muted">{l.msg}</li>)}</ul>
+          <ul className="hops">{job.log.slice(-8).map((l, i) => <li key={i} className="muted">{l.msg}</li>)}</ul>
+          <ScanReport job={job} />
+          <Findings items={job.findings} />
           {job.fixes.length > 0 && (
             <>
               <h4>{job.fixes.length} verified fix(es) on {job.branch}</h4>
@@ -268,6 +270,65 @@ function Repo({ onDone }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+function ScanReport({ job }) {
+  const r = job.report
+  if (!r || r.files_total === undefined) return null
+  const skipped = Object.entries(r.skipped || {}).sort((a, b) => b[1].count - a[1].count)
+  return (
+    <div className="fix">
+      <h4>Scan report</h4>
+      <div>
+        <b>{r.scanned}</b> of {r.files_total} files scanned ({r.lines_scanned} lines) against{' '}
+        <b>{r.rules.length}</b> rules · {r.candidates} rule hit(s) · {r.ai.review_findings} AI-review finding(s) ·{' '}
+        {r.judged_not_exploitable} judged not exploitable
+      </div>
+      <div className="muted">
+        AI: {r.ai.enabled ? `triage ${r.ai.triage ? 'ran' : 'had nothing to triage'}, reviewed ${r.ai.review_files} file(s)` +
+          (r.ai.claims_rejected ? `, discarded ${r.ai.claims_rejected} claim(s) that did not match the code` : '') : 'off'}
+      </div>
+      {skipped.length > 0 && (
+        <>
+          <div className="muted" style={{ marginTop: 6 }}>Not scanned:</div>
+          <ul className="assets">
+            {skipped.map(([why, d]) => (
+              <li key={why}><b>{d.count}</b> {why} <span className="muted">({d.examples.join(', ')})</span></li>
+            ))}
+          </ul>
+        </>
+      )}
+      <details><summary className="muted">Rules checked</summary>
+        <ul className="assets">{r.rules.map((x) => <li key={x.id}>{x.title} <span className="muted">{x.cwe}</span></li>)}</ul>
+      </details>
+      <details><summary className="muted">Files scanned</summary>
+        <ul className="assets">{r.scanned_files.map((f) => <li key={f}><code>{f}</code></li>)}</ul>
+      </details>
+      <div className="muted">{r.limits}</div>
+    </div>
+  )
+}
+
+function Findings({ items }) {
+  if (!items || !items.length) return null
+  const verdict = (f) => (f.fixed ? 'fixed' : f.exploitable === false ? 'not exploitable' :
+    f.triaged_by === 'haiku-review' ? 'needs review' : 'needs manual fix')
+  return (
+    <div>
+      <h4>Findings ({items.length})</h4>
+      <ul className="paths">
+        {items.map((f) => (
+          <li key={f.id}>
+            <b>{f.title}</b> <span className={`state st-${f.fixed ? 'verified' : f.exploitable === false ? 'rolled_back' : 'failed'}`}>
+              {verdict(f)}</span>
+            <div className="muted">{f.file}:{f.line} · {f.cwe} · {f.technique} · {f.triaged_by}</div>
+            {f.snippet && <code>{f.snippet}</code>}
+            {f.reason && <div className="muted">{f.reason}</div>}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

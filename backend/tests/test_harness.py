@@ -154,7 +154,7 @@ def test_clean_and_unscannable_repos_say_so(client, tmp_path, monkeypatch):
 
     client.post("/api/auth/demo")
     cases = [(mk("docs_only", {"README.md": "hi"}), "nothing to scan"),
-             (mk("clean", {"index.html": '<a target="_blank" rel="noopener" href="x">x</a>'}), "clean: no findings")]
+             (mk("clean", {"index.html": '<a target="_blank" rel="noopener" href="x">x</a>'}), "no issues found")]
     for repo_dir, expect in cases:
         j = client.post("/api/harness/jobs", json={"repo_url": str(repo_dir)}).json()
         harness.wait(j["id"])

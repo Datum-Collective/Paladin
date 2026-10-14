@@ -70,6 +70,61 @@ def load_files(root: Path) -> list[dict]:
     return out
 
 
+BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".pdf", ".zip", ".gz", ".tar", ".woff",
+              ".woff2", ".ttf", ".eot", ".mp4", ".mp3", ".pyc", ".so", ".dll", ".exe", ".bin", ".csv", ".parquet"}
+DOC_EXT = {".md", ".txt", ".rst", ".adoc"}
+
+
+def _skip_reason(rel: str, size: int, kept: set[str]) -> str | None:
+    """None when the file was scanned, otherwise the reason it was not."""
+    low = rel.lower()
+    if rel in kept:
+        return None
+    if any(d in low + "/" or low.startswith(d) or ("/" + d) in "/" + low for d in codescan.SKIP_DIRS):
+        return "vendored or build output"
+    ext = Path(low).suffix
+    if low.endswith(codescan.SKIP_FILES) or ext in (".map", ".lock"):
+        return "lockfiles, minified, source maps"
+    if ext in DOC_EXT:
+        return "docs"
+    if ext in BINARY_EXT:
+        return "binary or media"
+    if ext in codescan.CODE_EXT:
+        return "oversized or over the scan limit" if size > codescan.MAX_FILE_BYTES else "over the scan limit"
+    return "other file types"
+
+
+def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, ai_on: bool) -> dict:
+    kept_paths = {f["path"] for f in kept}
+    skipped: dict[str, dict] = {}
+    total = 0
+    for p in src.rglob("*"):
+        rel = p.relative_to(src)
+        if ".git" in rel.parts or not p.is_file() or p.is_symlink():
+            continue
+        total += 1
+        why = _skip_reason(rel.as_posix(), p.stat().st_size, kept_paths)
+        if why:
+            d = skipped.setdefault(why, {"count": 0, "examples": []})
+            d["count"] += 1
+            top = rel.parts[0] if len(rel.parts) > 1 else rel.name
+            if top not in d["examples"] and len(d["examples"]) < 4:
+                d["examples"].append(top)
+    judged_no = sum(1 for f in findings if f["exploitable"] is False)
+    return {
+        "files_total": total, "scanned": len(kept), "lines_scanned": ai_stats.get("lines", 0),
+        "skipped": skipped, "scanned_files": sorted(kept_paths)[:80],
+        "rules": [{"id": r[0], "title": r[5], "cwe": r[2]} for r in codescan.RULES],
+        "candidates": sum(1 for f in findings if f["triaged_by"] != "haiku-review"),
+        "judged_not_exploitable": judged_no,
+        "ai": {"enabled": ai_on, "triage": ai_stats.get("triage", False),
+               "review_files": ai_stats.get("files_reviewed", 0), "review_findings": ai_stats.get("findings", 0),
+               "claims_rejected": ai_stats.get("claims_rejected", 0)},
+        "limits": "Pattern rules plus an AI review of up to 10 files; not a full static-analysis or "
+                  "dependency audit. Repo code is never executed.",
+    }
+
+
 # ---- job storage ----
 def _ensure() -> None:
     store.run("""CREATE TABLE IF NOT EXISTS jobs(
@@ -78,6 +133,10 @@ def _ensure() -> None:
         branch TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '', diff TEXT NOT NULL DEFAULT '',
         ai_used INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created REAL NOT NULL,
         updated REAL NOT NULL)""")
+    try:
+        store.run("ALTER TABLE jobs ADD COLUMN report TEXT NOT NULL DEFAULT '{}'")
+    except Exception:  # column already exists
+        pass
 
 
 def _upd(jid: int, **cols) -> None:
@@ -97,15 +156,15 @@ def get(ws: int, jid: int) -> dict:
     if not r:
         raise KeyError(jid)
     d = dict(r[0])
-    for k in ("log", "findings", "fixes"):
-        d[k] = json.loads(d[k])
+    for k in ("log", "findings", "fixes", "report"):
+        d[k] = json.loads(d[k] or "{}")
     d["ai_used"] = bool(d["ai_used"])
     return d
 
 
 def list_jobs(ws: int) -> list[dict]:
     _ensure()
-    return [{k: v for k, v in get(ws, r["id"]).items() if k not in ("log", "diff", "findings")}
+    return [{k: v for k, v in get(ws, r["id"]).items() if k not in ("log", "diff", "findings", "report")}
             for r in store.q("SELECT id FROM jobs WHERE ws=? ORDER BY id DESC LIMIT 30", (ws,))]
 
 
@@ -154,12 +213,18 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         if not kept:
             sample = ", ".join(sorted(Path(f["path"]).name for f in files)[:6])
             codescan.persist(ws, f"{owner}/{repo}", [], False, 0)
-            _upd(jid, state="done", fixes="[]")
+            _upd(jid, state="done", fixes="[]",
+                 report=json.dumps(coverage(src, [], [], {}, ai.enabled())))
             _log(jid, f"nothing to scan: no source files in a supported language (found: {sample or 'no text files'})")
             return
-        findings, ai_used, n = codescan.scan(files)
-        _log(jid, f"scanned {n} files: {len(findings)} candidate findings"
-                  f"{' (Haiku triaged)' if ai_used else ' (static only)' if findings else ''}")
+        _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
+                  f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
+        findings, ai_used, n, stats = codescan.scan_full(files)
+        rep = coverage(src, kept, findings, stats, ai.enabled())
+        _upd(jid, report=json.dumps(rep))
+        _log(jid, f"scanned {n} files, {rep['lines_scanned']} lines against {len(rep['rules'])} rules: "
+                  f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
+                  f"{rep['judged_not_exploitable']} judged not exploitable")
         codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
         _upd(jid, state="fixing", ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings)
@@ -169,7 +234,9 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         if not fixes:
             _upd(jid, state="done", fixes="[]")
             live = [f for f in findings if f["exploitable"] is not False]
-            _log(jid, "clean: no findings, nothing to fix" if not findings else
+            _log(jid, f"no issues found: {len(rep['rules'])} rules over {rep['lines_scanned']} lines in {n} files"
+                 f"{', plus AI review of ' + str(stats['files_reviewed']) + ' files' if stats['files_reviewed'] else ''}"
+                 " (this is not a proof of safety)" if not findings else
                  f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
                  f"{len(live)} need a manual fix (no safe automatic patch)")
             return

@@ -19,6 +19,10 @@ def _secret_py(line: str, path: str):
 
 
 DETERMINISTIC = {
+    "permissive-cors": lambda l, p: re.sub(
+        r"allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]",
+        'allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")', l)
+    if p.endswith(".py") and "allow_origins" in l else None,
     "blank-noopener": lambda l, p: re.sub(r"""(target\s*=\s*["']_blank["'])""", r'\1 rel="noopener noreferrer"', l, 1),
     "http-script-src": lambda l, p: re.sub(r"""(<script[^>]+src\s*=\s*["'])http://""", r"\1https://", l, 1, re.I),
     "weak-hash": lambda l, p: re.sub(r"hashlib\.(md5|sha1)\(", "hashlib.sha256(", l)
@@ -115,7 +119,8 @@ def _locate(content: str, f: dict) -> int | None:
 def try_fix(content: str, f: dict) -> dict | None:
     """Return {content, method, explanation} for an accepted patch, or None."""
     path, rule = f["file"], f["rule"]
-    before_rule, before_total = _count(rule, content, path), _total(content, path)
+    known = any(r[0] == rule for r in codescan.RULES)
+    before_rule, before_total = (_count(rule, content, path) if known else 0), _total(content, path)
     candidates = []
     fn = DETERMINISTIC.get(rule)
     if fn:
@@ -134,6 +139,10 @@ def try_fix(content: str, f: dict) -> dict | None:
         new_content = _ensure_os_import(path, new_content)
         if not _syntax_ok(path, new_content):
             continue
-        if _count(rule, new_content, path) < before_rule and _total(new_content, path) <= before_total - 1:
+        if known:
+            ok = _count(rule, new_content, path) < before_rule and _total(new_content, path) <= before_total - 1
+        else:  # AI-review finding: no rule to watch, so require a real change and no new static findings
+            ok = new_content != content and _total(new_content, path) <= before_total
+        if ok:
             return {"content": new_content, "method": method, "explanation": why}
     return None
