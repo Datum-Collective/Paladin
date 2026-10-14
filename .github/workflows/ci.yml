@@ -15,4 +15,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
-      - run: cd frontend && npm ci && npm run build
+      - run: cd frontend && npm ci && npm test && npm run build
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      # unit tests only; installing electron's binary is not needed for them
+      - run: cd desktop && npm ci --ignore-scripts && npm test

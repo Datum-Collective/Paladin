@@ -1,23 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
-import Graph from './Graph.jsx'
+import Analysis from './Analysis.jsx'
+import CommandPalette from './CommandPalette.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
+import Settings from './Settings.jsx'
+import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
+import { SEV_TONE } from './parts.jsx'
+import { ToastProvider, useToast } from './toast.jsx'
+import { useWorkspace } from './useWorkspace.js'
 
-const SEV_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'ok' }
-const KILL_CHAIN = ['reconnaissance', 'initial-access', 'execution', 'persistence', 'privilege-escalation',
-  'defense-evasion', 'credential-access', 'discovery', 'lateral-movement', 'collection',
-  'command-and-control', 'exfiltration', 'impact']
-const NEXT_ACTION = { proposed: 'Approve', approved: 'Execute', executed: 'Verify' }
-const STEP = { Approve: 'approve', Execute: 'execute', Verify: 'verify' }
-const hhmm = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(5, 16)
+const bridge = typeof window !== 'undefined' ? window.paladin : undefined
 
-function Severity({ level }) {
-  return <span className={`pill ${SEV_TONE[level]}`}>{level.toLowerCase()}</span>
-}
-
-function Login({ onDone }) {
+function Login({ onDone, config }) {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [mode, setMode] = useState('login')
@@ -27,318 +23,175 @@ function Login({ onDone }) {
     try { await fn(); onDone() } catch (e) { setErr(e.message) }
   }
   return (
-    <div className="login">
-      <h1>Attack Path Compiler</h1>
+    <form className="login" onSubmit={(e) => { e.preventDefault(); go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw))) }}>
+      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      <button className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>
-      <div className="or">or</div>
-      <input placeholder="Email" aria-label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input placeholder="Password" aria-label="Password" type="password" value={pw}
+      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>}
+      {config.demo && <div className="or">or</div>}
+      <input placeholder="Email" aria-label="Email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <input placeholder="Password" aria-label="Password" type="password"
+             autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={pw}
              onChange={(e) => setPw(e.target.value)} />
-      <button onClick={() => go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw)))}>
-        {mode === 'login' ? 'Sign in' : 'Create account'}
-      </button>
-      <button className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      <button type="button" className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
         {mode === 'login' ? 'Create an account' : 'I already have an account'}
       </button>
-      {err && <p className="err">{err}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
+    </form>
+  )
+}
+
+function Splash({ error, onRetry }) {
+  return (
+    <div className="splash">
+      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+      {error ? (
+        <>
+          <p className="err" role="alert">{error}</p>
+          <button onClick={onRetry}>Try again</button>
+        </>
+      ) : <p className="muted">Starting…</p>}
     </div>
   )
 }
 
-function KillChain({ tactics }) {
-  return (
-    <div className="killchain" aria-label="Kill chain stages">
-      {KILL_CHAIN.map((t) => (
-        <span key={t} className={tactics.includes(t) ? 'kc on' : 'kc'}>{t.replace(/-/g, ' ')}</span>
-      ))}
-    </div>
-  )
-}
+function Shell({ config, user, onSignOut, onExpired }) {
+  const toast = useToast()
+  const ws = useWorkspace(user, onExpired)
+  const [view, setView] = useState('analysis')
+  const [tab, setTab] = useState('paths')
+  const [selected, setSelected] = useState(null)
+  const [palette, setPalette] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
 
-function PathDetail({ path }) {
-  if (!path) return <p className="muted">Select a path to see how it works, which assets it touches and the evidence.</p>
-  return (
-    <div>
-      <div className="row-top"><h2>Attack path</h2><Severity level={path.severity} /></div>
-      <p className="muted">Risk {path.risk.toFixed(3)}</p>
-      <p>{path.narrative}</p>
-      <KillChain tactics={path.tactics} />
-      <h3>Affected assets</h3>
-      <ul className="plain">
-        {path.assets.map((a) => (
-          <li key={a.id}>{a.label} <span className="muted">{a.kind}, criticality {a.criticality}</span></li>
-        ))}
-      </ul>
-      <h3>Progression</h3>
-      <ol className="steps">
-        {path.hops.map((h) => (
-          <li key={h.edge}>
-            <div><b>{h.src}</b> <span className="muted">to</span> <b>{h.dst}</b></div>
-            <div className="muted">
-              {h.technique} {h.technique_name} · p {h.p} · {h.observed ? 'confirmed by events' : 'possible, no events yet'}
-            </div>
-            {h.events.map((e) => (
-              <div key={e.id} className="ev">
-                <span className="muted">{e.id} · {hhmm(e.ts)} · {e.source}</span>
-                <code className="snippet">{e.raw || `${e.type} ${e.actor} ${e.src_ip}`}</code>
-              </div>
-            ))}
-            {h.mitigation && <div className="muted">Mitigation {h.mitigation} {h.mitigation_name}</div>}
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
-}
+  const go = useCallback((target) => {
+    if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
+  }, [])
+  const openPath = useCallback((id) => { setView('analysis'); setTab('paths'); setSelected(id) }, [])
+  const doReset = useCallback(async () => { setConfirmReset(false); setSelected(null); await ws.reset() }, [ws])
 
-function Fixes({ fixes, onPropose }) {
-  if (!fixes || (!fixes.cheapest_cut && !fixes.best_single)) return null
-  const card = (title, f) => f && (
-    <div className="card">
-      <div className="row-top"><b>{title}</b><span className="muted">cost {f.total_cost}</span></div>
-      <p className="muted">
-        Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
-        {' '}{f.mitigations.map((m) => m.mitigation).filter(Boolean).join(', ')}
-      </p>
-      <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose fix</button>
-    </div>
-  )
-  return (
-    <div>
-      <h3>Recommended fixes</h3>
-      {card('Cheapest cut', fixes.cheapest_cut)}
-      {fixes.best_single && (!fixes.cheapest_cut ||
-        fixes.best_single.edges.join() !== fixes.cheapest_cut.edges.join()) && card('Best single fix', fixes.best_single)}
-      {fixes.edge_count_cut_cost != null && (
-        <p className="muted small">A cut that only minimises step count would cost {fixes.edge_count_cut_cost}.</p>
-      )}
-    </div>
-  )
-}
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (k === 'k') { e.preventDefault(); setPalette((p) => !p) }
+      else if (k === '1') { e.preventDefault(); setView('analysis') }
+      else if (k === '2') { e.preventDefault(); setView('repo') }
+      else if (k === '3') { e.preventDefault(); setView('insights') }
+      else if (k === ',') { e.preventDefault(); setView('settings') }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
-function Remediations({ items, onChange }) {
-  const [open, setOpen] = useState(null)
-  const [detail, setDetail] = useState(null)
-  const [err, setErr] = useState('')
-  const show = async (id) => {
-    if (open === id) { setOpen(null); return }
-    setOpen(id); setDetail(await api.remediation(id))
-  }
-  const step = async (id, action) => {
-    setErr('')
-    try { await api.rstep(id, action); setDetail(await api.remediation(id)); onChange() } catch (e) { setErr(e.message) }
-  }
-  if (!items.length) return null
+  const severity = ws.graph ? { label: ws.graph.severity.toLowerCase(), tone: SEV_TONE[ws.graph.severity] } : { label: '', tone: '' }
+
+  const commands = useMemo(() => {
+    const c = [
+      { id: 'v-analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes', run: () => setView('analysis') },
+      { id: 'v-repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repo', keywords: 'github scan code', run: () => setView('repo') },
+      { id: 'v-insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks', run: () => setView('insights') },
+      { id: 'v-settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys updates preferences', run: () => setView('settings') },
+      { id: 'a-ingest', group: 'Actions', title: 'Add log data', icon: 'upload', keywords: 'ingest upload paste logs', run: () => go('ingest') },
+      { id: 'a-events', group: 'Actions', title: 'Show events', icon: 'file', run: () => { setView('analysis'); setTab('events') } },
+      { id: 'a-refresh', group: 'Actions', title: 'Refresh data', icon: 'refresh', run: () => ws.refresh() },
+      { id: 'a-reset', group: 'Actions', title: 'Reset workspace', icon: 'trash', run: () => setConfirmReset(true) },
+    ]
+    if (ws.canPlay) c.splice(4, 0, { id: 'a-play', group: 'Actions', title: 'Play sample scenario', icon: 'play', run: () => ws.play() })
+    const f = ws.fixes
+    if (f && f.cheapest_cut) c.push({ id: 'f-cut', group: 'Fixes', title: 'Propose cheapest cut', icon: 'shield',
+      hint: `${f.cheapest_cut.risk_removed_pct}% risk removed`, run: () => ws.propose(f.cheapest_cut.edges, 'Cheapest cut') })
+    if (f && f.best_single) c.push({ id: 'f-single', group: 'Fixes', title: 'Propose best single fix', icon: 'shield',
+      hint: `${f.best_single.risk_removed_pct}% risk removed`, run: () => ws.propose(f.best_single.edges, 'Best single fix') })
+    if (bridge) c.push({ id: 'u-check', group: 'App', title: 'Check for updates', icon: 'refresh',
+      run: async () => { const s = await bridge.checkForUpdates(); toast(s.phase === 'disabled' ? 'Updates are off in development builds' : 'Checking for updates…') } })
+    for (const p of ws.paths.slice(0, 12)) {
+      c.push({ id: `p-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph', hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`,
+        run: () => openPath(p.id) })
+    }
+    return c
+  }, [ws, go, openPath, toast])
+
+  if (!ws.loaded) return <Splash />
   return (
-    <div>
-      <h3>Remediation</h3>
-      {err && <p className="err">{err}</p>}
-      {items.map((r) => (
-        <div key={r.id} className="card">
-          <button className="row-btn" onClick={() => show(r.id)} aria-expanded={open === r.id}>
-            <b>{r.title}</b>
-            <span className={`pill ${r.state === 'verified' ? 'ok' : r.state === 'failed' ? 'bad' : 'info'}`}>{r.state.replace('_', ' ')}</span>
-          </button>
-          {r.note && <p className="err">{r.note}</p>}
-          {r.risk_before != null && (
-            <p className="muted">Risk {r.risk_before} to {r.risk_after} · dangerous paths {r.paths_before} to {r.paths_after}</p>
+    <div className="app">
+      <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
+               playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
+               rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} />
+      <div className="content">
+        <div className="toolbar drag">
+          <h1 className="toolbar-title">{{ analysis: 'Analysis', repo: 'Repository', insights: 'Insights', settings: 'Settings' }[view]}</h1>
+          {view === 'analysis' && !ws.empty && (
+            <span className="muted small toolbar-sub">
+              worst path {ws.graph.worst.toFixed(2)} · combined {ws.graph.risk.toFixed(2)} · {ws.graph.events} {ws.graph.events === 1 ? 'event' : 'events'}
+            </span>
           )}
-          <div className="actions">
-            {NEXT_ACTION[r.state] && <button className="primary" onClick={() => step(r.id, STEP[NEXT_ACTION[r.state]])}>{NEXT_ACTION[r.state]}</button>}
-            {['executed', 'verified', 'failed'].includes(r.state) && <button onClick={() => step(r.id, 'rollback')}>Roll back</button>}
-          </div>
-          {open === r.id && detail && (
-            <>
-              <pre className="runbook">{detail.runbook}</pre>
-              {detail.ai_drafted && <p className="muted small">Runbook drafted by AI from the computed facts.</p>}
-              <ul className="plain">
-                {detail.audit.map((a, i) => <li key={i}>{a.action} <span className="muted">by {a.actor} {a.detail}</span></li>)}
-              </ul>
-            </>
-          )}
+          <span className="spacer" />
+          <button className="nodrag" onClick={() => setPalette(true)} aria-label="Command palette"><Icon name="command" size={14} /></button>
         </div>
-      ))}
-    </div>
-  )
-}
-
-function Events({ data }) {
-  if (!data || !data.events.length) return <p className="muted">No events yet.</p>
-  return (
-    <div>
-      <p className="muted">{data.total} events, newest first</p>
-      <ul className="rows">
-        {data.events.map((e) => (
-          <li key={e.id}>
-            <div className="muted">{e.id} · {hhmm(e.ts)} · {e.source} · {e.type}</div>
-            <code className="snippet">{e.raw || `${e.actor} ${e.src_ip}`}</code>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function Ingest({ onDone }) {
-  const [fmt, setFmt] = useState('linux_auth')
-  const [text, setText] = useState('')
-  const [msg, setMsg] = useState('')
-  const [key, setKey] = useState('')
-  const send = async () => {
-    try {
-      const r = await api.ingest(fmt, text.split('\n').filter(Boolean))
-      setMsg(`${r.accepted} accepted, ${r.rejected} rejected`)
-      onDone()
-    } catch (e) { setMsg(e.message) }
-  }
-  const file = async (e) => { const f = e.target.files[0]; if (f) setText(await f.text()) }
-  const curl = `curl -X POST ${location.origin}/api/ingest -H "X-API-Key: ${key}" -H "Content-Type: application/json" \\
-  -d '{"format":"${fmt}","lines":["<one log line>"]}'`
-  return (
-    <div>
-      <h3>Add log data</h3>
-      <select value={fmt} onChange={(e) => setFmt(e.target.value)} aria-label="Log format">
-        <option value="linux_auth">Linux auth (syslog)</option>
-        <option value="web_access">Web access (combined)</option>
-        <option value="snort_alert">IDS alert (Snort format)</option>
-      </select>
-      <input type="file" onChange={file} aria-label="Log file" />
-      <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste log lines" />
-      <div className="actions">
-        <button className="primary" onClick={send} disabled={!text}>Ingest</button>
-        <span className="muted">{msg}</span>
+        {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
+        {view === 'repo' && <RepoView onDone={ws.refresh} />}
+        {view === 'settings' && <Settings config={config} user={user} onReset={() => setConfirmReset(true)} onSignOut={onSignOut} />}
+        {view === 'analysis' && (
+          <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go} desktop={config.desktop} />
+        )}
       </div>
-      <h3>Send from your own system</h3>
-      <button onClick={async () => setKey((await api.createKey('source')).key)}>Create API key</button>
-      {key && <pre className="runbook">{curl}</pre>}
-    </div>
-  )
-}
 
-function Empty({ canPlay, onPlay, go }) {
-  return (
-    <div className="empty">
-      <h2>Nothing to analyse yet</h2>
-      <p className="muted">Scan a repository or add log data, and the attack paths appear here.</p>
-      <div className="actions center">
-        <button className="primary" onClick={() => go('repo')}>Scan a repository</button>
-        <button onClick={() => go('ingest')}>Add log data</button>
-        {canPlay && <button onClick={onPlay}>Play sample scenario</button>}
-      </div>
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+      {confirmReset && (
+        <div className="scrim" onMouseDown={() => setConfirmReset(false)}>
+          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" onMouseDown={(e) => e.stopPropagation()}>
+            <h2 id="reset-title">Reset this workspace?</h2>
+            <p className="muted">Events, applied fixes, scan results and remediation history are deleted. This cannot be undone.</p>
+            <div className="actions end">
+              <button autoFocus onClick={() => setConfirmReset(false)}>Cancel</button>
+              <button className="danger" onClick={doReset}>Reset workspace</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export default function App() {
+  const [config, setConfig] = useState(null)
   const [user, setUser] = useState(undefined)
-  const [graph, setGraph] = useState(null)
-  const [paths, setPaths] = useState([])
-  const [fixes, setFixes] = useState(null)
-  const [events, setEvents] = useState(null)
-  const [rems, setRems] = useState([])
-  const [sel, setSel] = useState(null)
-  const [playing, setPlaying] = useState(false)
-  const [canPlay, setCanPlay] = useState(false)
-  const [tab, setTab] = useState('paths')
-  const [view, setView] = useState('analysis')
-  const timer = useRef(null)
+  const [error, setError] = useState('')
 
-  const refresh = useCallback(async () => {
-    const [g, p, f, r, ev] = await Promise.all([api.graph(), api.paths(), api.fixes(), api.remediations(), api.events()])
-    setGraph(g); setPaths(p.paths); setFixes(f); setRems(r.remediations); setEvents(ev)
+  const boot = useCallback(async () => {
+    setError('')
+    try {
+      const cfg = await api.config()
+      setConfig(cfg)
+      document.documentElement.dataset.desktop = cfg.desktop ? '1' : '0'
+      try {
+        setUser(await api.me())
+      } catch (e) {
+        if (e.status !== 401) throw e
+        if (cfg.desktop) { await api.local(); setUser(await api.me()) } else setUser(null)
+      }
+    } catch (e) {
+      setError(e.message === 'request failed' ? 'Could not reach the analysis engine.' : e.message)
+    }
   }, [])
 
-  useEffect(() => { api.me().then(setUser).catch(() => setUser(null)) }, [])
   useEffect(() => {
-    if (!user) return
-    refresh()
-    api.simStatus().then((s) => setCanPlay(s.total > 0)).catch(() => {})
-    const es = new EventSource('/api/stream')
-    es.onmessage = () => refresh()
-    return () => es.close()
-  }, [user, refresh])
-  useEffect(() => () => clearTimeout(timer.current), [])
+    if (bridge) document.documentElement.dataset.platform = bridge.platform
+    boot()
+  }, [boot])
 
-  const play = async () => {
-    setPlaying(true)
-    await api.simStart()
-    const tick = async () => {
-      const r = await api.simStep(15)
-      if (r.done) { setPlaying(false); return }
-      timer.current = setTimeout(tick, 700)
-    }
-    tick()
-  }
-  const go = (target) => {
-    if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
-  }
+  const signOut = useCallback(async () => { await api.logout(); setUser(null) }, [])
+  // desktop has no account screen: a lapsed session is silently renewed through the local-account endpoint
+  const renew = useCallback(async () => {
+    try { await api.local(); setUser(await api.me()) } catch (e) { setError(e.message) }
+  }, [])
 
-  if (user === undefined) return null
-  if (!user) return <Login onDone={() => api.me().then(setUser)} />
-
-  const selected = paths.find((p) => p.id === sel)
-  const empty = !graph || (graph.events === 0 && paths.length === 0)
-  const NAV = [['analysis', 'Analysis', 'graph'], ['repo', 'Repository', 'repo'], ['insights', 'Insights', 'chart']]
+  if (error) return <Splash error={error} onRetry={boot} />
+  if (!config || user === undefined) return <Splash />
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">Attack Path Compiler</span>
-        <nav className="seg" aria-label="Sections">
-          {NAV.map(([id, label, icon]) => (
-            <button key={id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>
-              <Icon name={icon} size={14} /> {label}
-            </button>
-          ))}
-        </nav>
-        <span className="spacer" />
-        {!empty && graph && (
-          <span className="status-inline">
-            <Severity level={graph.severity} />
-            <span className="muted">worst path {graph.worst.toFixed(2)} · combined {graph.risk.toFixed(2)}{graph.events > 0 ? ` · ${graph.events} events` : ''}</span>
-          </span>
-        )}
-        {canPlay && (
-          <button disabled={playing} onClick={play}><Icon name="play" size={14} /> {playing ? 'Playing' : 'Play'}</button>
-        )}
-        <button onClick={async () => { await api.simReset(); setSel(null); refresh() }}>Reset</button>
-        <button className="icon-btn" aria-label="Sign out" title="Sign out"
-                onClick={async () => { await api.logout(); setUser(null) }}><Icon name="logout" /></button>
-      </header>
-
-      {view === 'insights' && <Insights key={graph ? graph.events : 0} rems={rems} />}
-      {view === 'repo' && <RepoView onDone={refresh} />}
-      {view === 'analysis' && (
-        <main className="analysis">
-          <aside className="pane left">
-            <div className="seg small" role="tablist">
-              {[['paths', 'Paths', 'list'], ['events', 'Events', 'file'], ['ingest', 'Add data', 'upload']].map(([t, l]) => (
-                <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{l}</button>
-              ))}
-            </div>
-            {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
-              <ul className="rows selectable">
-                {paths.map((p) => (
-                  <li key={p.id} className={p.id === sel ? 'on' : ''} onClick={() => setSel(p.id)}>
-                    <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
-                    <div className="path-line">{p.nodes.join(' → ')}</div>
-                  </li>
-                ))}
-              </ul>
-            ))}
-            {tab === 'events' && <Events data={events} />}
-            {tab === 'ingest' && <Ingest onDone={refresh} />}
-          </aside>
-          <section className="canvas">
-            {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={selected} />}
-          </section>
-          <aside className="pane right">
-            {!empty && <PathDetail path={selected} />}
-            {!empty && <Fixes fixes={fixes} onPropose={async (edges, title) => { await api.propose(edges, title); refresh() }} />}
-            <Remediations items={rems} onChange={refresh} />
-          </aside>
-        </main>
-      )}
-    </div>
+    <ToastProvider>
+      {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={config.desktop ? renew : signOut} /> : <Login config={config} onDone={() => api.me().then(setUser)} />}
+    </ToastProvider>
   )
 }

@@ -40,7 +40,10 @@ export default function Graph({ graph, highlight, onEdge }) {
     const onScheme = () => { cy.current.style(theme().style); draw() }
     mq.addEventListener('change', onScheme)
     cy.current.on('tap', 'edge', (e) => onEdge && onEdge(e.target.id()))
-    return () => { mq.removeEventListener('change', onScheme); cy.current.destroy() }
+    // refit whenever the pane is resized (window, splitter drag, first layout) so the graph never stays tiny
+    const ro = new ResizeObserver(() => { if (cy.current) { cy.current.resize(); cy.current.fit(undefined, 40) } })
+    ro.observe(ref.current)
+    return () => { ro.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
   }, [])
 
   const graphRef = useRef(null)
@@ -57,7 +60,7 @@ export default function Graph({ graph, highlight, onEdge }) {
     ]
     cy.current.elements().remove()
     cy.current.add(els)
-    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 60, rankSep: 170, edgeSep: 30,
+    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 70, rankSep: 105, edgeSep: 30,
       ranker: 'longest-path', fit: true, padding: 40 }).run()
   }
 

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyze, auth, codescan, engine, inventory, metrics, store
+from . import ai, analyze, auth, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from . import harness
@@ -84,6 +84,14 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+def config():
+    """Public, non-secret capability flags the UI uses to pick its first screen."""
+    return {"desktop": auth.desktop_mode(), "demo": bool(os.environ.get("DEMO_USER") and os.environ.get("DEMO_PASSWORD")),
+            "ai": ai.enabled(), "github": bool(os.environ.get("GITHUB_TOKEN")),
+            "version": os.environ.get("APP_VERSION", "dev")}
+
+
 # ---- auth ----
 @app.post("/api/auth/register")
 def register(c: Creds, response: Response, request: Request):
@@ -116,6 +124,16 @@ def demo(response: Response, request: Request):
         harness.wipe(row[0]["id"])
         store.wipe_workspace(row[0]["id"])
     return out
+
+
+@app.post("/api/auth/local")
+def local(request: Request, response: Response):
+    if not auth.desktop_mode():
+        raise HTTPException(404, "not available")
+    tok = auth.local_login(request.headers.get("x-desktop-token", ""))
+    response.set_cookie(auth.COOKIE, tok, httponly=True, samesite="strict", secure=False,
+                        max_age=auth.SESSION_TTL, path="/")
+    return {"email": auth.LOCAL_EMAIL}
 
 
 @app.post("/api/auth/logout")

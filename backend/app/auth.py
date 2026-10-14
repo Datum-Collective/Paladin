@@ -67,6 +67,26 @@ def login(email: str, pw: str, ip: str) -> str:
     return tok
 
 
+LOCAL_EMAIL = "local@paladin.local"
+
+
+def desktop_mode() -> bool:
+    return os.environ.get("DESKTOP_MODE") == "1"
+
+
+def local_login(token: str) -> str:
+    """Desktop only: the Electron main process proves itself with a per-launch token and gets the one local
+    account. No password exists for it that anyone could know; the token never leaves the main process."""
+    expected = os.environ.get("APC_DESKTOP_TOKEN", "")
+    if not expected or not secrets.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(403, "desktop token required")
+    store.run("INSERT OR IGNORE INTO users(email,pw) VALUES(?,?)", (LOCAL_EMAIL, hash_pw(secrets.token_urlsafe(32))))
+    uid = store.q("SELECT id FROM users WHERE email=?", (LOCAL_EMAIL,))[0]["id"]
+    tok = secrets.token_urlsafe(32)
+    store.run("INSERT INTO sessions(token,user_id,created) VALUES(?,?,?)", (tok, uid, time.time()))
+    return tok
+
+
 def logout(tok: str | None) -> None:
     if tok:
         store.run("DELETE FROM sessions WHERE token=?", (tok,))

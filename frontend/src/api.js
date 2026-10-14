@@ -15,6 +15,8 @@ async function req(method, url, body) {
 }
 
 export const api = {
+  config: () => req('GET', '/api/config'),
+  local: () => req('POST', '/api/auth/local'),
   me: () => req('GET', '/api/me'),
   login: (email, password) => req('POST', '/api/auth/login', { email, password }),
   register: (email, password) => req('POST', '/api/auth/register', { email, password }),

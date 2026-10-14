@@ -8,3 +8,7 @@ frontend/dist/
 .pytest_cache/
 *.db
 .env.local
+desktop/node_modules/
+desktop/dist/
+desktop/build/backend/
+desktop/build/pyi-work/

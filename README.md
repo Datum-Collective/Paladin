@@ -28,22 +28,43 @@ Optional features (server env only): `ANTHROPIC_API_KEY` (Haiku triage and patch
 Local dev: `cd backend && uv venv .venv && uv pip install -r requirements.txt && python -m pytest`;
 `cd frontend && npm ci && npm run dev` (proxies `/api` to :8000). Benchmarks: `python scripts/benchmark.py`.
 
+## Desktop app (macOS and Windows)
+`desktop/` is an Electron shell around the same backend and UI. The FastAPI server is frozen with PyInstaller and
+spawned by the main process on `127.0.0.1` with a random port; no Docker or Python is needed on the user's machine.
+The renderer is sandboxed (context isolation, no Node), and the main process adds a per-launch token to requests so
+only the app can open the single local account. Provider keys (Anthropic, GitHub) are stored with the OS keychain
+through Electron `safeStorage`; if it is unavailable they are not saved.
+```bash
+cd backend && uv venv .venv && uv pip install -r requirements.txt      # once
+cd frontend && npm ci && npm run build                                  # once, and after UI changes
+cd desktop && npm ci && npm start                                       # run in development
+cd desktop && npm test                                                  # shell unit tests
+cd desktop && PALADIN_SMOKE_TEST=1 npm start                            # boots, signs in, exits 0 on success
+cd desktop && npm run dist                                              # installer for the current OS
+```
+PyInstaller does not cross-compile: build the Windows installer on Windows and the macOS one on macOS.
+Releases: macOS needs a Developer ID certificate and notarization (`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+`APPLE_TEAM_ID`); auto-update on macOS requires a signed app. Set the GitHub `publish` target in
+`desktop/electron-builder.yml`. Why bundled native rather than Docker: `docs/research/electron-docker.md`.
+
 ## Environment
-`PORT`, `STATIC_DIR`, `SEED_DIR`, `DATA_DIR`, `SECRET_KEY`, `DEMO_USER`, `DEMO_PASSWORD`, `COOKIE_SECURE`,
+`PORT`, `HOST` (desktop only), `DESKTOP_MODE`, `APC_DESKTOP_TOKEN`, `STATIC_DIR`, `SEED_DIR`, `DATA_DIR`, `SECRET_KEY`, `DEMO_USER`, `DEMO_PASSWORD`, `COOKIE_SECURE`,
 `ALLOWED_ORIGINS`, `ANTHROPIC_API_KEY`, `AI_MODEL`, `GITHUB_TOKEN` (see `.env.example`).
 
 ## API
 `/api/auth/*`, `POST /api/ingest`, `POST /api/simulate/{start,step,reset}`, `GET /api/graph`, `GET /api/paths`,
 `GET /api/paths/{id}`, `GET /api/fixes`, `/api/remediations/*`, `/api/codescan`, `/api/harness/*`,
 `GET /api/timeline`, `GET /api/metrics`, `GET /api/benchmarks`, `GET /api/stream` (SSE), `POST /api/keys`,
-`GET /health`.
+`GET /api/config`, `POST /api/auth/local` (desktop only), `GET /health`.
 
 ## Ingest your own events
 Create a key under Sources, then `POST /api/ingest` with `X-API-Key`. Formats: `linux_auth`, `web_access`,
 `snort_alert`, or `events` (Event JSON).
 
 ## Known limitations
-- Sample logs from EvidenceForge are not committed yet; Play needs them.
+- Sample logs from EvidenceForge are not committed yet; Play needs them and is hidden until they exist.
+- Desktop builds are not code-signed until certificates are configured; unsigned builds cannot auto-update on macOS.
+- The desktop installer has been built only as the frozen backend so far; `npm run dist` has not been run end to end.
 - Edge priors in `data/inventory.yaml` are hand-set; code-scan reachability is a heuristic.
 - Recompute is from scratch per request (50k events: ~1 s on a laptop); single-process SQLite.
 - Remediation "execute" closes the step in the model; the PR harness is the real delivery path.
