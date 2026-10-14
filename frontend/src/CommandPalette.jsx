@@ -3,12 +3,17 @@ import { rankCommands } from './lib.js'
 import Icon from './Icons.jsx'
 
 /** commands: [{ id, title, group, hint?, keywords?, icon?, run }] */
-export default function CommandPalette({ open, onClose, commands }) {
+export default function CommandPalette({ open, onClose, commands, recents = [], onRun }) {
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
   const input = useRef(null)
   const list = useRef(null)
-  const shown = useMemo(() => rankCommands(commands, q), [commands, q])
+  const shown = useMemo(() => {
+    if (q.trim()) return rankCommands(commands, q)
+    const byId = new Map(commands.map((c) => [c.id, c]))
+    const rec = recents.map((id) => byId.get(id)).filter(Boolean).map((c) => ({ ...c, id: `recent-${c.id}`, group: 'Recent', _id: c.id }))
+    return [...rec, ...commands]
+  }, [commands, q, recents])
 
   useEffect(() => { if (open) { setQ(''); setI(0); setTimeout(() => input.current && input.current.focus(), 0) } }, [open])
   useEffect(() => { setI(0) }, [q])
@@ -18,7 +23,7 @@ export default function CommandPalette({ open, onClose, commands }) {
   }, [i, shown])
   if (!open) return null
 
-  const run = (c) => { onClose(); c.run() }
+  const run = (c) => { onClose(); if (onRun) onRun(c._id || c.id); c.run() }
   const key = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); setI((n) => Math.min(shown.length - 1, n + 1)) }

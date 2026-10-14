@@ -49,4 +49,47 @@ export const api = {
   timeline: () => req('GET', '/api/timeline'),
   benchmarks: () => req('GET', '/api/benchmarks'),
   createKey: (label) => req('POST', '/api/keys', { label }),
+  providers: () => req('GET', '/api/providers'),
+  models: (pid) => req('GET', `/api/providers/${pid}/models`),
+  validate: (pid) => req('POST', `/api/providers/${pid}/validate`),
+}
+
+/** POST the conversation and call onEvent for each normalised event. Resolves when the stream ends; abort with the
+ *  signal. Network and HTTP failures are delivered as an error event so callers handle one shape. */
+export async function chatStream(body, onEvent, signal) {
+  let r
+  try {
+    r = await fetch('/api/assistant/chat', {
+      method: 'POST', credentials: 'same-origin', signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+  } catch (e) {
+    if (e.name === 'AbortError') return
+    onEvent({ type: 'error', kind: 'network', message: 'Could not reach the analysis engine.', hint: 'Check that Paladin is running.', retryable: true })
+    return
+  }
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}))
+    onEvent({ type: 'error', kind: 'invalid', message: typeof d.detail === 'string' ? d.detail : 'The request was rejected.', retryable: false })
+    return
+  }
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let i
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i)
+        buf = buf.slice(i + 2)
+        const line = chunk.split('\n').find((l) => l.startsWith('data: '))
+        if (line) { try { onEvent(JSON.parse(line.slice(6))) } catch { /* ignore a malformed frame */ } }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') onEvent({ type: 'error', kind: 'network', message: 'The connection was interrupted.', hint: 'Try again.', retryable: true })
+  }
 }

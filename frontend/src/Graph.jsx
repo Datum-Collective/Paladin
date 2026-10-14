@@ -4,6 +4,10 @@ import dagre from 'cytoscape-dagre'
 
 cytoscape.use(dagre)
 
+// node kind is encoded by shape as well as colour, so the graph reads without colour vision
+const SHAPE = { external: 'diamond', identity: 'ellipse', host: 'round-rectangle', role: 'hexagon', secret: 'octagon',
+  data: 'star', service: 'round-tag' }
+
 const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 
 function theme() {
@@ -15,7 +19,8 @@ function theme() {
     { selector: 'node', style: {
         label: 'data(label)', 'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 130, 'text-valign': 'bottom',
         'text-margin-y': 6, color: text, 'text-background-color': bg, 'text-background-opacity': 0.9,
-        'text-background-padding': 2, 'background-color': 'data(color)', width: 22, height: 22, 'border-width': 0 } },
+        'text-background-padding': 2, 'background-color': 'data(color)', width: 24, height: 24, 'border-width': 0 } },
+    { selector: 'node[shape]', style: { shape: 'data(shape)' } },
     { selector: 'edge', style: {
         width: 'mapData(p, 0, 1, 1, 4)', 'line-color': line, 'target-arrow-color': line, 'line-opacity': 0.55,
         'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.9, label: 'data(technique)',
@@ -54,7 +59,8 @@ export default function Graph({ graph, highlight, onEdge }) {
     if (!g || !cy.current) return
     const kind = theme().kind
     const els = [
-      ...g.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: kind[n.kind] || kind.service } })),
+      ...g.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: kind[n.kind] || kind.service,
+                                       shape: SHAPE[n.kind] || 'round-rectangle' } })),
       ...g.edges.map((e) => ({ data: { id: e.id, source: e.src, target: e.dst, technique: e.technique,
           p: e.p, observed: e.observed, fixed: e.fixed } })),
     ]

@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import Analysis from './Analysis.jsx'
 import CommandPalette from './CommandPalette.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
-import Settings from './Settings.jsx'
+import Settings, { PANES } from './Settings.jsx'
+import Assistant from './Assistant.jsx'
+import { pushRecent } from './lib.js'
+import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
 import { SEV_TONE } from './parts.jsx'
@@ -55,6 +58,8 @@ function Splash({ error, onRetry }) {
   )
 }
 
+const TITLES = { analysis: 'Analysis', repo: 'Repository', insights: 'Insights', assistant: 'Assistant', settings: 'Settings' }
+
 function Shell({ config, user, onSignOut, onExpired }) {
   const toast = useToast()
   const ws = useWorkspace(user, onExpired)
@@ -63,89 +68,143 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [selected, setSelected] = useState(null)
   const [palette, setPalette] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
+  const [inspectorOpen, setInspectorOpen] = useStored('inspector-open', true)
+  const [pane, setPane] = useStored('settings-pane', 'general')
+  const [recents, setRecents] = useStored('palette-recents', [])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
   }, [])
   const openPath = useCallback((id) => { setView('analysis'); setTab('paths'); setSelected(id) }, [])
   const doReset = useCallback(async () => { setConfirmReset(false); setSelected(null); await ws.reset() }, [ws])
+  const fx = ws.fixes
 
+  // One command table drives the menu bar, the palette and the keyboard, so they cannot drift apart.
+  const run = useCallback((id) => {
+    const table = {
+      analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
+      assistant: () => setView('assistant'), settings: () => setView('settings'), ingest: () => go('ingest'),
+      events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
+      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'toggle-inspector': () => setInspectorOpen((o) => !o),
+      play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
+      refresh: () => ws.refresh(), reset: () => setConfirmReset(true),
+      'fix-cheapest': () => (fx && fx.cheapest_cut ? ws.propose(fx.cheapest_cut.edges, 'Cheapest cut') : toast('There is no fix to propose yet.', 'warn')),
+      'fix-single': () => (fx && fx.best_single ? ws.propose(fx.best_single.edges, 'Best single fix') : toast('There is no fix to propose yet.', 'warn')),
+      'check-updates': async () => {
+        if (!bridge) return
+        const s = await bridge.checkForUpdates()
+        toast(s.phase === 'disabled' ? 'Updates are off in development builds.' : 'Checking for updates…')
+      },
+    }
+    if (table[id]) table[id]()
+  }, [ws, fx, go, toast, setSidebarOpen, setInspectorOpen])
+
+  // native menu bar -> same table (desktop)
+  const runRef = useRef(run)
+  runRef.current = run
+  useEffect(() => (bridge && bridge.onCommand ? bridge.onCommand(({ id }) => runRef.current(id)) : undefined), [])
+
+  // keyboard (web has no menu bar; desktop accelerators come from the menu, so only the web needs these)
   useEffect(() => {
+    if (config.desktop) return undefined
+    const keys = { k: 'palette', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', ',': 'settings' }
     const onKey = (e) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return
-      const k = e.key.toLowerCase()
-      if (k === 'k') { e.preventDefault(); setPalette((p) => !p) }
-      else if (k === '1') { e.preventDefault(); setView('analysis') }
-      else if (k === '2') { e.preventDefault(); setView('repo') }
-      else if (k === '3') { e.preventDefault(); setView('insights') }
-      else if (k === ',') { e.preventDefault(); setView('settings') }
+      const id = keys[e.key.toLowerCase()]
+      if (id) { e.preventDefault(); runRef.current(id) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [config.desktop])
+
+  const title = view === 'settings' ? (PANES.find(([id]) => id === pane) || PANES[0])[1] : TITLES[view]
+  useEffect(() => { document.title = `${title} · Paladin` }, [title])
 
   const severity = ws.graph ? { label: ws.graph.severity.toLowerCase(), tone: SEV_TONE[ws.graph.severity] } : { label: '', tone: '' }
 
   const commands = useMemo(() => {
     const c = [
-      { id: 'v-analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes', run: () => setView('analysis') },
-      { id: 'v-repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repo', keywords: 'github scan code', run: () => setView('repo') },
-      { id: 'v-insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks', run: () => setView('insights') },
-      { id: 'v-settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys updates preferences', run: () => setView('settings') },
-      { id: 'a-ingest', group: 'Actions', title: 'Add log data', icon: 'upload', keywords: 'ingest upload paste logs', run: () => go('ingest') },
-      { id: 'a-events', group: 'Actions', title: 'Show events', icon: 'file', run: () => { setView('analysis'); setTab('events') } },
-      { id: 'a-refresh', group: 'Actions', title: 'Refresh data', icon: 'refresh', run: () => ws.refresh() },
-      { id: 'a-reset', group: 'Actions', title: 'Reset workspace', icon: 'trash', run: () => setConfirmReset(true) },
+      { id: 'analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes' },
+      { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
+      { id: 'insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks' },
+      { id: 'assistant', group: 'Go to', title: 'Assistant', icon: 'chat', hint: 'Ask about your paths', keywords: 'claude openai chat ask' },
+      { id: 'settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys providers updates preferences' },
+      { id: 'ingest', group: 'Actions', title: 'Add log data…', icon: 'upload', keywords: 'ingest upload paste logs' },
+      { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
+      { id: 'refresh', group: 'Actions', title: 'Refresh', icon: 'refresh' },
+      { id: 'toggle-sidebar', group: 'View', title: 'Show or hide sidebar', icon: 'sidebar' },
+      { id: 'toggle-inspector', group: 'View', title: 'Show or hide inspector', icon: 'inspector' },
+      { id: 'reset', group: 'Actions', title: 'Reset workspace…', icon: 'trash' },
     ]
-    if (ws.canPlay) c.splice(4, 0, { id: 'a-play', group: 'Actions', title: 'Play sample scenario', icon: 'play', run: () => ws.play() })
-    const f = ws.fixes
-    if (f && f.cheapest_cut) c.push({ id: 'f-cut', group: 'Fixes', title: 'Propose cheapest cut', icon: 'shield',
-      hint: `${f.cheapest_cut.risk_removed_pct}% risk removed`, run: () => ws.propose(f.cheapest_cut.edges, 'Cheapest cut') })
-    if (f && f.best_single) c.push({ id: 'f-single', group: 'Fixes', title: 'Propose best single fix', icon: 'shield',
-      hint: `${f.best_single.risk_removed_pct}% risk removed`, run: () => ws.propose(f.best_single.edges, 'Best single fix') })
-    if (bridge) c.push({ id: 'u-check', group: 'App', title: 'Check for updates', icon: 'refresh',
-      run: async () => { const s = await bridge.checkForUpdates(); toast(s.phase === 'disabled' ? 'Updates are off in development builds' : 'Checking for updates…') } })
+    if (ws.canPlay) c.splice(5, 0, { id: 'play', group: 'Actions', title: 'Play sample scenario', icon: 'play' })
+    if (fx && fx.cheapest_cut) c.push({ id: 'fix-cheapest', group: 'Fixes', title: 'Propose cheapest cut', icon: 'shield', hint: `${fx.cheapest_cut.risk_removed_pct}% of risk removed` })
+    if (fx && fx.best_single) c.push({ id: 'fix-single', group: 'Fixes', title: 'Propose best single fix', icon: 'shield', hint: `${fx.best_single.risk_removed_pct}% of risk removed` })
+    if (bridge) c.push({ id: 'check-updates', group: 'App', title: 'Check for updates…', icon: 'refresh' })
+    const cmds = c.map((x) => ({ ...x, run: () => run(x.id) }))
     for (const p of ws.paths.slice(0, 12)) {
-      c.push({ id: `p-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph', hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`,
-        run: () => openPath(p.id) })
+      cmds.push({ id: `path-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph',
+        hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`, run: () => openPath(p.id) })
     }
-    return c
-  }, [ws, go, openPath, toast])
+    return cmds
+  }, [ws.canPlay, ws.paths, fx, run, openPath])
 
   if (!ws.loaded) return <Splash />
+  const showInspector = view === 'analysis'
   return (
-    <div className="app">
-      <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
-               playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
-               rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} />
+    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'}>
+      {sidebarOpen && (
+        <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
+                 playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
+                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} />
+      )}
       <div className="content">
-        <div className="toolbar drag">
-          <h1 className="toolbar-title">{{ analysis: 'Analysis', repo: 'Repository', insights: 'Insights', settings: 'Settings' }[view]}</h1>
+        <div className="toolbar drag" role="toolbar" aria-label={`${title} toolbar`}>
+          <button className="tool nodrag" onClick={() => run('toggle-sidebar')} aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+                  aria-pressed={sidebarOpen} title="Show or hide sidebar"><Icon name="sidebar" size={16} /></button>
+          <h1 className="toolbar-title">{title}</h1>
           {view === 'analysis' && !ws.empty && (
             <span className="muted small toolbar-sub">
-              worst path {ws.graph.worst.toFixed(2)} · combined {ws.graph.risk.toFixed(2)} · {ws.graph.events} {ws.graph.events === 1 ? 'event' : 'events'}
+              Worst path {ws.graph.worst.toFixed(2)} · combined {ws.graph.risk.toFixed(2)} · {ws.graph.events} {ws.graph.events === 1 ? 'event' : 'events'}
             </span>
           )}
           <span className="spacer" />
-          <button className="nodrag" onClick={() => setPalette(true)} aria-label="Command palette"><Icon name="command" size={14} /></button>
+          {view === 'settings' && (
+            <div className="seg nodrag" role="tablist" aria-label="Settings sections">
+              {PANES.map(([id, l]) => (
+                <button key={id} role="tab" aria-selected={pane === id} className={pane === id ? 'on' : ''} onClick={() => setPane(id)}>{l}</button>
+              ))}
+            </div>
+          )}
+          <span className="spacer" />
+          {showInspector && (
+            <button className="tool nodrag" onClick={() => run('toggle-inspector')} aria-pressed={inspectorOpen}
+                    aria-label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} title="Show or hide inspector"><Icon name="inspector" size={16} /></button>
+          )}
+          <button className="tool nodrag" onClick={() => setPalette(true)} aria-label="Command palette" title="Command palette"><Icon name="search" size={16} /></button>
         </div>
         {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} />}
-        {view === 'settings' && <Settings config={config} user={user} onReset={() => setConfirmReset(true)} onSignOut={onSignOut} />}
+        {view === 'assistant' && <Assistant goSettings={() => { setPane('providers'); setView('settings') }} workspaceEmpty={ws.empty} />}
+        {view === 'settings' && <Settings pane={pane} config={config} user={user} onReset={() => setConfirmReset(true)} onSignOut={onSignOut} />}
         {view === 'analysis' && (
-          <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go} desktop={config.desktop} />
+          <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
+                    desktop={config.desktop} inspectorOpen={inspectorOpen} />
         )}
       </div>
 
-      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents}
+                      onRun={(id) => { if (!id.startsWith('path-')) setRecents((r) => pushRecent(r, id)) }} />
       {confirmReset && (
-        <div className="scrim" onMouseDown={() => setConfirmReset(false)}>
-          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="scrim" onMouseDown={() => setConfirmReset(false)}
+             onKeyDown={(e) => { if (e.key === 'Escape') setConfirmReset(false) }}>
+          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-desc"
+               tabIndex={-1} ref={(el) => el && el.focus()} onMouseDown={(e) => e.stopPropagation()}>
             <h2 id="reset-title">Reset this workspace?</h2>
-            <p className="muted">Events, applied fixes, scan results and remediation history are deleted. This cannot be undone.</p>
+            <p id="reset-desc" className="muted">Events, applied fixes, scan results and remediation history are deleted. You can’t undo this.</p>
             <div className="actions end">
-              <button autoFocus onClick={() => setConfirmReset(false)}>Cancel</button>
-              <button className="danger" onClick={doReset}>Reset workspace</button>
+              <button onClick={() => setConfirmReset(false)}>Cancel</button>
+              <button className="danger" onClick={doReset}>Reset Workspace</button>
             </div>
           </div>
         </div>

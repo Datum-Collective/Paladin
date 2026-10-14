@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld('paladin', {
   openDataFolder: () => ipcRenderer.invoke('app:open-data'),
   onUpdate: on('update:status'),
   onBackend: on('backend:status'),
+  onCommand: on('menu:command'),
 })

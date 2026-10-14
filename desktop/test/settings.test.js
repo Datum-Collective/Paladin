@@ -15,7 +15,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'paladin-settings-'))
 
 test('status never exposes values and starts empty', () => {
   const s = new Settings(tmp(), fakeCrypto())
-  assert.deepEqual(s.status(), { encryptionAvailable: true, anthropicApiKey: false, githubToken: false })
+  assert.deepEqual(s.status(), { encryptionAvailable: true, anthropicApiKey: false, openaiApiKey: false, githubToken: false })
 })
 
 test('stored secrets are encrypted at rest and readable as env', () => {
@@ -53,4 +53,12 @@ test('a corrupt settings file reads as empty', () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, 'settings.json'), '{not json')
   assert.deepEqual(new Settings(dir, fakeCrypto()).env(), {})
+})
+
+test('providerKeys maps fields to provider ids and nulls unset keys', () => {
+  const s = new Settings(tmp(), fakeCrypto())
+  s.set({ openaiApiKey: 'sk-openai', githubToken: 'ghp_x' })
+  assert.deepEqual(s.providerKeys(), { anthropic: null, openai: 'sk-openai', github: 'ghp_x' })
+  s.set({ openaiApiKey: null })
+  assert.deepEqual(s.providerKeys(), { anthropic: null, openai: null, github: 'ghp_x' })
 })

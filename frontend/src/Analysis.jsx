@@ -3,7 +3,7 @@ import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
-export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop }) {
+export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
   const { graph, paths, fixes, events, rems, empty, canPlay, play, refresh, propose } = state
   const [left, setLeft] = useStored('w-left', 300)
   const [right, setRight] = useStored('w-right', 400)
@@ -12,10 +12,10 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
   const pending = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
 
   return (
-    <main className="analysis" style={{ gridTemplateColumns: `${left}px 1fr ${right}px` }}>
+    <main className="analysis" style={{ gridTemplateColumns: `${left}px 1fr ${inspectorOpen ? right : 0}px` }}>
       <section className="pane left" aria-label="Paths, events and data">
         <div className="seg small" role="tablist">
-          {[['paths', 'Paths'], ['events', 'Events'], ['ingest', 'Add data']].map(([t, l]) => (
+          {[['paths', 'Paths'], ['events', 'Events'], ['ingest', 'Add Data']].map(([t, l]) => (
             <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
               {l}{t === 'paths' && paths.length > 0 && <span className="count"> {paths.length}</span>}
             </button>
@@ -42,8 +42,8 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
         {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={sel} />}
       </section>
 
-      <Resizer side="right" value={right} min={320} max={560} onChange={setRight} label="Resize inspector" />
-      <aside className="pane right" aria-label="Inspector">
+      {inspectorOpen && <Resizer side="right" value={right} min={320} max={560} onChange={setRight} label="Resize inspector" />}
+      <aside className="pane right" aria-label="Inspector" hidden={!inspectorOpen}>
         <div className="seg small" role="tablist">
           {[['path', 'Path'], ['fixes', 'Fixes'], ['rem', 'Remediation']].map(([t, l]) => (
             <button key={t} role="tab" aria-selected={inspect === t} className={inspect === t ? 'on' : ''}

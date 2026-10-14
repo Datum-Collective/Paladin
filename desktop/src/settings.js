@@ -4,7 +4,9 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const FIELDS = { anthropicApiKey: 'ANTHROPIC_API_KEY', githubToken: 'GITHUB_TOKEN' }
+const FIELDS = { anthropicApiKey: 'ANTHROPIC_API_KEY', openaiApiKey: 'OPENAI_API_KEY', githubToken: 'GITHUB_TOKEN' }
+// settings field -> provider id the backend's key store uses
+const PROVIDER = { anthropicApiKey: 'anthropic', openaiApiKey: 'openai', githubToken: 'github' }
 const MAX_LEN = 512
 
 class Settings {
@@ -28,6 +30,7 @@ class Settings {
     return {
       encryptionAvailable: this.crypto.isEncryptionAvailable(),
       anthropicApiKey: Boolean(d.anthropicApiKey),
+      openaiApiKey: Boolean(d.openaiApiKey),
       githubToken: Boolean(d.githubToken),
     }
   }
@@ -49,7 +52,16 @@ class Settings {
     fs.renameSync(tmp, this.file)
   }
 
-  /** Decrypted values as backend environment variables. Main process only. */
+  /** Decrypted keys keyed by provider id, null for unset so the backend clears removed keys. Main process only;
+   *  pushed to the backend over loopback with the desktop token, never through env or argv. */
+  providerKeys() {
+    const env = this.env()
+    const out = {}
+    for (const [field, envName] of Object.entries(FIELDS)) out[PROVIDER[field]] = env[envName] || null
+    return out
+  }
+
+  /** Decrypted values as environment-variable names. Main process only. */
   env() {
     const d = this._read()
     const out = {}
@@ -61,4 +73,4 @@ class Settings {
   }
 }
 
-module.exports = { Settings, FIELDS }
+module.exports = { Settings, FIELDS, PROVIDER }

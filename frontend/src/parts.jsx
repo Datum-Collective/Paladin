@@ -11,8 +11,12 @@ const KILL_CHAIN = ['reconnaissance', 'initial-access', 'execution', 'persistenc
 const NEXT_ACTION = { proposed: 'Approve', approved: 'Execute', executed: 'Verify' }
 const STEP = { Approve: 'approve', Execute: 'execute', Verify: 'verify' }
 
+// a glyph accompanies the colour so severity never depends on colour alone
+const SEV_GLYPH = { CRITICAL: '▲', HIGH: '▲', MEDIUM: '◆', LOW: '●' }
+
 export function Severity({ level }) {
-  return <span className={`pill ${SEV_TONE[level]}`}>{level.toLowerCase()}</span>
+  const word = level.charAt(0) + level.slice(1).toLowerCase()
+  return <span className={`pill ${SEV_TONE[level]}`}><span aria-hidden="true">{SEV_GLYPH[level]} </span>{word}</span>
 }
 
 export function KillChain({ tactics }) {

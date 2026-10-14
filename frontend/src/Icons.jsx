@@ -18,6 +18,10 @@ const P = {
   refresh: 'M20 11a8 8 0 10-2.3 5.7M20 4v7h-7',
   shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
   command: 'M9 6a3 3 0 10-3 3h12a3 3 0 10-3-3v12a3 3 0 103-3H6a3 3 0 103 3z',
+  chat: 'M4 5h16v11H9l-5 4zM8 10h8M8 13h5',
+  stop: 'M7 7h10v10H7z',
+  sidebar: 'M4 5h16v14H4zM9 5v14',
+  inspector: 'M4 5h16v14H4zM15 5v14',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
 }
 

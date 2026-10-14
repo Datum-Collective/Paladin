@@ -12,12 +12,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, analyze, auth, codescan, engine, inventory, metrics, store
+from . import ai, analyze, auth, keys, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from . import harness
 from .harness_api import router as harness_router
 from .remediation_api import router as remediation_router
+from .providers_api import router as providers_router
 
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
@@ -35,6 +36,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Attack Path Compiler", lifespan=lifespan)
 app.include_router(remediation_router)
 app.include_router(harness_router)
+app.include_router(providers_router)
 origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
@@ -88,7 +90,8 @@ def health():
 def config():
     """Public, non-secret capability flags the UI uses to pick its first screen."""
     return {"desktop": auth.desktop_mode(), "demo": bool(os.environ.get("DEMO_USER") and os.environ.get("DEMO_PASSWORD")),
-            "ai": ai.enabled(), "github": bool(os.environ.get("GITHUB_TOKEN")),
+            "ai": ai.enabled(), "github": keys.configured("github"),
+            "providers": keys.status(),
             "version": os.environ.get("APP_VERSION", "dev")}
 
 

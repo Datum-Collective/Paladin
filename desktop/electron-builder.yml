@@ -33,3 +33,11 @@ nsis:
   allowToChangeInstallationDirectory: true
 publish:
   provider: github          # set owner/repo for your release repo before the first release
+# Hardening: turn off the Electron features this app never uses (Electron fuses guide).
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false

@@ -22,3 +22,12 @@ def client(tmp_path, monkeypatch):
     with TestClient(app) as c:
         yield c
     store.reset_connection()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_provider_keys():
+    """Provider keys live in process memory; never let one test's keys leak into another."""
+    from app import keys
+    keys.clear()
+    yield
+    keys.clear()

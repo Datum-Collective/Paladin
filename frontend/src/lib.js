@@ -43,3 +43,26 @@ export function ago(ts, now = Date.now()) {
 }
 
 export const hhmm = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(5, 16)
+
+/** Move `id` to the front of a recents list, de-duplicated and capped. */
+export function pushRecent(list, id, cap = 5) {
+  return [id, ...list.filter((x) => x !== id)].slice(0, cap)
+}
+
+/** Sentence-case a snake/kebab identifier for display: "pr_opened" -> "PR opened" is handled by callers. */
+export const label = (s) => String(s || '').replace(/[_-]/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+/** Build a provider-safe history from the UI thread: drop errored or empty assistant turns, then merge consecutive
+ *  same-role messages so the conversation strictly alternates and always ends with the user's message. */
+export function toHistory(msgs) {
+  const out = []
+  for (const m of msgs) {
+    if (m.error) continue
+    const content = (m.content || '').trim()
+    if (!content) continue
+    const last = out[out.length - 1]
+    if (last && last.role === m.role) last.content += `\n\n${content}`
+    else out.push({ role: m.role, content })
+  }
+  return out
+}

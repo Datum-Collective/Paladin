@@ -1,6 +1,8 @@
 import Icon from './Icons.jsx'
+import { Severity } from './parts.jsx'
 
-const NAV = [['analysis', 'Analysis', 'graph', '1'], ['repo', 'Repository', 'repo', '2'], ['insights', 'Insights', 'chart', '3']]
+const NAV = [['analysis', 'Analysis', 'graph', '1'], ['repo', 'Repository', 'repo', '2'], ['insights', 'Insights', 'chart', '3'],
+  ['assistant', 'Assistant', 'chat', '4']]
 const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 
 export default function Sidebar({ view, setView, graph, empty, severity, canPlay, playing, onPlay, onReset, onPalette,
@@ -30,7 +32,7 @@ export default function Sidebar({ view, setView, graph, empty, severity, canPlay
         <div className="side-head">Workspace</div>
         {empty ? <p className="muted small">No data yet. Scan a repository or add logs.</p> : (
           <>
-            <div className="row-top"><span className={`pill ${severity.tone}`}>{severity.label}</span>
+            <div className="row-top"><Severity level={graph.severity} />
               <span className="muted small">{graph.events} {graph.events === 1 ? 'event' : 'events'}</span></div>
             <dl className="kv">
               <dt>Worst path</dt><dd>{graph.worst.toFixed(2)}</dd>
@@ -40,17 +42,20 @@ export default function Sidebar({ view, setView, graph, empty, severity, canPlay
         )}
         <div className="actions">
           {canPlay && (
-            <button onClick={onPlay} disabled={playing}><Icon name="play" size={14} />{playing ? 'Playing' : 'Play sample'}</button>
+            <button onClick={onPlay} disabled={playing}><Icon name="play" size={14} />{playing ? 'Playing' : 'Play Sample'}</button>
           )}
-          <button onClick={onReset}><Icon name="refresh" size={14} />Reset</button>
+          <button onClick={onReset}><Icon name="refresh" size={14} />Reset…</button>
         </div>
       </section>
 
       <span className="spacer" />
-      <button className={view === 'settings' ? 'nav-item on' : 'nav-item'} onClick={() => setView('settings')}
-              aria-current={view === 'settings' ? 'page' : undefined}>
-        <Icon name="settings" size={16} /><span>Settings</span><kbd>{mod},</kbd>
-      </button>
+      {!desktop && (
+        // the web build has no menu bar, so Settings gets a row; the desktop app opens it from the app menu (⌘,)
+        <button className={view === 'settings' ? 'nav-item on' : 'nav-item'} onClick={() => setView('settings')}
+                aria-current={view === 'settings' ? 'page' : undefined}>
+          <Icon name="settings" size={16} /><span>Settings</span><kbd>{mod},</kbd>
+        </button>
+      )}
       {!desktop && user && (
         <button className="nav-item" onClick={onSignOut}><Icon name="logout" size={16} /><span>Sign out</span></button>
       )}
