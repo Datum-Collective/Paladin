@@ -1,0 +1,32 @@
+async function req(method, url, body) {
+  const r = await fetch(url, {
+    method,
+    credentials: 'same-origin',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) {
+    const e = new Error(typeof data.detail === 'string' ? data.detail : 'request failed')
+    e.status = r.status
+    throw e
+  }
+  return data
+}
+
+export const api = {
+  me: () => req('GET', '/api/me'),
+  login: (email, password) => req('POST', '/api/auth/login', { email, password }),
+  register: (email, password) => req('POST', '/api/auth/register', { email, password }),
+  demo: () => req('POST', '/api/auth/demo'),
+  logout: () => req('POST', '/api/auth/logout'),
+  graph: () => req('GET', '/api/graph'),
+  paths: () => req('GET', '/api/paths?k=15'),
+  fixes: () => req('GET', '/api/fixes'),
+  applyFix: (edges) => req('POST', '/api/fixes/apply', { edges }),
+  simStart: () => req('POST', '/api/simulate/start'),
+  simStep: (n = 20) => req('POST', `/api/simulate/step?n=${n}`),
+  simReset: () => req('POST', '/api/simulate/reset'),
+  ingest: (format, lines) => req('POST', '/api/ingest', { format, lines }),
+  createKey: (label) => req('POST', '/api/keys', { label }),
+}
