@@ -207,8 +207,7 @@ persistent rate limit, audit of logins.
 
 Bounty checklist: body/line/file caps, strict schema validation, no stack traces, security headers, auth on
 all private endpoints, escaped UI output (React), secrets only in env, `npm audit`/`pip` dependency check,
-test with a second browser profile and malformed payloads. **Open:** a timeout around path generation (only
-caps exist today).
+test with a second browser profile and malformed payloads. Path search has a 2 s budget and candidate cap.
 
 ---
 
@@ -247,7 +246,7 @@ honeypot adapter. Dropped: laptop scanning CLI, multi-tenant admin.
 2. Correct parsers and `match` specs against real output; add fourth parser if RDP needs it.
 3. Ground-truth conversion and CI assertion.
 4. VPS, domain, HTTPS, `./deploy.sh main`; second teammate with SSH access.
-5. Generation timeout on `shortest_simple_paths`; widen candidate pool before re-sorting by risk.
+5. ~~Generation timeout and wider candidate pool~~ done (2 s budget, k x 4 candidates, tested).
 6. Supabase auth + roles; CSRF; hashed sessions.
 7. Test the live Haiku and real GitHub PR paths with a throwaway repo and fine-grained token.
 8. GitHub unknowns (secret-scanning API, check runs with `GITHUB_TOKEN`, SARIF `codeFlows`) and screenshots.

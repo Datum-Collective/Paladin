@@ -1,6 +1,6 @@
 """Attack-path analysis: top-k paths by risk, cost-weighted min cut, greedy best single fix."""
-import itertools
 import math
+import time
 
 import networkx as nx
 
@@ -49,16 +49,28 @@ def _augment(g: nx.DiGraph) -> nx.DiGraph:
     return a
 
 
-def top_paths(g: nx.DiGraph, k: int = 10) -> list[dict]:
+CANDIDATE_FACTOR = 4   # examine k*4 likeliest paths, then rank by risk (impact can reorder them)
+MAX_CANDIDATES = 200
+TIME_BUDGET_S = 2.0
+
+
+def top_paths(g: nx.DiGraph, k: int = 10, budget_s: float = TIME_BUDGET_S) -> list[dict]:
+    """Top-k paths by risk. Candidates come lazily from k-shortest-simple-paths (most likely first) and are
+    re-ranked by risk = prod(p) x impact/10; the search stops at the candidate cap or the time budget."""
     k = max(1, min(k, MAX_K))
     a = _augment(g)
+    want = min(k * CANDIDATE_FACTOR, MAX_CANDIDATES)
+    deadline = time.monotonic() + budget_s
+    raw = []
     try:
-        gen = nx.shortest_simple_paths(a, SRC, SINK, weight="w")
-        raw = list(itertools.islice(gen, k))
+        for pth in nx.shortest_simple_paths(a, SRC, SINK, weight="w"):
+            raw.append(pth)
+            if len(raw) >= want or time.monotonic() > deadline:
+                break
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return []
     out = []
-    for i, pth in enumerate(raw):
+    for pth in raw:
         nodes = pth[1:-1]
         if len(nodes) < 2:
             continue
@@ -69,9 +81,10 @@ def top_paths(g: nx.DiGraph, k: int = 10) -> list[dict]:
             p *= d["p"]
         impact = g.nodes[nodes[-1]]["crit"]
         risk = p * impact / 10.0
-        out.append({"id": f"p{i + 1}", "nodes": nodes, "edges": eids, "p": p, "impact": impact,
-                    "risk": risk, "severity": severity(risk)})
+        out.append({"nodes": nodes, "edges": eids, "p": p, "impact": impact, "risk": risk,
+                    "severity": severity(risk)})
     out.sort(key=lambda r: -r["risk"])
+    out = out[:k]
     for i, r in enumerate(out):
         r["id"] = f"p{i + 1}"
     return out
