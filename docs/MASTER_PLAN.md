@@ -142,7 +142,8 @@ Severity: CRITICAL >= 0.30, HIGH >= 0.10, MEDIUM >= 0.03, else LOW.
 4. `risk = product(edge p) x criticality / 10`; paths are sorted by this value and it is the value displayed.
 5. Min cut over paths with risk >= 0.03 (edges with `cost: null` are uncuttable); greedy best single fix;
    a count-minimising cut is computed as a baseline so the UI can show cost beats edge count.
-6. Total risk = sum over top-k paths, capped at 1.0.
+6. Headline severity is the **worst path**. Combined risk = `1 - prod(1 - risk_i)` over the top-k paths (a
+   probability in [0,1]; many tiny paths cannot add up to a critical headline the way a capped sum did).
 
 ### Decisions that differ from, or settle, earlier docs
 
