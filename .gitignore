@@ -1,0 +1,4 @@
+.env
+.bounty-src/
+node_modules/
+__pycache__/

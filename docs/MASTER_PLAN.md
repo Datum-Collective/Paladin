@@ -42,7 +42,7 @@ attack paths, a plain-English story and ATT&CK labels for each, and the cheapest
 | One meaningful commit per 120 min, no force-push or squash | Small real commits to `main`, rebase, never force-push |
 | No secrets in git, `.env.example` required | Config via env vars only |
 | Data must be public, anonymized, or clearly labelled synthetic | Label all sample logs synthetic. No real laptop scanning |
-| Delivery: public URL, LAN, or Docker; stays up until the end | One Docker image on Render (public URL); same image runs on LAN with `docker run` |
+| Delivery: public URL, LAN, or Docker; stays up until the end | One Docker image on our own VPS behind Caddy HTTPS (public URL); same image runs on LAN with `docker run` |
 | README sections (4.1) | See section 15 |
 | Objectives document before each judging round | Owner E; format will be announced by organizers |
 | Checkpoint 1: 15 Oct 1:00 PM; deployed, one end-to-end flow | Target: done by tonight |
@@ -82,7 +82,7 @@ data). Logs say which are *happening*. A live edge gets higher probability and s
 
 - Backend: Python 3.12, FastAPI, networkx, SQLite (stdlib), pytest.
 - Frontend: React, Vite, Cytoscape.js (dagre layout).
-- Deploy: one Docker image (multi-stage `Dockerfile`: builds the Vite app, FastAPI serves it as static files) on Render. No Compose, no separate frontend host. See section 4.1.
+- Deploy: one Docker image (multi-stage `Dockerfile`: builds the Vite app, FastAPI serves it as static files) on a VPS, with Caddy for HTTPS via `docker-compose.yml`. No separate frontend host. See section 4.1.
 
 ```
 backend/app/{main.py, models.py, auth.py, parsers/, correlate.py, analyze.py, narrate.py, store.py}
@@ -91,31 +91,56 @@ frontend/src/
 data/{inventory.yaml, attack_subset.json, samples/, attack/enterprise-attack.json}
 scenarios/                 # our EvidenceForge scenario YAML
 docs/{MASTER_PLAN.md, PLAN.md, contracts.md, research/}
-README.md  .env.example  Dockerfile
+README.md  .env.example  Dockerfile  docker-compose.yml  Caddyfile  deploy.sh
 ```
 
 `data/attack/enterprise-attack.json` is already downloaded (53 MB, 867 techniques, 268 mitigations, 1,477
 mitigates links). The app ships only `attack_subset.json`, trimmed to the techniques we use.
 
-### 4.1 Deployment (single container)
+### 4.1 Deployment (VPS, single app image)
 
-- **One image.** `Dockerfile` (repo root) builds `frontend/` with Node, then a Python 3.12 image runs
-  `uvicorn app.main:app`. FastAPI serves the API under `/api/*` and the built UI from `STATIC_DIR`
-  (mount static files last, with an index.html fallback for client-side routes).
-- **Host.** Render "Web Service", runtime Docker, branch `main`. A second service on branch `bugbounty` for
-  the freeze. Health check path `/health`. Env vars from `.env.example` set in the dashboard.
+```
+VPS (Ubuntu LTS, 2 vCPU, 2-4 GB RAM)
+ └─ docker compose
+     ├─ caddy       :80/:443  automatic HTTPS, reverse proxy
+     ├─ apc-main    image built from `main`        (port 8000, internal)
+     └─ apc-bounty  image built once from `bugbounty` (profile "bounty", started before the freeze)
+```
+
+- **One app image.** `Dockerfile` builds `frontend/` with Node, then a Python 3.12 image runs
+  `uvicorn app.main:app`. FastAPI serves `/api/*` and the built UI from `STATIC_DIR` (mount static files
+  last, with an index.html fallback for client-side routes).
+- **Compose** is for Caddy and the two environments only. `Caddyfile` routes `$APP_DOMAIN` to `apc-main`
+  and `$BOUNTY_DOMAIN` to `apc-bounty`.
+- **Deploy command:** `./deploy.sh main` (pull, rebuild, restart) or `./deploy.sh bounty` (clone the
+  `bugbounty` branch to `.bounty-src`, build once; refuses to rebuild a running bounty stack unless
+  `FORCE=1`).
 - **Run anywhere:** `docker build -t apc . && docker run --rm -p 8000:8000 -v apc-data:/var/lib/apc apc`
   then open `http://localhost:8000`. This is the reproducible-container delivery the rulebook accepts.
-- **Config (env):** `PORT`, `STATIC_DIR`, `SEED_DIR` (read-only inventory/samples), `DATA_DIR` (SQLite),
-  `SECRET_KEY`, `DEMO_USER`/`DEMO_PASSWORD` (seeded account), `ALLOWED_ORIGINS` (dev only).
-- **Persistence.** SQLite lives in `DATA_DIR`. On Render's free tier the disk is ephemeral, so the app must
-  re-seed (inventory, demo account, sample replay) on start. Do not depend on state surviving a restart.
-- **Sleep.** Free instances sleep when idle; ping `/health` before checkpoints and judging, or use a paid
-  always-on instance for the two days.
+- **Config (env, see `.env.example`):** `PORT`, `STATIC_DIR`, `SEED_DIR` (read-only inventory/samples),
+  `DATA_DIR` (SQLite), `SECRET_KEY`, `DEMO_USER`/`DEMO_PASSWORD`, `APP_DOMAIN`, `BOUNTY_DOMAIN`,
+  `ALLOWED_ORIGINS` (dev only). `.env` exists only on the server.
+- **Persistence.** SQLite lives in a named volume (`apc_main_data`). Still re-seed inventory, demo account
+  and sample replay on start so a wiped volume never breaks the demo.
+- **HTTPS.** Needs a domain (or a free wildcard-DNS hostname) pointing at the VPS. Open ports 80/443 and
+  22 only. Verify the hostname approach and certificate issuance in H0-1.
+- **Server hygiene (owner E).** SSH keys only, no root or password login, firewall on, `fail2ban` or Caddy
+  rate-limit for `/api/auth/*`, unattended security updates, nothing else running on the box (no
+  honeypot here). Containers use `restart: unless-stopped`. Keep the VPS paid through the end of the event.
 - **Excluded from image:** `data/attack/enterprise-attack.json` (53 MB; only `attack_subset.json` ships),
-  `docs/`, `.env`, tests' caches (see `.dockerignore`).
+  `docs/`, `.env`, `.bounty-src` (see `.dockerignore`).
 - **Backend contract for the Dockerfile:** `backend/requirements.txt`, module `app.main:app`, `GET /health`,
   honours `PORT`, `STATIC_DIR`, `DATA_DIR`. Frontend: `frontend/package-lock.json`, `npm run build` -> `dist/`.
+- **Fallbacks:** `docker run` on a laptop over LAN; Render or Cloudflare Containers can run the same image.
+
+### 4.2 First-time VPS setup checklist (E, about 30-45 min)
+
+1. Create the VPS; add every teammate's SSH key; disable password and root login.
+2. Firewall: allow 22 (your IPs if possible), 80, 443 only.
+3. `curl -fsSL https://get.docker.com | sh`; add the deploy user to the `docker` group.
+4. Point DNS (`APP_DOMAIN`, `BOUNTY_DOMAIN`) at the VPS IP.
+5. `git clone` the repo, `cp .env.example .env`, fill in real values, `./deploy.sh main`.
+6. Check `https://$APP_DOMAIN/health`, then record the URL and demo account in the README.
 
 ---
 
@@ -277,7 +302,7 @@ Dependencies: B and D share the name list (hour 1). A and C share fixtures until
 
 | Hours | Goal |
 |---|---|
-| H0-1 | Freeze contracts and name list; repo + branches; hello-world deployed; EvidenceForge installed |
+| H0-1 | Freeze contracts and name list; repo + branches; VPS up with hello-world behind HTTPS (section 4.2); EvidenceForge installed |
 | H1-4 | Parallel build against fixtures. First parsers, analyzer on fixture graph, graph view |
 | H4 | **Integration 1:** real parsed logs -> real graph in UI |
 | H4-8 | Play, SSE, Apply fix, auth, deployed |
@@ -347,7 +372,7 @@ Rehearse twice; keep a recorded backup video.
 | Generators do not share names | Hand-written inventory is the join point; log-generator optional |
 | Nothing deployed until late | E deploys in hour 1; merge to `main` often |
 | Min-cut slow or wrong | Demo graph is small; unit tests on toy graphs; greedy fallback |
-| Free host sleeps after idle | Ping `/health` before each checkpoint/JR, or use a paid always-on instance; `docker run` LAN fallback |
+| VPS misconfigured, down, or attacked during bug bounty | Hardening checklist (4.1, 14); restart policies; `docker run` LAN fallback; second teammate has SSH access |
 | GitHub features break live | Pre-made repo; screenshots and video backup |
 | Bug bounty finds trivial bugs | Section 14 checklist, tested before freeze |
 | Team cannot explain AI-written code | Pair review; each owner walks through their module before JR1 |
@@ -358,5 +383,5 @@ Rehearse twice; keep a recorded backup video.
 
 1. Official repo URL and the objectives-document format (organizers).
 2. Generate an EvidenceForge sample and confirm log formats before parsers.
-3. Create the Render account and test-deploy the Dockerfile in H0-1; decide free vs paid always-on instance. Cloudflare Containers is the alternative if someone pays the $5 Workers Paid plan (not verified GA).
+3. Pick a VPS provider and domain in H0-1; confirm HTTPS issuance. Render or Cloudflare Containers can run the same image if the VPS fails (Cloudflare Containers needs the $5 Workers Paid plan; GA status not verified).
 4. Test the three GitHub unknowns listed in section 11 early.

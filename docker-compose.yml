@@ -1,0 +1,42 @@
+# VPS deployment: Caddy (HTTPS) in front of the app image.
+# main:   docker compose up -d --build caddy apc-main
+# bounty: ./deploy.sh bounty   (builds once from the frozen `bugbounty` branch)
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      BOUNTY_DOMAIN: ${BOUNTY_DOMAIN:-bounty.invalid}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  apc-main:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - apc_main_data:/var/lib/apc
+    expose:
+      - "8000"
+
+  apc-bounty:
+    profiles: ["bounty"]
+    build: ./.bounty-src
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - apc_bounty_data:/var/lib/apc
+    expose:
+      - "8000"
+
+volumes:
+  caddy_data:
+  caddy_config:
+  apc_main_data:
+  apc_bounty_data:
