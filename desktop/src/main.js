@@ -122,6 +122,16 @@ function smokeTest(w) {
         await w.webContents.executeJavaScript(`fetch('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({format:'linux_auth',lines:['May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2']})})`)
         await new Promise((res) => setTimeout(res, 2000))
+        if (process.env.PALADIN_SEED === '1') {   // a few realistic workspaces so list screens can be reviewed
+          await w.webContents.executeJavaScript(`(async () => { const post = (u, b) => fetch(u, { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+            await post('/api/workspaces', { name: 'payments-service', repo_url: 'https://github.com/acme/payments-service' });
+            await post('/api/workspaces', { name: 'incident-review' });
+            await post('/api/workspaces', { name: 'web-frontend', repo_url: 'https://github.com/acme/web-frontend' }); })()`)
+          await new Promise((res) => setTimeout(res, 800))
+          await w.webContents.executeJavaScript('location.reload()')
+          await new Promise((res) => setTimeout(res, 2200))
+        }
         // drive the same path as the menu bar: main -> renderer command channel
         for (const id of (process.env.PALADIN_SCREENSHOT_VIEW || '').split(',').filter(Boolean)) {
           if (id.startsWith('pane:')) {   // click a Settings category by its label
@@ -137,6 +147,9 @@ function smokeTest(w) {
               document.head.appendChild(st) })()`)
             await new Promise((res) => setTimeout(res, 120))
             continue
+          } else if (id.startsWith('press:')) {   // press a key in the focused element
+            await w.webContents.executeJavaScript(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',
+              { key: ${JSON.stringify(id.slice(6))}, bubbles: true }))`)
           } else if (id.startsWith('type:')) {   // type into the start-screen bar to show autocomplete
             await w.webContents.executeJavaScript(`(() => { const i = document.querySelector('.bar input'); i.focus();
               Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ${JSON.stringify(id.slice(5))});
@@ -186,6 +199,10 @@ function registerIpc() {
       }
     }
     return settings.status()
+  })
+  handle('dialog:choose-folder', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Open a Git repository', properties: ['openDirectory'] })
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
   })
   handle('update:check', () => updater.check())
   handle('update:install', () => updater.install())

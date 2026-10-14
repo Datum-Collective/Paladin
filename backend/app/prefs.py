@@ -7,6 +7,8 @@ from . import store
 DEFAULTS: dict = {
     "general.startup": "home",            # home | last
     "general.after_import": "repository", # repository | analysis
+    "general.onboarding_dismissed": False,
+    "workspaces.sort": "recent",          # recent | name | events
     "appearance.density": "comfortable",  # comfortable | compact
     "appearance.graph_labels": True,
     "diff.wrap": True,
@@ -18,6 +20,7 @@ DEFAULTS: dict = {
 }
 _ENUM = {
     "general.startup": {"home", "last"}, "general.after_import": {"repository", "analysis"},
+    "workspaces.sort": {"recent", "name", "events"},
     "appearance.density": {"comfortable", "compact"}, "assistant.provider": {"", "anthropic", "openai"},
     "assistant.effort": {"", "low", "medium", "high"},
 }

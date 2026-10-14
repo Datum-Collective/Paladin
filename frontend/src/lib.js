@@ -78,3 +78,43 @@ export function looksLikeRepo(text) {
 }
 const FILE_EXT = new Set(['py', 'js', 'ts', 'tsx', 'jsx', 'md', 'json', 'txt', 'yml', 'yaml', 'toml', 'html', 'css', 'go', 'rs',
   'java', 'c', 'h', 'sh', 'ini', 'cfg', 'lock', 'xml', 'csv'])
+
+/** What the launcher input holds: a filesystem path, a GitHub repo reference, a search query, or nothing. */
+export function classifyInput(text) {
+  const t = (text || '').trim()
+  if (!t) return 'empty'
+  if (/^(\/|~\/|[A-Za-z]:[\\/]|\\\\)/.test(t)) return 'path'
+  if (looksLikeRepo(t)) return 'github'
+  return 'search'
+}
+
+const RUNNING = new Set(['queued', 'cloning', 'scanning', 'fixing'])
+const STATE_LABEL = { queued: 'Queued', cloning: 'Cloning', scanning: 'Scanning', fixing: 'Preparing fixes' }
+
+/** One honest status per workspace, from its newest scan. Never "ready" unless a scan actually finished. */
+export function workspaceStatus(w) {
+  const st = w.status
+  if (st && RUNNING.has(st.state)) return { tone: 'info', label: STATE_LABEL[st.state], busy: true, detail: '' }
+  if (st && st.state === 'failed') return { tone: 'bad', label: 'Scan failed', busy: false, detail: st.error || '' }
+  if (st && st.state === 'pr_opened') return { tone: 'ok', label: 'Pull request opened', busy: false, detail: '' }
+  if (st && st.state === 'ready') return { tone: 'ok', label: 'Fixes ready', busy: false, detail: '' }
+  if (st && st.state === 'done') return { tone: 'ok', label: 'Scanned', busy: false, detail: '' }
+  if (w.kind !== 'empty') return { tone: 'warn', label: 'Not scanned', busy: false, detail: '' }
+  return w.events > 0 ? { tone: 'mute', label: 'Log data', busy: false, detail: '' } : { tone: 'mute', label: 'Empty', busy: false, detail: '' }
+}
+
+export function filterWorkspaces(list, { q = '', kind = 'all' } = {}) {
+  const needle = q.trim().toLowerCase()
+  return list.filter((w) => (kind === 'all' || w.kind === kind)
+    && (!needle || `${w.name} ${w.repo_url || ''}`.toLowerCase().includes(needle)))
+}
+
+export function sortWorkspaces(list, by = 'recent') {
+  const c = [...list]
+  if (by === 'name') c.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  else if (by === 'events') c.sort((a, b) => b.events - a.events || b.opened - a.opened)
+  else c.sort((a, b) => b.opened - a.opened)
+  return c
+}
+
+export const folderName = (p) => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
