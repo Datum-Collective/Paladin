@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from . import ai, codescan, fixers, store
+from . import ai, codescan, fixers, keys, store
 
 URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?/?$")
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
@@ -228,7 +228,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         src = work / "repo"
         _upd(jid, state="cloning")
         _log(jid, f"cloning {owner}/{repo} (depth 1, hooks off, symlinks off)")
-        token = os.environ.get("GITHUB_TOKEN") if owner != "local" else None
+        token = keys.get("GITHUB_TOKEN") if owner != "local" else None
         _git(["clone", "--depth", "1", "--no-tags", "--single-branch", "--no-recurse-submodules",
               clone_url, str(src)], token=token, timeout=CLONE_TIMEOUT)
         if _dir_size(src) > MAX_REPO_BYTES:
@@ -425,7 +425,7 @@ def open_pr(ws: int, jid: int) -> dict:
     job = get(ws, jid)
     if job["state"] != "ready":
         raise RuntimeError(f"job is {job['state']}, not ready")
-    token = os.environ.get("GITHUB_TOKEN")
+    token = keys.get("GITHUB_TOKEN")
     if not token:
         raise PermissionError("GITHUB_TOKEN is not configured on the server; download the patch instead")
     owner, repo = job["repo_url"].split("/", 1)
@@ -454,7 +454,7 @@ def open_pr(ws: int, jid: int) -> dict:
 
 
 def config() -> dict:
-    return {"github_enabled": bool(os.environ.get("GITHUB_TOKEN")), "ai_enabled": ai.enabled()}
+    return {"github_enabled": bool(keys.get("GITHUB_TOKEN")), "ai_enabled": ai.enabled()}
 
 
 def wipe(ws: int) -> None:

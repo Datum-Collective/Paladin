@@ -7,6 +7,8 @@ import os
 
 import httpx
 
+from . import keys
+
 URL = "https://api.anthropic.com/v1/messages"
 SYSTEM = ("You write remediation runbooks for security engineers. Use ONLY the JSON facts provided. "
           "Do not invent hosts, accounts, commands or findings. Be concise: numbered steps, then a one-line "
@@ -14,7 +16,7 @@ SYSTEM = ("You write remediation runbooks for security engineers. Use ONLY the J
 
 
 def enabled() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(keys.get("ANTHROPIC_API_KEY"))
 
 
 def draft(facts: dict) -> str | None:
@@ -23,7 +25,7 @@ def draft(facts: dict) -> str | None:
     try:
         r = httpx.post(
             URL,
-            headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
+            headers={"x-api-key": keys.get("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
             json={"model": os.environ.get("AI_MODEL", "claude-haiku-5-5"), "max_tokens": 700, "system": SYSTEM,
                   "messages": [{"role": "user", "content": json.dumps(facts)[:6000]}]},
@@ -44,7 +46,7 @@ def complete(system: str, user: str, max_tokens: int = 1500) -> str | None:
     try:
         r = httpx.post(
             URL,
-            headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
+            headers={"x-api-key": keys.get("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
             json={"model": os.environ.get("AI_MODEL", "claude-haiku-5-5"), "max_tokens": max_tokens,
                   "system": system, "messages": [{"role": "user", "content": user[:24000]}]},

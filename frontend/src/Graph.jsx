@@ -4,6 +4,10 @@ import dagre from 'cytoscape-dagre'
 
 cytoscape.use(dagre)
 
+// node kind is encoded by shape as well as colour, so the graph reads without colour vision
+const SHAPE = { external: 'diamond', identity: 'ellipse', host: 'round-rectangle', role: 'hexagon', secret: 'octagon',
+  data: 'star', service: 'round-tag' }
+
 const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 
 function theme() {
@@ -15,7 +19,8 @@ function theme() {
     { selector: 'node', style: {
         label: 'data(label)', 'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 130, 'text-valign': 'bottom',
         'text-margin-y': 6, color: text, 'text-background-color': bg, 'text-background-opacity': 0.9,
-        'text-background-padding': 2, 'background-color': 'data(color)', width: 22, height: 22, 'border-width': 0 } },
+        'text-background-padding': 2, 'background-color': 'data(color)', width: 24, height: 24, 'border-width': 0 } },
+    { selector: 'node[shape]', style: { shape: 'data(shape)' } },
     { selector: 'edge', style: {
         width: 'mapData(p, 0, 1, 1, 4)', 'line-color': line, 'target-arrow-color': line, 'line-opacity': 0.55,
         'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.9, label: 'data(technique)',
@@ -40,7 +45,10 @@ export default function Graph({ graph, highlight, onEdge }) {
     const onScheme = () => { cy.current.style(theme().style); draw() }
     mq.addEventListener('change', onScheme)
     cy.current.on('tap', 'edge', (e) => onEdge && onEdge(e.target.id()))
-    return () => { mq.removeEventListener('change', onScheme); cy.current.destroy() }
+    // refit whenever the pane is resized (window, splitter drag, first layout) so the graph never stays tiny
+    const ro = new ResizeObserver(() => { if (cy.current) { cy.current.resize(); cy.current.fit(undefined, 40) } })
+    ro.observe(ref.current)
+    return () => { ro.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
   }, [])
 
   const graphRef = useRef(null)
@@ -51,13 +59,14 @@ export default function Graph({ graph, highlight, onEdge }) {
     if (!g || !cy.current) return
     const kind = theme().kind
     const els = [
-      ...g.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: kind[n.kind] || kind.service } })),
+      ...g.nodes.map((n) => ({ data: { id: n.id, label: n.label, color: kind[n.kind] || kind.service,
+                                       shape: SHAPE[n.kind] || 'round-rectangle' } })),
       ...g.edges.map((e) => ({ data: { id: e.id, source: e.src, target: e.dst, technique: e.technique,
           p: e.p, observed: e.observed, fixed: e.fixed } })),
     ]
     cy.current.elements().remove()
     cy.current.add(els)
-    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 60, rankSep: 170, edgeSep: 30,
+    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 70, rankSep: 105, edgeSep: 30,
       ranker: 'longest-path', fit: true, padding: 40 }).run()
   }
 

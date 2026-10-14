@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
-import Graph from './Graph.jsx'
+import Analysis from './Analysis.jsx'
+import CommandPalette from './CommandPalette.jsx'
 import Insights from './Insights.jsx'
 import RepoView from './RepoView.jsx'
+import Settings, { PANES } from './Settings.jsx'
+import Assistant from './Assistant.jsx'
+import { pushRecent } from './lib.js'
+import { useStored } from './useStored.js'
+import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
+import { SEV_TONE } from './parts.jsx'
+import { ToastProvider, useToast } from './toast.jsx'
+import { useWorkspace } from './useWorkspace.js'
 
-const SEV_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'ok' }
-const KILL_CHAIN = ['reconnaissance', 'initial-access', 'execution', 'persistence', 'privilege-escalation',
-  'defense-evasion', 'credential-access', 'discovery', 'lateral-movement', 'collection',
-  'command-and-control', 'exfiltration', 'impact']
-const NEXT_ACTION = { proposed: 'Approve', approved: 'Execute', executed: 'Verify' }
-const STEP = { Approve: 'approve', Execute: 'execute', Verify: 'verify' }
-const hhmm = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(5, 16)
+const bridge = typeof window !== 'undefined' ? window.paladin : undefined
 
-function Severity({ level }) {
-  return <span className={`pill ${SEV_TONE[level]}`}>{level.toLowerCase()}</span>
-}
-
-function Login({ onDone }) {
+function Login({ onDone, config }) {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [mode, setMode] = useState('login')
@@ -27,318 +26,231 @@ function Login({ onDone }) {
     try { await fn(); onDone() } catch (e) { setErr(e.message) }
   }
   return (
-    <div className="login">
-      <h1>Attack Path Compiler</h1>
+    <form className="login" onSubmit={(e) => { e.preventDefault(); go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw))) }}>
+      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      <button className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>
-      <div className="or">or</div>
-      <input placeholder="Email" aria-label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input placeholder="Password" aria-label="Password" type="password" value={pw}
+      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>}
+      {config.demo && <div className="or">or</div>}
+      <input placeholder="Email" aria-label="Email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <input placeholder="Password" aria-label="Password" type="password"
+             autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={pw}
              onChange={(e) => setPw(e.target.value)} />
-      <button onClick={() => go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw)))}>
-        {mode === 'login' ? 'Sign in' : 'Create account'}
-      </button>
-      <button className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      <button type="button" className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
         {mode === 'login' ? 'Create an account' : 'I already have an account'}
       </button>
-      {err && <p className="err">{err}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
+    </form>
+  )
+}
+
+function Splash({ error, onRetry }) {
+  return (
+    <div className="splash">
+      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+      {error ? (
+        <>
+          <p className="err" role="alert">{error}</p>
+          <button onClick={onRetry}>Try again</button>
+        </>
+      ) : <p className="muted">Starting…</p>}
     </div>
   )
 }
 
-function KillChain({ tactics }) {
-  return (
-    <div className="killchain" aria-label="Kill chain stages">
-      {KILL_CHAIN.map((t) => (
-        <span key={t} className={tactics.includes(t) ? 'kc on' : 'kc'}>{t.replace(/-/g, ' ')}</span>
-      ))}
-    </div>
-  )
-}
+const TITLES = { analysis: 'Analysis', repo: 'Repository', insights: 'Insights', assistant: 'Assistant', settings: 'Settings' }
 
-function PathDetail({ path }) {
-  if (!path) return <p className="muted">Select a path to see how it works, which assets it touches and the evidence.</p>
-  return (
-    <div>
-      <div className="row-top"><h2>Attack path</h2><Severity level={path.severity} /></div>
-      <p className="muted">Risk {path.risk.toFixed(3)}</p>
-      <p>{path.narrative}</p>
-      <KillChain tactics={path.tactics} />
-      <h3>Affected assets</h3>
-      <ul className="plain">
-        {path.assets.map((a) => (
-          <li key={a.id}>{a.label} <span className="muted">{a.kind}, criticality {a.criticality}</span></li>
-        ))}
-      </ul>
-      <h3>Progression</h3>
-      <ol className="steps">
-        {path.hops.map((h) => (
-          <li key={h.edge}>
-            <div><b>{h.src}</b> <span className="muted">to</span> <b>{h.dst}</b></div>
-            <div className="muted">
-              {h.technique} {h.technique_name} · p {h.p} · {h.observed ? 'confirmed by events' : 'possible, no events yet'}
-            </div>
-            {h.events.map((e) => (
-              <div key={e.id} className="ev">
-                <span className="muted">{e.id} · {hhmm(e.ts)} · {e.source}</span>
-                <code className="snippet">{e.raw || `${e.type} ${e.actor} ${e.src_ip}`}</code>
-              </div>
-            ))}
-            {h.mitigation && <div className="muted">Mitigation {h.mitigation} {h.mitigation_name}</div>}
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
-}
+function Shell({ config, user, onSignOut, onExpired }) {
+  const toast = useToast()
+  const ws = useWorkspace(user, onExpired)
+  const [view, setView] = useState('analysis')
+  const [tab, setTab] = useState('paths')
+  const [selected, setSelected] = useState(null)
+  const [palette, setPalette] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
+  const [inspectorOpen, setInspectorOpen] = useStored('inspector-open', true)
+  const [pane, setPane] = useStored('settings-pane', 'general')
+  const [recents, setRecents] = useStored('palette-recents', [])
 
-function Fixes({ fixes, onPropose }) {
-  if (!fixes || (!fixes.cheapest_cut && !fixes.best_single)) return null
-  const card = (title, f) => f && (
-    <div className="card">
-      <div className="row-top"><b>{title}</b><span className="muted">cost {f.total_cost}</span></div>
-      <p className="muted">
-        Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
-        {' '}{f.mitigations.map((m) => m.mitigation).filter(Boolean).join(', ')}
-      </p>
-      <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose fix</button>
-    </div>
-  )
+  const go = useCallback((target) => {
+    if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
+  }, [])
+  const openPath = useCallback((id) => { setView('analysis'); setTab('paths'); setSelected(id) }, [])
+  const doReset = useCallback(async () => { setConfirmReset(false); setSelected(null); await ws.reset() }, [ws])
+  const fx = ws.fixes
+
+  // One command table drives the menu bar, the palette and the keyboard, so they cannot drift apart.
+  const run = useCallback((id) => {
+    const table = {
+      analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
+      assistant: () => setView('assistant'), settings: () => setView('settings'), ingest: () => go('ingest'),
+      events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
+      'toggle-sidebar': () => setSidebarOpen((o) => !o), 'toggle-inspector': () => setInspectorOpen((o) => !o),
+      play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
+      refresh: () => ws.refresh(), reset: () => setConfirmReset(true),
+      'fix-cheapest': () => (fx && fx.cheapest_cut ? ws.propose(fx.cheapest_cut.edges, 'Cheapest cut') : toast('There is no fix to propose yet.', 'warn')),
+      'fix-single': () => (fx && fx.best_single ? ws.propose(fx.best_single.edges, 'Best single fix') : toast('There is no fix to propose yet.', 'warn')),
+      'check-updates': async () => {
+        if (!bridge) return
+        const s = await bridge.checkForUpdates()
+        toast(s.phase === 'disabled' ? 'Updates are off in development builds.' : 'Checking for updates…')
+      },
+    }
+    if (table[id]) table[id]()
+  }, [ws, fx, go, toast, setSidebarOpen, setInspectorOpen])
+
+  // native menu bar -> same table (desktop)
+  const runRef = useRef(run)
+  runRef.current = run
+  useEffect(() => (bridge && bridge.onCommand ? bridge.onCommand(({ id }) => runRef.current(id)) : undefined), [])
+
+  // keyboard (web has no menu bar; desktop accelerators come from the menu, so only the web needs these)
+  useEffect(() => {
+    if (config.desktop) return undefined
+    const keys = { k: 'palette', 1: 'analysis', 2: 'repo', 3: 'insights', 4: 'assistant', ',': 'settings' }
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      const id = keys[e.key.toLowerCase()]
+      if (id) { e.preventDefault(); runRef.current(id) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [config.desktop])
+
+  const title = view === 'settings' ? (PANES.find(([id]) => id === pane) || PANES[0])[1] : TITLES[view]
+  useEffect(() => { document.title = `${title} · Paladin` }, [title])
+
+  const severity = ws.graph ? { label: ws.graph.severity.toLowerCase(), tone: SEV_TONE[ws.graph.severity] } : { label: '', tone: '' }
+
+  const commands = useMemo(() => {
+    const c = [
+      { id: 'analysis', group: 'Go to', title: 'Analysis', icon: 'graph', hint: 'Graph, paths, fixes' },
+      { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
+      { id: 'insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks' },
+      { id: 'assistant', group: 'Go to', title: 'Assistant', icon: 'chat', hint: 'Ask about your paths', keywords: 'claude openai chat ask' },
+      { id: 'settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys providers updates preferences' },
+      { id: 'ingest', group: 'Actions', title: 'Add log data…', icon: 'upload', keywords: 'ingest upload paste logs' },
+      { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
+      { id: 'refresh', group: 'Actions', title: 'Refresh', icon: 'refresh' },
+      { id: 'toggle-sidebar', group: 'View', title: 'Show or hide sidebar', icon: 'sidebar' },
+      { id: 'toggle-inspector', group: 'View', title: 'Show or hide inspector', icon: 'inspector' },
+      { id: 'reset', group: 'Actions', title: 'Reset workspace…', icon: 'trash' },
+    ]
+    if (ws.canPlay) c.splice(5, 0, { id: 'play', group: 'Actions', title: 'Play sample scenario', icon: 'play' })
+    if (fx && fx.cheapest_cut) c.push({ id: 'fix-cheapest', group: 'Fixes', title: 'Propose cheapest cut', icon: 'shield', hint: `${fx.cheapest_cut.risk_removed_pct}% of risk removed` })
+    if (fx && fx.best_single) c.push({ id: 'fix-single', group: 'Fixes', title: 'Propose best single fix', icon: 'shield', hint: `${fx.best_single.risk_removed_pct}% of risk removed` })
+    if (bridge) c.push({ id: 'check-updates', group: 'App', title: 'Check for updates…', icon: 'refresh' })
+    const cmds = c.map((x) => ({ ...x, run: () => run(x.id) }))
+    for (const p of ws.paths.slice(0, 12)) {
+      cmds.push({ id: `path-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph',
+        hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`, run: () => openPath(p.id) })
+    }
+    return cmds
+  }, [ws.canPlay, ws.paths, fx, run, openPath])
+
+  if (!ws.loaded) return <Splash />
+  const showInspector = view === 'analysis'
   return (
-    <div>
-      <h3>Recommended fixes</h3>
-      {card('Cheapest cut', fixes.cheapest_cut)}
-      {fixes.best_single && (!fixes.cheapest_cut ||
-        fixes.best_single.edges.join() !== fixes.cheapest_cut.edges.join()) && card('Best single fix', fixes.best_single)}
-      {fixes.edge_count_cut_cost != null && (
-        <p className="muted small">A cut that only minimises step count would cost {fixes.edge_count_cut_cost}.</p>
+    <div className="app" data-sidebar={sidebarOpen ? 'open' : 'closed'}>
+      {sidebarOpen && (
+        <Sidebar view={view} setView={setView} graph={ws.graph} empty={ws.empty} severity={severity} canPlay={ws.canPlay}
+                 playing={ws.playing} onPlay={ws.play} onReset={() => setConfirmReset(true)} onPalette={() => setPalette(true)}
+                 rems={ws.rems} desktop={config.desktop} user={user} onSignOut={onSignOut} />
       )}
-    </div>
-  )
-}
-
-function Remediations({ items, onChange }) {
-  const [open, setOpen] = useState(null)
-  const [detail, setDetail] = useState(null)
-  const [err, setErr] = useState('')
-  const show = async (id) => {
-    if (open === id) { setOpen(null); return }
-    setOpen(id); setDetail(await api.remediation(id))
-  }
-  const step = async (id, action) => {
-    setErr('')
-    try { await api.rstep(id, action); setDetail(await api.remediation(id)); onChange() } catch (e) { setErr(e.message) }
-  }
-  if (!items.length) return null
-  return (
-    <div>
-      <h3>Remediation</h3>
-      {err && <p className="err">{err}</p>}
-      {items.map((r) => (
-        <div key={r.id} className="card">
-          <button className="row-btn" onClick={() => show(r.id)} aria-expanded={open === r.id}>
-            <b>{r.title}</b>
-            <span className={`pill ${r.state === 'verified' ? 'ok' : r.state === 'failed' ? 'bad' : 'info'}`}>{r.state.replace('_', ' ')}</span>
-          </button>
-          {r.note && <p className="err">{r.note}</p>}
-          {r.risk_before != null && (
-            <p className="muted">Risk {r.risk_before} to {r.risk_after} · dangerous paths {r.paths_before} to {r.paths_after}</p>
+      <div className="content">
+        <div className="toolbar drag" role="toolbar" aria-label={`${title} toolbar`}>
+          <button className="tool nodrag" onClick={() => run('toggle-sidebar')} aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+                  aria-pressed={sidebarOpen} title="Show or hide sidebar"><Icon name="sidebar" size={16} /></button>
+          <h1 className="toolbar-title">{title}</h1>
+          {view === 'analysis' && !ws.empty && (
+            <span className="muted small toolbar-sub">
+              Worst path {ws.graph.worst.toFixed(2)} · combined {ws.graph.risk.toFixed(2)} · {ws.graph.events} {ws.graph.events === 1 ? 'event' : 'events'}
+            </span>
           )}
-          <div className="actions">
-            {NEXT_ACTION[r.state] && <button className="primary" onClick={() => step(r.id, STEP[NEXT_ACTION[r.state]])}>{NEXT_ACTION[r.state]}</button>}
-            {['executed', 'verified', 'failed'].includes(r.state) && <button onClick={() => step(r.id, 'rollback')}>Roll back</button>}
-          </div>
-          {open === r.id && detail && (
-            <>
-              <pre className="runbook">{detail.runbook}</pre>
-              {detail.ai_drafted && <p className="muted small">Runbook drafted by AI from the computed facts.</p>}
-              <ul className="plain">
-                {detail.audit.map((a, i) => <li key={i}>{a.action} <span className="muted">by {a.actor} {a.detail}</span></li>)}
-              </ul>
-            </>
+          <span className="spacer" />
+          {view === 'settings' && (
+            <div className="seg nodrag" role="tablist" aria-label="Settings sections">
+              {PANES.map(([id, l]) => (
+                <button key={id} role="tab" aria-selected={pane === id} className={pane === id ? 'on' : ''} onClick={() => setPane(id)}>{l}</button>
+              ))}
+            </div>
           )}
+          <span className="spacer" />
+          {showInspector && (
+            <button className="tool nodrag" onClick={() => run('toggle-inspector')} aria-pressed={inspectorOpen}
+                    aria-label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} title="Show or hide inspector"><Icon name="inspector" size={16} /></button>
+          )}
+          <button className="tool nodrag" onClick={() => setPalette(true)} aria-label="Command palette" title="Command palette"><Icon name="search" size={16} /></button>
         </div>
-      ))}
-    </div>
-  )
-}
-
-function Events({ data }) {
-  if (!data || !data.events.length) return <p className="muted">No events yet.</p>
-  return (
-    <div>
-      <p className="muted">{data.total} events, newest first</p>
-      <ul className="rows">
-        {data.events.map((e) => (
-          <li key={e.id}>
-            <div className="muted">{e.id} · {hhmm(e.ts)} · {e.source} · {e.type}</div>
-            <code className="snippet">{e.raw || `${e.actor} ${e.src_ip}`}</code>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function Ingest({ onDone }) {
-  const [fmt, setFmt] = useState('linux_auth')
-  const [text, setText] = useState('')
-  const [msg, setMsg] = useState('')
-  const [key, setKey] = useState('')
-  const send = async () => {
-    try {
-      const r = await api.ingest(fmt, text.split('\n').filter(Boolean))
-      setMsg(`${r.accepted} accepted, ${r.rejected} rejected`)
-      onDone()
-    } catch (e) { setMsg(e.message) }
-  }
-  const file = async (e) => { const f = e.target.files[0]; if (f) setText(await f.text()) }
-  const curl = `curl -X POST ${location.origin}/api/ingest -H "X-API-Key: ${key}" -H "Content-Type: application/json" \\
-  -d '{"format":"${fmt}","lines":["<one log line>"]}'`
-  return (
-    <div>
-      <h3>Add log data</h3>
-      <select value={fmt} onChange={(e) => setFmt(e.target.value)} aria-label="Log format">
-        <option value="linux_auth">Linux auth (syslog)</option>
-        <option value="web_access">Web access (combined)</option>
-        <option value="snort_alert">IDS alert (Snort format)</option>
-      </select>
-      <input type="file" onChange={file} aria-label="Log file" />
-      <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste log lines" />
-      <div className="actions">
-        <button className="primary" onClick={send} disabled={!text}>Ingest</button>
-        <span className="muted">{msg}</span>
+        {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
+        {view === 'repo' && <RepoView onDone={ws.refresh} />}
+        {view === 'assistant' && <Assistant goSettings={() => { setPane('providers'); setView('settings') }} workspaceEmpty={ws.empty} />}
+        {view === 'settings' && <Settings pane={pane} config={config} user={user} onReset={() => setConfirmReset(true)} onSignOut={onSignOut} />}
+        {view === 'analysis' && (
+          <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
+                    desktop={config.desktop} inspectorOpen={inspectorOpen} />
+        )}
       </div>
-      <h3>Send from your own system</h3>
-      <button onClick={async () => setKey((await api.createKey('source')).key)}>Create API key</button>
-      {key && <pre className="runbook">{curl}</pre>}
-    </div>
-  )
-}
 
-function Empty({ canPlay, onPlay, go }) {
-  return (
-    <div className="empty">
-      <h2>Nothing to analyse yet</h2>
-      <p className="muted">Scan a repository or add log data, and the attack paths appear here.</p>
-      <div className="actions center">
-        <button className="primary" onClick={() => go('repo')}>Scan a repository</button>
-        <button onClick={() => go('ingest')}>Add log data</button>
-        {canPlay && <button onClick={onPlay}>Play sample scenario</button>}
-      </div>
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} recents={recents}
+                      onRun={(id) => { if (!id.startsWith('path-')) setRecents((r) => pushRecent(r, id)) }} />
+      {confirmReset && (
+        <div className="scrim" onMouseDown={() => setConfirmReset(false)}
+             onKeyDown={(e) => { if (e.key === 'Escape') setConfirmReset(false) }}>
+          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" aria-describedby="reset-desc"
+               tabIndex={-1} ref={(el) => el && el.focus()} onMouseDown={(e) => e.stopPropagation()}>
+            <h2 id="reset-title">Reset this workspace?</h2>
+            <p id="reset-desc" className="muted">Events, applied fixes, scan results and remediation history are deleted. You can’t undo this.</p>
+            <div className="actions end">
+              <button onClick={() => setConfirmReset(false)}>Cancel</button>
+              <button className="danger" onClick={doReset}>Reset Workspace</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export default function App() {
+  const [config, setConfig] = useState(null)
   const [user, setUser] = useState(undefined)
-  const [graph, setGraph] = useState(null)
-  const [paths, setPaths] = useState([])
-  const [fixes, setFixes] = useState(null)
-  const [events, setEvents] = useState(null)
-  const [rems, setRems] = useState([])
-  const [sel, setSel] = useState(null)
-  const [playing, setPlaying] = useState(false)
-  const [canPlay, setCanPlay] = useState(false)
-  const [tab, setTab] = useState('paths')
-  const [view, setView] = useState('analysis')
-  const timer = useRef(null)
+  const [error, setError] = useState('')
 
-  const refresh = useCallback(async () => {
-    const [g, p, f, r, ev] = await Promise.all([api.graph(), api.paths(), api.fixes(), api.remediations(), api.events()])
-    setGraph(g); setPaths(p.paths); setFixes(f); setRems(r.remediations); setEvents(ev)
+  const boot = useCallback(async () => {
+    setError('')
+    try {
+      const cfg = await api.config()
+      setConfig(cfg)
+      document.documentElement.dataset.desktop = cfg.desktop ? '1' : '0'
+      try {
+        setUser(await api.me())
+      } catch (e) {
+        if (e.status !== 401) throw e
+        if (cfg.desktop) { await api.local(); setUser(await api.me()) } else setUser(null)
+      }
+    } catch (e) {
+      setError(e.message === 'request failed' ? 'Could not reach the analysis engine.' : e.message)
+    }
   }, [])
 
-  useEffect(() => { api.me().then(setUser).catch(() => setUser(null)) }, [])
   useEffect(() => {
-    if (!user) return
-    refresh()
-    api.simStatus().then((s) => setCanPlay(s.total > 0)).catch(() => {})
-    const es = new EventSource('/api/stream')
-    es.onmessage = () => refresh()
-    return () => es.close()
-  }, [user, refresh])
-  useEffect(() => () => clearTimeout(timer.current), [])
+    if (bridge) document.documentElement.dataset.platform = bridge.platform
+    boot()
+  }, [boot])
 
-  const play = async () => {
-    setPlaying(true)
-    await api.simStart()
-    const tick = async () => {
-      const r = await api.simStep(15)
-      if (r.done) { setPlaying(false); return }
-      timer.current = setTimeout(tick, 700)
-    }
-    tick()
-  }
-  const go = (target) => {
-    if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
-  }
+  const signOut = useCallback(async () => { await api.logout(); setUser(null) }, [])
+  // desktop has no account screen: a lapsed session is silently renewed through the local-account endpoint
+  const renew = useCallback(async () => {
+    try { await api.local(); setUser(await api.me()) } catch (e) { setError(e.message) }
+  }, [])
 
-  if (user === undefined) return null
-  if (!user) return <Login onDone={() => api.me().then(setUser)} />
-
-  const selected = paths.find((p) => p.id === sel)
-  const empty = !graph || (graph.events === 0 && paths.length === 0)
-  const NAV = [['analysis', 'Analysis', 'graph'], ['repo', 'Repository', 'repo'], ['insights', 'Insights', 'chart']]
+  if (error) return <Splash error={error} onRetry={boot} />
+  if (!config || user === undefined) return <Splash />
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">Attack Path Compiler</span>
-        <nav className="seg" aria-label="Sections">
-          {NAV.map(([id, label, icon]) => (
-            <button key={id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>
-              <Icon name={icon} size={14} /> {label}
-            </button>
-          ))}
-        </nav>
-        <span className="spacer" />
-        {!empty && graph && (
-          <span className="status-inline">
-            <Severity level={graph.severity} />
-            <span className="muted">worst path {graph.worst.toFixed(2)} · combined {graph.risk.toFixed(2)}{graph.events > 0 ? ` · ${graph.events} events` : ''}</span>
-          </span>
-        )}
-        {canPlay && (
-          <button disabled={playing} onClick={play}><Icon name="play" size={14} /> {playing ? 'Playing' : 'Play'}</button>
-        )}
-        <button onClick={async () => { await api.simReset(); setSel(null); refresh() }}>Reset</button>
-        <button className="icon-btn" aria-label="Sign out" title="Sign out"
-                onClick={async () => { await api.logout(); setUser(null) }}><Icon name="logout" /></button>
-      </header>
-
-      {view === 'insights' && <Insights key={graph ? graph.events : 0} rems={rems} />}
-      {view === 'repo' && <RepoView onDone={refresh} />}
-      {view === 'analysis' && (
-        <main className="analysis">
-          <aside className="pane left">
-            <div className="seg small" role="tablist">
-              {[['paths', 'Paths', 'list'], ['events', 'Events', 'file'], ['ingest', 'Add data', 'upload']].map(([t, l]) => (
-                <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{l}</button>
-              ))}
-            </div>
-            {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
-              <ul className="rows selectable">
-                {paths.map((p) => (
-                  <li key={p.id} className={p.id === sel ? 'on' : ''} onClick={() => setSel(p.id)}>
-                    <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
-                    <div className="path-line">{p.nodes.join(' → ')}</div>
-                  </li>
-                ))}
-              </ul>
-            ))}
-            {tab === 'events' && <Events data={events} />}
-            {tab === 'ingest' && <Ingest onDone={refresh} />}
-          </aside>
-          <section className="canvas">
-            {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={selected} />}
-          </section>
-          <aside className="pane right">
-            {!empty && <PathDetail path={selected} />}
-            {!empty && <Fixes fixes={fixes} onPropose={async (edges, title) => { await api.propose(edges, title); refresh() }} />}
-            <Remediations items={rems} onChange={refresh} />
-          </aside>
-        </main>
-      )}
-    </div>
+    <ToastProvider>
+      {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={config.desktop ? renew : signOut} /> : <Login config={config} onDone={() => api.me().then(setUser)} />}
+    </ToastProvider>
   )
 }
