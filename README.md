@@ -87,7 +87,7 @@ Create a key under Sources, then `POST /api/ingest` with `X-API-Key`. Formats: `
 `snort_alert`, or `events` (Event JSON).
 
 ## Known limitations
-- Sample logs from EvidenceForge are not committed yet; Play needs them and is hidden until they exist.
+- The bundled Play scenario uses synthetic EvidenceForge logs generated from `scenarios/stalk-branch.yaml`; provenance and the reproduction command are in `data/samples/README.md`.
 - Cancelling a running clone is not supported; a scan can only be left to finish or retried after it fails.
 - Provider wire formats follow the vendors' docs but were exercised only against mocked transports here, never a live key; OpenAI stream event names beyond the documented four are unverified. Use Settings > Providers > Check key against a real account.
 - Apple publishes no minimum window size, traffic-light geometry or command-palette guidance, so those are design choices (see the research note).

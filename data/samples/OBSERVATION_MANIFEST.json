@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "scenario_name": "stalk-branch",
+  "observation_profile": "complete",
+  "collection_window": {
+    "start": "2024-05-14T12:00:00Z",
+    "end": "2024-05-14T15:00:00Z"
+  },
+  "source_summary": {
+    "ids": {
+      "filtered": 61
+    },
+    "syslog": {
+      "visible": 4
+    }
+  },
+  "storyline_events": [
+    {
+      "kind": "storyline",
+      "storyline_id": "evt-001",
+      "index": 0,
+      "actor": "www-data",
+      "system": "WEB-BO-01",
+      "activity": "External vulnerability scanner probes the public claims portal",
+      "event_types": [
+        "web_scan"
+      ],
+      "source_status": {
+        "ids": {
+          "filtered": 59
+        }
+      }
+    },
+    {
+      "kind": "storyline",
+      "storyline_id": "evt-002",
+      "index": 1,
+      "actor": "www-data",
+      "system": "WEB-BO-01",
+      "activity": "Attacker obtains an interactive session as the web service account",
+      "event_types": [
+        "process",
+        "ssh_session"
+      ],
+      "source_status": {
+        "syslog": {
+          "visible": 4
+        }
+      }
+    },
+    {
+      "kind": "storyline",
+      "storyline_id": "evt-003",
+      "index": 2,
+      "actor": "nina.kapoor",
+      "system": "FILE-BO-01",
+      "activity": "Attacker uses compromised admin credentials to RDP from the DMZ web server to the file server",
+      "event_types": [
+        "rdp_session"
+      ],
+      "source_status": {
+        "ids": {
+          "filtered": 1
+        }
+      }
+    }
+  ],
+  "red_herring_events": [
+    {
+      "kind": "red_herring",
+      "storyline_id": "rh-001",
+      "index": 0,
+      "actor": "maya.patel",
+      "system": "WS-MPATEL-01",
+      "activity": "User mistypes a password during a VPN reconnect",
+      "event_types": [
+        "failed_logon"
+      ],
+      "source_status": {
+        "ids": {
+          "filtered": 1
+        }
+      }
+    }
+  ]
+}

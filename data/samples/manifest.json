@@ -1,0 +1,5 @@
+[
+  {"file": "linux_auth.log", "format": "linux_auth"},
+  {"file": "web_access.log", "format": "web_access"},
+  {"file": "snort_alert.log", "format": "snort_alert"}
+]
