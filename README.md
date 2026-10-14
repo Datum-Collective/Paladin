@@ -55,6 +55,9 @@ is used only on the web server, for what a user must not do themselves (reading 
 with, GitHub App install states and links, the GitHub App audit log). Log shippers ingest with a per-workspace API
 key through a database function that checks the key; only its SHA-256 hash is stored and users cannot read it back.
 
+Check the whole chain at any time (prints no secrets): `backend/.venv/bin/python scripts/check_signin.py` reports a
+missing setting, a rejected key, a disabled GitHub provider or unapplied migrations.
+
 Setup, once per Supabase project:
 1. GitHub -> Settings -> Developer settings -> **OAuth Apps** -> New. Callback URL:
    `https://<project-ref>.supabase.co/auth/v1/callback`.

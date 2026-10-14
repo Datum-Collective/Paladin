@@ -129,3 +129,16 @@ def test_desktop_token_missing_from_env_never_authenticates(client, monkeypatch)
     monkeypatch.delenv("APC_DESKTOP_TOKEN", raising=False)
     assert client.post("/api/auth/desktop/start", headers={"X-Desktop-Token": ""}).status_code == 403
     assert client.post("/api/auth/desktop/claim", headers={"X-Desktop-Token": ""}).status_code == 403
+
+
+def test_config_names_missing_signin_settings_without_values(client, monkeypatch):
+    from app import config as settings
+    monkeypatch.setattr(settings, "SUPABASE_URL", "")
+    monkeypatch.setattr(settings, "SUPABASE_ANON_KEY", "")
+    monkeypatch.setattr(settings, "SUPABASE_ENABLED", False)
+    c = client.get("/api/config").json()
+    assert c["signin"] is False and c["signin_missing"] == ["SUPABASE_URL", "SUPABASE_ANON_KEY"]
+    monkeypatch.setattr(settings, "SUPABASE_URL", "https://x.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_ANON_KEY", "secret-looking-value")
+    c = client.get("/api/config").json()
+    assert c["signin_missing"] == [] and "secret-looking-value" not in str(c)
