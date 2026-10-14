@@ -2,3 +2,8 @@
 .bounty-src/
 node_modules/
 __pycache__/
+data/attack/
+frontend/dist/
+.venv/
+.pytest_cache/
+*.db
