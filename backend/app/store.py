@@ -1,0 +1,129 @@
+"""SQLite store (stdlib). Events are append-only; every row is scoped to a workspace."""
+import json
+import os
+import sqlite3
+import threading
+from pathlib import Path
+
+from .models import Event
+
+MAX_EVENTS = 50_000
+_lock = threading.RLock()
+_conn: sqlite3.Connection | None = None
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, pw TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys(hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, label TEXT, created REAL);
+CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ev_ws ON events(ws, seq);
+CREATE TABLE IF NOT EXISTS fixes(ws INTEGER NOT NULL, edge TEXT NOT NULL, PRIMARY KEY(ws, edge));
+CREATE TABLE IF NOT EXISTS sim(ws INTEGER PRIMARY KEY, pos INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS workspaces(id INTEGER PRIMARY KEY, owner INTEGER NOT NULL, name TEXT NOT NULL, repo_url TEXT,
+  created REAL NOT NULL, opened REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS ws_owner ON workspaces(owner, opened);
+CREATE TABLE IF NOT EXISTS active_ws(user_id INTEGER PRIMARY KEY, ws INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS prefs(user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id, key));
+"""
+
+
+def db_path() -> Path:
+    return Path(os.environ.get("DATA_DIR", "./data_dir")) / "apc.db"
+
+
+def lock() -> threading.RLock:
+    return _lock
+
+
+def conn() -> sqlite3.Connection:
+    global _conn
+    if _conn is None:
+        db_path().parent.mkdir(parents=True, exist_ok=True)
+        _conn = sqlite3.connect(db_path(), check_same_thread=False, isolation_level=None)
+        _conn.row_factory = sqlite3.Row
+        _conn.executescript(SCHEMA)
+        try:  # keys are bound to the workspace they were created in
+            _conn.execute("ALTER TABLE api_keys ADD COLUMN ws INTEGER")
+        except sqlite3.OperationalError:
+            pass
+    return _conn
+
+
+def reset_connection() -> None:
+    global _conn
+    if _conn is not None:
+        _conn.close()
+    _conn = None
+
+
+def q(sql: str, args: tuple = ()):
+    with _lock:
+        return conn().execute(sql, args).fetchall()
+
+
+def run(sql: str, args: tuple = ()) -> int:
+    with _lock:
+        return conn().execute(sql, args).lastrowid
+
+
+def event_count(ws: int) -> int:
+    return q("SELECT COUNT(*) c FROM events WHERE ws=?", (ws,))[0]["c"]
+
+
+def add_events(ws: int, events: list[Event]) -> int:
+    """Append events in one transaction; ids are e<seq>. Returns number stored (capped per workspace)."""
+    with _lock:
+        room = max(0, MAX_EVENTS - event_count(ws))
+        batch = events[:room]
+        if not batch:
+            return 0
+        c = conn()
+        nxt = c.execute("SELECT COALESCE(MAX(seq),0)+1 FROM events").fetchone()[0]
+        rows = []
+        for i, ev in enumerate(batch):
+            ev = ev.model_copy(update={"id": f"e{nxt + i}"})
+            rows.append((nxt + i, ws, ev.model_dump_json()))
+        c.execute("BEGIN")
+        try:
+            c.executemany("INSERT INTO events(seq,ws,data) VALUES(?,?,?)", rows)
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+        return len(rows)
+
+
+def get_events(ws: int) -> list[Event]:
+    return [Event(**json.loads(r["data"])) for r in q("SELECT data FROM events WHERE ws=? ORDER BY seq", (ws,))]
+
+
+def applied_fixes(ws: int) -> set[str]:
+    return {r["edge"] for r in q("SELECT edge FROM fixes WHERE ws=?", (ws,))}
+
+
+def apply_fix(ws: int, edges: list[str]) -> None:
+    for e in edges:
+        run("INSERT OR IGNORE INTO fixes(ws,edge) VALUES(?,?)", (ws, e))
+
+
+def reset_workspace(ws: int) -> None:
+    for t in ("events", "fixes", "sim"):
+        run(f"DELETE FROM {t} WHERE ws=?", (ws,))
+
+
+def sim_pos(ws: int) -> int:
+    r = q("SELECT pos FROM sim WHERE ws=?", (ws,))
+    return r[0]["pos"] if r else 0
+
+
+def set_sim_pos(ws: int, pos: int) -> None:
+    run("INSERT INTO sim(ws,pos) VALUES(?,?) ON CONFLICT(ws) DO UPDATE SET pos=excluded.pos", (ws, pos))
+
+
+def wipe_workspace(ws: int) -> None:
+    """Remove every trace of a workspace's analysis data (not the account)."""
+    for t in ("events", "fixes", "sim", "remediations", "audit", "code_models", "jobs"):
+        try:
+            run(f"DELETE FROM {t} WHERE ws=?", (ws,))
+        except Exception:  # table not created yet
+            pass

@@ -1,0 +1,43 @@
+appId: dev.paladin.desktop
+productName: Paladin
+directories:
+  output: dist
+  buildResources: build
+files:
+  - src/**/*
+  - package.json
+extraResources:
+  - from: build/backend/paladin-server
+    to: backend
+  - from: ../frontend/dist
+    to: ui
+  - from: ../data
+    to: data
+    filter:
+      - "inventory.yaml"
+      - "attack_subset.json"
+      - "benchmarks.json"
+      - "samples/**/*"
+mac:
+  category: public.app-category.developer-tools
+  target: [dmg, zip]        # both are required for electron-updater on macOS
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true            # needs APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID in the environment
+win:
+  target: [nsis]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github          # set owner/repo for your release repo before the first release
+# Hardening: turn off the Electron features this app never uses (Electron fuses guide).
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false

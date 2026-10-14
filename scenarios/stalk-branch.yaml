@@ -1,0 +1,107 @@
+version: "1.0"
+name: stalk-branch
+description: |
+  Synthetic small branch office (SYNTHETIC DATA). Three weak signals from different log sources
+  (web scan, ssh login as a service account, IDS alert on RDP to the file server) join into one path
+  from the public portal to the claims share. Shared names match data/inventory.yaml.
+
+environment:
+  description: "Small insurance branch office with a DMZ web portal, file server and domain controller"
+  domain: "northstar-branch.local"
+  timezone:
+    default: "UTC"
+  users:
+    - {username: maya.patel, full_name: "Maya Patel", email: "maya.patel@northstarclaims.com", persona: accountant, primary_system: WS-MPATEL-01, groups: ["finance"], enabled: true, browsing_intensity: normal}
+    - {username: nina.kapoor, full_name: "Nina Kapoor", email: "nina.kapoor@northstarclaims.com", persona: sysadmin, primary_system: WS-NKAPOOR-01, groups: ["it-admins", "domain-admins"], enabled: true, browsing_intensity: light}
+  service_accounts:
+    - www-data
+  systems:
+    - {hostname: WS-MPATEL-01, ip: "10.44.10.21", os: "Windows 11 Enterprise", type: workstation, assigned_user: maya.patel, services: ["dns-client"]}
+    - {hostname: WS-NKAPOOR-01, ip: "10.44.10.24", os: "Windows 11 Enterprise", type: workstation, assigned_user: nina.kapoor, services: ["dns-client"]}
+    - {hostname: DC-BO-01, ip: "10.44.20.10", os: "Windows Server 2022", type: domain_controller, services: ["kerberos", "ldap", "dns"], roles: ["domain_controller", "dns_server"]}
+    - {hostname: FILE-BO-01, ip: "10.44.20.20", os: "Windows Server 2019", type: server, services: ["smb", "dns-client"], roles: ["file_server"]}
+    - {hostname: WEB-BO-01, ip: "10.44.30.10", os: "Ubuntu 22.04 LTS", type: server, services: ["nginx", "php-fpm", "ssh", "dns-client"], roles: ["web_server"], public_hostnames: ["portal.northstarclaims.net"]}
+  network:
+    public_cidrs: ["45.83.220.0/28"]
+    segments:
+      - {name: workstations, cidr: "10.44.10.0/24", description: "Workstation VLAN", exposure: internal, systems: [WS-MPATEL-01, WS-NKAPOOR-01]}
+      - {name: servers, cidr: "10.44.20.0/24", description: "Internal servers", exposure: internal, systems: [DC-BO-01, FILE-BO-01]}
+      - {name: dmz, cidr: "10.44.30.0/24", description: "Public claims portal", exposure: both, external_ratio: 0.7, systems: [WEB-BO-01]}
+    sensors:
+      - {type: ids, name: bo-perimeter-ids, hostname: IDS-BO-EDGE, monitoring_segments: [dmz, servers], direction: bidirectional, placement: tap, log_formats: [snort_alert], description: "IDS on DMZ and server VLANs"}
+
+time_window:
+  start: "2024-05-14T12:00:00Z"
+  duration: "3h"
+  warmup: "1h"
+
+baseline_activity:
+  description: "Normal workday traffic with modest suspicious background noise."
+  intensity: low
+  variation: medium
+  suspicious_noise: low
+  traffic_rates: {web: low, user_activity: low, persona_connections: low}
+
+observation_profile: complete
+
+storyline:
+  - id: evt-001
+    time: "+30m"
+    actor: www-data
+    system: WEB-BO-01
+    activity: "External vulnerability scanner probes the public claims portal"
+    events:
+      - type: web_scan
+        technique: "T1595.002 - Active Scanning: Vulnerability Scanning"
+        description: "Scanner probes common web paths"
+        source_ip: "185.199.110.42"
+        dst_ip: "45.83.220.5"
+        dst_port: 80
+        hostname: "portal.northstarclaims.net"
+        preset: nikto
+        rate: 4.0
+        duration: "3m"
+
+  - id: evt-002
+    time: "+45m"
+    actor: www-data
+    system: WEB-BO-01
+    activity: "Attacker obtains an interactive session as the web service account"
+    events:
+      - type: ssh_session
+        technique: "T1078.003 - Valid Accounts: Local Accounts"
+        description: "Interactive access lands on the public web server as www-data"
+        source_ip: "185.199.110.42"
+      - type: process
+        technique: "T1033 - System Owner/User Discovery"
+        process_name: "/usr/bin/id"
+        command_line: "id"
+
+  - id: evt-003
+    time: "+1h5m"
+    actor: nina.kapoor
+    system: FILE-BO-01
+    activity: "Attacker uses compromised admin credentials to RDP from the DMZ web server to the file server"
+    events:
+      - type: rdp_session
+        technique: "T1021.001 - Remote Services: Remote Desktop Protocol"
+        description: "Administrative RDP session from the DMZ"
+        source_ip: "10.44.30.10"
+
+red_herrings:
+  - id: rh-001
+    time: "+1h40m"
+    actor: maya.patel
+    system: WS-MPATEL-01
+    activity: "User mistypes a password during a VPN reconnect"
+    explanation: "Benign user error"
+    events:
+      - {type: failed_logon, source_ip: "198.51.100.77", logon_type: 3}
+
+output:
+  logs:
+    - format: syslog
+    - format: web_access
+    - format: snort_alert
+  destination: scenarios/output
+  compression: false
