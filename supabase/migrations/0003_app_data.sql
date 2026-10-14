@@ -6,14 +6,15 @@
 -- a user can read and write only rows whose user_id is their own, and only inside workspaces they own.
 -- Anyone can call this API directly with their own token, so every limit that matters is enforced here
 -- (row caps, value sizes, generated ids), not only in the backend.
+--
+-- Order matters: Postgres checks a LANGUAGE sql function's body when it is created, so every object is created
+-- before anything that refers to it. Sections: 1 tables and columns, 2 indexes, 3 helper functions,
+-- 4 row-level security and policies, 5 column privileges, 6 row caps (triggers), 7 RPC functions.
 
--- ---------- helpers ----------
-create or replace function public.owns_workspace(p_ws bigint) returns boolean
-language sql stable security invoker set search_path = '' as $$
-  select exists (select 1 from public.workspaces w where w.id = p_ws and w.user_id = (select auth.uid()));
-$$;
+-- =========================================================================================================
+-- 1. Tables and columns (only references: auth.users and tables created above them)
+-- =========================================================================================================
 
--- ---------- workspaces ----------
 create table if not exists public.workspaces (
   id bigint generated always as identity primary key,
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
@@ -22,69 +23,28 @@ create table if not exists public.workspaces (
   created double precision not null default extract(epoch from now()),
   opened double precision not null default extract(epoch from now())
 );
-create unique index if not exists workspaces_user_name_idx on public.workspaces (user_id, lower(name));
-create index if not exists workspaces_user_opened_idx on public.workspaces (user_id, opened desc);
-alter table public.workspaces enable row level security;
-
-drop policy if exists "own workspaces" on public.workspaces;
-create policy "own workspaces" on public.workspaces for all to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
-
-create or replace function public.cap_workspaces() returns trigger
-language plpgsql security invoker set search_path = '' as $$
-begin
-  if (select count(*) from public.workspaces where user_id = new.user_id) >= 50 then
-    raise exception 'workspace limit reached' using errcode = 'check_violation';
-  end if;
-  return new;
-end $$;
-drop trigger if exists cap_workspaces on public.workspaces;
-create trigger cap_workspaces before insert on public.workspaces for each row execute function public.cap_workspaces();
 
 -- The workspace each user last opened
 create table if not exists public.active_ws (
   user_id uuid primary key default auth.uid() references auth.users on delete cascade,
   ws bigint not null references public.workspaces on delete cascade
 );
-alter table public.active_ws enable row level security;
-drop policy if exists "own active workspace" on public.active_ws;
-create policy "own active workspace" on public.active_ws for all to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()) and public.owns_workspace(ws));
 
--- ---------- per-user preferences ----------
+-- Per-user preferences
 create table if not exists public.prefs (
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   key text not null check (key ~ '^[a-z_]{1,32}\.[a-z_]{1,32}$'),
   value jsonb not null check (pg_column_size(value) <= 1024),
   primary key (user_id, key)
 );
-alter table public.prefs enable row level security;
-drop policy if exists "own prefs" on public.prefs;
-create policy "own prefs" on public.prefs for all to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
-create or replace function public.cap_prefs() returns trigger
-language plpgsql security invoker set search_path = '' as $$
-begin
-  if (select count(*) from public.prefs where user_id = new.user_id) >= 100 then
-    raise exception 'too many preferences' using errcode = 'check_violation';
-  end if;
-  return new;
-end $$;
-drop trigger if exists cap_prefs on public.prefs;
-create trigger cap_prefs before insert on public.prefs for each row execute function public.cap_prefs();
-
--- ---------- workspace-scoped data ----------
--- Every table below carries user_id (RLS) and ws (must be a workspace the same user owns).
-
+-- Workspace-scoped data: every table carries user_id (RLS) and ws (must be a workspace the same user owns)
 create table if not exists public.events (
   seq bigint generated always as identity primary key,
   ws bigint not null references public.workspaces on delete cascade,
   user_id uuid not null default auth.uid() references auth.users on delete cascade,
   data jsonb not null check (pg_column_size(data) <= 16384)
 );
-create index if not exists events_ws_seq_idx on public.events (ws, seq);
 
 create table if not exists public.fixes (
   ws bigint not null references public.workspaces on delete cascade,
@@ -118,7 +78,6 @@ create table if not exists public.remediations (
   created double precision not null,
   updated double precision not null
 );
-create index if not exists remediations_ws_idx on public.remediations (ws, id desc);
 
 create table if not exists public.audit (
   id bigint generated always as identity primary key,
@@ -130,7 +89,6 @@ create table if not exists public.audit (
   detail text not null default '' check (char_length(detail) <= 500),
   ts double precision not null
 );
-create index if not exists audit_ws_idx on public.audit (ws, id desc);
 
 create table if not exists public.jobs (
   id bigint generated always as identity primary key,
@@ -150,7 +108,6 @@ create table if not exists public.jobs (
   created double precision not null,
   updated double precision not null
 );
-create index if not exists jobs_ws_idx on public.jobs (ws, id desc);
 
 create table if not exists public.code_models (
   ws bigint primary key references public.workspaces on delete cascade,
@@ -162,6 +119,60 @@ create table if not exists public.code_models (
   model jsonb not null check (pg_column_size(model) <= 2000000),
   findings jsonb not null check (pg_column_size(findings) <= 2000000)
 );
+
+-- Ingest API keys (table from 0001): a free-text label instead of a fixed source, bound to a workspace
+alter table public.api_keys add column if not exists label text not null default 'source'
+  check (char_length(label) <= 64);
+alter table public.api_keys add column if not exists ws bigint references public.workspaces on delete cascade;
+alter table public.api_keys alter column source drop not null;
+alter table public.api_keys drop constraint if exists api_keys_source_check;
+
+-- GitHub audit log (table from 0002): append-only. Web writes go through the GitHub App with the service key
+-- (via = 'app'); the desktop app, which has no service key, records writes made with the user's own token
+-- (via = 'token').
+alter table public.github_audit_log alter column installation_id drop not null;
+alter table public.github_audit_log add column if not exists via text not null default 'app'
+  check (via in ('app', 'token'));
+
+-- =========================================================================================================
+-- 2. Indexes
+-- =========================================================================================================
+
+create unique index if not exists workspaces_user_name_idx on public.workspaces (user_id, lower(name));
+create index if not exists workspaces_user_opened_idx on public.workspaces (user_id, opened desc);
+create index if not exists events_ws_seq_idx on public.events (ws, seq);
+create index if not exists remediations_ws_idx on public.remediations (ws, id desc);
+create index if not exists audit_ws_idx on public.audit (ws, id desc);
+create index if not exists jobs_ws_idx on public.jobs (ws, id desc);
+
+-- =========================================================================================================
+-- 3. Helper functions used by the policies (after the tables they read)
+-- =========================================================================================================
+
+create or replace function public.owns_workspace(p_ws bigint) returns boolean
+language sql stable security invoker set search_path = '' as $$
+  select exists (select 1 from public.workspaces w where w.id = p_ws and w.user_id = (select auth.uid()));
+$$;
+
+-- =========================================================================================================
+-- 4. Row-level security and policies
+-- =========================================================================================================
+
+alter table public.workspaces enable row level security;
+drop policy if exists "own workspaces" on public.workspaces;
+create policy "own workspaces" on public.workspaces for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+
+alter table public.active_ws enable row level security;
+drop policy if exists "own active workspace" on public.active_ws;
+create policy "own active workspace" on public.active_ws for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()) and public.owns_workspace(ws));
+
+alter table public.prefs enable row level security;
+drop policy if exists "own prefs" on public.prefs;
+create policy "own prefs" on public.prefs for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
 -- Same policy on every workspace-scoped table
 do $$
@@ -176,7 +187,58 @@ begin
   end loop;
 end $$;
 
--- Row caps per workspace (bulk-safe for events: checked once per statement)
+-- API keys: users manage their own keys (RLS was enabled in 0001 with no policies)
+drop policy if exists "read own keys" on public.api_keys;
+create policy "read own keys" on public.api_keys for select to authenticated
+  using (user_id = (select auth.uid()));
+drop policy if exists "create own keys" on public.api_keys;
+create policy "create own keys" on public.api_keys for insert to authenticated
+  with check (user_id = (select auth.uid()) and (ws is null or public.owns_workspace(ws)));
+drop policy if exists "revoke own keys" on public.api_keys;
+create policy "revoke own keys" on public.api_keys for update to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+
+-- GitHub audit log: the desktop app may append its own token-made rows; App rows need the service key
+drop policy if exists "desktop appends own audit rows" on public.github_audit_log;
+create policy "desktop appends own audit rows" on public.github_audit_log for insert to authenticated
+  with check (user_id = (select auth.uid()) and via = 'token' and installation_id is null);
+
+-- =========================================================================================================
+-- 5. Column privileges: a key's hash can never be read back, and a key can only be revoked, not edited
+-- =========================================================================================================
+
+revoke all on public.api_keys from anon, authenticated;
+grant select (id, user_id, source, label, key_prefix, ws, created_at, revoked_at) on public.api_keys to authenticated;
+grant insert (user_id, source, label, key_prefix, key_hash, ws) on public.api_keys to authenticated;
+grant update (revoked_at) on public.api_keys to authenticated;
+
+-- =========================================================================================================
+-- 6. Row caps (triggers)
+-- =========================================================================================================
+
+create or replace function public.cap_workspaces() returns trigger
+language plpgsql security invoker set search_path = '' as $$
+begin
+  if (select count(*) from public.workspaces where user_id = new.user_id) >= 50 then
+    raise exception 'workspace limit reached' using errcode = 'check_violation';
+  end if;
+  return new;
+end $$;
+drop trigger if exists cap_workspaces on public.workspaces;
+create trigger cap_workspaces before insert on public.workspaces for each row execute function public.cap_workspaces();
+
+create or replace function public.cap_prefs() returns trigger
+language plpgsql security invoker set search_path = '' as $$
+begin
+  if (select count(*) from public.prefs where user_id = new.user_id) >= 100 then
+    raise exception 'too many preferences' using errcode = 'check_violation';
+  end if;
+  return new;
+end $$;
+drop trigger if exists cap_prefs on public.prefs;
+create trigger cap_prefs before insert on public.prefs for each row execute function public.cap_prefs();
+
+-- Events: checked once per statement, so a bulk insert is not counted row by row
 create or replace function public.cap_events() returns trigger
 language plpgsql security invoker set search_path = '' as $$
 begin
@@ -209,6 +271,10 @@ create trigger cap_audit before insert on public.audit for each row execute func
 drop trigger if exists cap_jobs on public.jobs;
 create trigger cap_jobs before insert on public.jobs for each row execute function public.cap_per_workspace('500');
 
+-- =========================================================================================================
+-- 7. RPC functions
+-- =========================================================================================================
+
 -- One round trip for the workspace list: event counts and newest scan per workspace (RLS still applies)
 create or replace function public.workspace_event_counts(p_ws bigint[])
 returns table (ws bigint, n bigint)
@@ -222,29 +288,6 @@ language sql stable security invoker set search_path = '' as $$
   select distinct on (j.ws) j.ws, j.id, j.state, j.error, j.updated
   from public.jobs j where j.ws = any(p_ws) order by j.ws, j.id desc;
 $$;
-
--- ---------- ingest API keys (table from 0001) ----------
-alter table public.api_keys add column if not exists label text not null default 'source'
-  check (char_length(label) <= 64);
-alter table public.api_keys add column if not exists ws bigint references public.workspaces on delete cascade;
-alter table public.api_keys alter column source drop not null;
-alter table public.api_keys drop constraint if exists api_keys_source_check;
-
--- Users manage their own keys, but can never read a key's hash back, and can only revoke (not edit) a key
-revoke all on public.api_keys from anon, authenticated;
-grant select (id, user_id, source, label, key_prefix, ws, created_at, revoked_at) on public.api_keys to authenticated;
-grant insert (user_id, source, label, key_prefix, key_hash, ws) on public.api_keys to authenticated;
-grant update (revoked_at) on public.api_keys to authenticated;
-
-drop policy if exists "read own keys" on public.api_keys;
-create policy "read own keys" on public.api_keys for select to authenticated
-  using (user_id = (select auth.uid()));
-drop policy if exists "create own keys" on public.api_keys;
-create policy "create own keys" on public.api_keys for insert to authenticated
-  with check (user_id = (select auth.uid()) and (ws is null or public.owns_workspace(ws)));
-drop policy if exists "revoke own keys" on public.api_keys;
-create policy "revoke own keys" on public.api_keys for update to authenticated
-  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
 -- Log shippers have an API key, not a session. This checks the key and writes only into that key's workspace
 -- (or the owner's oldest one for keys made before workspaces). Runs as its owner so it can read api_keys.
@@ -281,13 +324,3 @@ begin
 end $$;
 revoke all on function public.ingest_with_key(text, jsonb) from public;
 grant execute on function public.ingest_with_key(text, jsonb) to anon, authenticated;
-
--- ---------- GitHub audit log (table from 0002) ----------
--- Append-only. Web writes go through the GitHub App with the service key (via = 'app'); the desktop app,
--- which has no service key, records writes made with the user's own token (via = 'token').
-alter table public.github_audit_log alter column installation_id drop not null;
-alter table public.github_audit_log add column if not exists via text not null default 'app'
-  check (via in ('app', 'token'));
-drop policy if exists "desktop appends own audit rows" on public.github_audit_log;
-create policy "desktop appends own audit rows" on public.github_audit_log for insert to authenticated
-  with check (user_id = (select auth.uid()) and via = 'token' and installation_id is null);
