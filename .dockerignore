@@ -16,3 +16,5 @@ scenarios/output
 MASTER_PLAN_REVIEW.md
 .bounty-src
 desktop
+attack-path-compiler
+.DS_Store
