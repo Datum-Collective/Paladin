@@ -1,0 +1,27 @@
+{
+  "name": "paladin-desktop",
+  "productName": "Paladin",
+  "version": "0.1.0",
+  "description": "Paladin: attack path analysis for macOS and Windows",
+  "private": true,
+  "main": "src/main.js",
+  "author": "Paladin",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
+    "build:ui": "npm --prefix ../frontend ci && npm --prefix ../frontend run build",
+    "build:backend": "node scripts/build-backend.js",
+    "dist": "npm run build:ui && npm run build:backend && electron-builder",
+    "dist:dir": "npm run build:ui && npm run build:backend && electron-builder --dir"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
+  },
+  "allowScripts": {
+    "electron": true
+  }
+}

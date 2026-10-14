@@ -1,0 +1,9 @@
+{$APP_DOMAIN:localhost} {
+	encode gzip
+	reverse_proxy apc-main:8000
+}
+
+{$BOUNTY_DOMAIN:bounty.invalid} {
+	encode gzip
+	reverse_proxy apc-bounty:8000
+}

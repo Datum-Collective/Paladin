@@ -1,0 +1,14 @@
+.env
+.bounty-src/
+node_modules/
+__pycache__/
+data/attack/
+frontend/dist/
+.venv/
+.pytest_cache/
+*.db
+.env.local
+desktop/node_modules/
+desktop/dist/
+desktop/build/backend/
+desktop/build/pyi-work/
