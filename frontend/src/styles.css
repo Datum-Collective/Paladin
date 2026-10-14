@@ -635,10 +635,6 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
   animation: sun-spin 1.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both; }
-/* halo: lives on the wrapper, behind the panel, so it only ever glows outside the edge */
-.bar-wrap.focus::before { content: ""; position: absolute; inset: -3px; border-radius: 999px; z-index: 0; pointer-events: none;
-  background: var(--sun); filter: blur(11px); opacity: 0.2;
-  animation: sun-spin 1.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both, sun-settle 1.8s ease-out 1 both; }
 .bar { position: relative; z-index: 1; }
 .bar-wrap .sugg-list { z-index: 15; }
 .rows.selectable > li.on { box-shadow: 0 6px 20px -8px rgba(238, 116, 200, 0.45); }
@@ -655,12 +651,10 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
 .sugg-list { padding: 8px; }
 .palette-list { padding: 8px; }
 @media (prefers-reduced-motion: reduce) {
-  .bar.focus::before, .bar-wrap.focus::before, .rows.selectable > li.on::before,
+  .bar.focus::before, .rows.selectable > li.on::before,
   .sugg.on::before, .palette-item.on::before { animation: none; }
 }
 
-/* one lap, then rest: the halo is brightest while the ring travels and eases to a quiet glow */
-@keyframes sun-settle { from { opacity: 0.5; } to { opacity: 0.2; } }
 
 .content > .insights { padding-top: calc(var(--toolbar-h) + 16px); }
 .wide-card { grid-column: 1 / -1; }
