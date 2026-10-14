@@ -703,3 +703,28 @@ kbd { background: var(--bg-3); border-radius: 3px; box-shadow: none; font-size: 
 ::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); border-radius: 0; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(121, 121, 121, 0.7); background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- Cursor rounding: soft corners on a flat surface (no glass, no gradients) ---- */
+:root { --radius-s: 8px; --radius-m: 10px; --radius: 12px; --radius-xl: 14px; }
+button, .btn, input, select { border-radius: 8px; }
+textarea { border-radius: 10px; }
+.tool, .small-btn, .nav-item, .palette-trigger, .switcher-btn, .sugg, .pop-item, .palette-item { border-radius: 8px; }
+.seg { border-radius: 10px; }
+.seg button { border-radius: 8px; }
+.rows.selectable > li, .wrow, .wrow-main, .recent, .cap { border-radius: 10px; }
+.wlist.full .wrow { border-radius: 10px; }
+.card, .frows, .resume, .preview, .diff-file { border-radius: 12px; }
+.bar { border-radius: 12px; height: 44px; }
+.bar-go { border-radius: 8px; height: 30px; }
+.search-field { border-radius: 10px; }
+.popover, .palette, .dialog, .sugg-list { border-radius: 14px; }
+.toast { border-radius: 12px; }
+.snippet, .runbook, .diff-preview { border-radius: 8px; }
+.notice, .inline-error, .msg-error { border-radius: 10px; }
+.msg.user .msg-body { border-radius: 14px; }
+.pill, .kc, .badge, .tag { border-radius: 999px; }
+kbd { border-radius: 6px; }
+.brand-mark { border-radius: 6px; }
+.switch { border-radius: 999px; }
+::-webkit-scrollbar-thumb { border-radius: 999px; }
+.frow + .frow { border-radius: 0; }
