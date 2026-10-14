@@ -24,7 +24,19 @@ run('uv', ['pip', 'install', '--python', py, 'pyinstaller==6.11.1'])
 fs.rmSync(out, { recursive: true, force: true })
 run(py, ['-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--name', 'paladin-server',
          '--distpath', out, '--workpath', path.join(out, '..', 'pyi-work'), '--specpath', path.join(out, '..', 'pyi-work'),
-         '--collect-submodules', 'app', '--collect-submodules', 'uvicorn', '--hidden-import', 'bcrypt',
+         '--collect-submodules', 'app', '--collect-submodules', 'uvicorn', '--collect-submodules', 'jwt',
          path.join(backend, 'desktop_server.py')])
+// Public Supabase settings ship with the app (resources/supabase.json). Only the URL and the publishable anon key:
+// the data is protected by row-level security, and the service key never leaves the web server.
+const sbUrl = process.env.SUPABASE_URL || '', sbAnon = process.env.SUPABASE_ANON_KEY || ''
+if (!sbUrl || !sbAnon) {
+  console.error('Set SUPABASE_URL and SUPABASE_ANON_KEY (the publishable key) to build the desktop app.')
+  process.exit(1)
+}
+if (process.env.SUPABASE_SERVICE_KEY && process.env.SUPABASE_SERVICE_KEY === sbAnon) {
+  console.error('SUPABASE_ANON_KEY is the service key. Never ship it in the desktop app.')
+  process.exit(1)
+}
+fs.writeFileSync(path.join(__dirname, '..', 'build', 'supabase.json'), JSON.stringify({ url: sbUrl, anonKey: sbAnon }))
 // electron-builder copies build/backend/paladin-server/* into resources/backend (see electron-builder.yml)
 console.log('backend built at', path.join(out, 'paladin-server'))
