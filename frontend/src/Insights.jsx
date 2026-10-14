@@ -20,7 +20,7 @@ function Timeline({ data }) {
         return Object.entries(r.by_source).map(([s, c]) => {
           const h = (c / max) * (H - 30)
           y -= h
-          return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h}
+          return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h} rx={Math.min(3, Math.max(1, bw - 2) / 2)}
                        style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }}><title>{`${s}: ${c}`}</title></rect>
         })
       })}

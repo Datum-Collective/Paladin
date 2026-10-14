@@ -513,3 +513,29 @@ button.link.inline { min-height: 0; padding: 0; display: inline-flex; gap: 4px; 
 .bar-wrap { position: relative; }
 .bar-wrap .sugg-list { position: absolute; z-index: 15; left: 0; right: 0; top: calc(100% + 6px); margin-top: 0; }
 .side-label { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 0 var(--si); margin: 18px 0 6px; }
+
+/* ---- fully rounded ----
+   Controls and compact items are capsules (999px); icon holders and dots are circles. Multi-line containers use a
+   large radius instead of a capsule, because a radius of half the box height would clip wrapped text at the corners. */
+:root { --radius-s: 999px; --radius-m: 18px; --radius: 24px; --radius-xl: 28px; }
+button, .btn, input, select, kbd, .tag, mark, .palette-trigger, .nav-item, .side-group .actions button, .palette-item,
+.pop-item, .sugg, .wrow, .wrow-main, .cap, .bar, .bar-go, .search-field, .switcher-btn, .small-btn, .tool, .badge, .pill,
+.kc, .seg, .seg button, .check { border-radius: 999px; }
+.brand-mark, .empty-mark, .tl-icon, .dot, .spinner { border-radius: 50%; }
+textarea { border-radius: var(--radius); }
+.card, .rows.selectable > li, .diff-file, .frows, .popover, .sugg-list, .resume, .preview, .msg.user .msg-body { border-radius: var(--radius); }
+.palette, .dialog { border-radius: var(--radius-xl); }
+.toast { border-radius: 22px; }
+.snippet, .runbook, .diff-preview, .notice, .inline-error, .msg-error { border-radius: var(--radius-m); }
+.wlist.full .wrow { border-bottom: 0; border-radius: 999px; }
+.seg button.on { border-radius: 999px; }
+.diff-head { border-radius: 0; }
+.palette-input input, .bar input, .search-field input { border-radius: 0; }
+.sugg-list, .popover { padding: 8px; }
+.wrow-main { padding-left: 14px; padding-right: 14px; }
+
+/* rounded scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
