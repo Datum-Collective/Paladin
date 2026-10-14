@@ -16,12 +16,15 @@ ROUTE = re.compile(r"@(app|router|bp)\.(get|post|put|delete|route)|app\.(get|pos
 
 # id, regex, cwe, technique, sink, title
 RULES = [
-    ("hardcoded-secret", re.compile(r"""(?i)(api[_-]?key|secret|passwd|password|token)\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
+    ("hardcoded-secret", re.compile(
+        r"""(?i)\b[\w.]*(api[_-]?key|secret|passw(or)?d|passwd|token|credential|private[_-]?key|auth|key)[\w.]*"""
+        r"""\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
      "CWE-798", "T1552.001", "secret", "Hard-coded credential"),
     ("code-exec", re.compile(r"\b(eval|exec)\s*\("), "CWE-95", "T1059", "host", "Dynamic code execution"),
     ("shell-injection", re.compile(r"shell\s*=\s*True|os\.system\(|child_process\.exec\("), "CWE-78", "T1059",
      "host", "Shell command execution"),
-    ("sql-concat", re.compile(r"""(?i)(execute|query)\s*\(\s*(f['"]|['"][^'"]*['"]\s*(\+|%)|.*\.format\()"""),
+    ("sql-concat", re.compile(
+        r"""(?i)\b(execute|executemany|query|raw)\s*\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%]|[^)]*\.format\()"""),
      "CWE-89", "T1190", "db", "SQL built from strings"),
     ("unsafe-deserialize", re.compile(r"pickle\.loads?\(|yaml\.load\((?!.*Loader)|marshal\.loads\("), "CWE-502",
      "T1190", "host", "Unsafe deserialization"),

@@ -160,3 +160,23 @@ def test_clean_and_unscannable_repos_say_so(client, tmp_path, monkeypatch):
         harness.wait(j["id"])
         job = client.get(f"/api/harness/jobs/{j['id']}").json()
         assert job["state"] == "done" and any(expect in l["msg"] for l in job["log"]), job["log"]
+
+
+def test_rules_catch_short_key_names_and_quoted_sql():
+    from app import codescan
+    src = ('KEY = "sk-live-abcdef1234567890"\n'
+           'db.execute("SELECT * FROM users WHERE name = \'" + name + "\'")\n'
+           'cur.execute(f"DELETE FROM t WHERE id={i}")\n')
+    rules = [f["rule"] for f in codescan.static_scan([{"path": "a.py", "content": src}])]
+    assert rules.count("hardcoded-secret") == 1 and rules.count("sql-concat") == 2
+
+
+def test_ai_patch_that_leaves_user_input_in_executor_is_rejected(monkeypatch):
+    f = {"file": "a.py", "rule": "shell-injection", "line": 3, "cwe": "", "technique": ""}
+    src = "import subprocess\nfrom flask import request\nsubprocess.run(request.form['c'], shell=True)\n"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    bad = '{"old":"subprocess.run(request.form[\'c\'], shell=True)","new":"subprocess.run(shlex.split(request.form[\'c\']))"}'
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: bad)
+    assert fixers.try_fix(src, f) is None
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: '{"cannot_fix": true, "reason": "whole cmd is user input"}')
+    assert fixers.try_fix(src, f) is None

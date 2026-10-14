@@ -234,7 +234,9 @@ def gh_api(method: str, path: str, token: str, body: dict | None = None) -> dict
 
 def pr_body(job: dict) -> str:
     rows = "\n".join(f"- `{x['file']}:{x['line']}` {x['rule']} ({x['cwe']}, ATT&CK {x['technique']}): "
-                     f"{x['explanation']} _[{x['method']}]_" for x in job["fixes"])
+                     f"{x['explanation']} _[{x['method']}]_"
+                     f"{' **AI-drafted: review the semantics carefully**' if x['method'] == 'haiku' else ''}"
+                     for x in job["fixes"])
     ai_note = "Claude Haiku was used to triage findings and/or draft patches. " if job["ai_used"] or any(
         x["method"] == "haiku" for x in job["fixes"]) else ""
     return (f"## Automated security fixes\n\n{rows}\n\n### How these were verified\n"
