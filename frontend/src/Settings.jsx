@@ -70,7 +70,7 @@ function Segmented({ value, options, onChange, label }) {
 }
 
 /* ---- panes ---- */
-function General({ config }) {
+function General({ config, onReset }) {
   const { prefs, set } = usePrefs()
   const [upd, setUpd] = useState({ phase: 'disabled' })
   useEffect(() => (bridge ? bridge.onUpdate(setUpd) : undefined), [])
@@ -89,6 +89,11 @@ function General({ config }) {
         <Row label="After importing a repository" help="Where to land once the scan starts.">
           <Segmented label="After importing" value={prefs['general.after_import']} onChange={(v) => set('general.after_import', v)}
                      options={[['repository', 'Scan progress'], ['analysis', 'Analysis']]} />
+        </Row>
+      </Group>
+      <Group title="Open workspace">
+        <Row label="Reset workspace" help="Deletes this workspace's events, scans, fixes and history. Other workspaces are kept.">
+          <button className="danger" onClick={onReset}>Reset…</button>
         </Row>
       </Group>
       {config.desktop && (
@@ -422,7 +427,9 @@ function Advanced({ config, user }) {
       )}
       <Group title="Support">
         <Row label="Diagnostics" help="Versions and which integrations are configured. No keys or workspace data.">
-          <button onClick={async () => { await navigator.clipboard.writeText(diag); toast('Diagnostics copied', 'ok') }}>Copy Diagnostics</button>
+          <button onClick={async () => {
+            try { await navigator.clipboard.writeText(diag); toast('Diagnostics copied', 'ok') } catch { toast('Could not copy. Select and copy it manually.', 'bad') }
+          }}>Copy Diagnostics</button>
         </Row>
       </Group>
       <Group title="Reset">
@@ -434,9 +441,9 @@ function Advanced({ config, user }) {
   )
 }
 
-export default function Settings({ pane, setPane, config, user, wsl, onCreate }) {
+export default function Settings({ pane, setPane, config, user, wsl, onCreate, onReset }) {
   const body = {
-    general: <General config={config} />, appearance: <Appearance />, workspaces: <Workspaces wsl={wsl} onCreate={onCreate} />,
+    general: <General config={config} onReset={onReset} />, appearance: <Appearance />, workspaces: <Workspaces wsl={wsl} onCreate={onCreate} />,
     github: <GitHub config={config} />, providers: <Providers config={config} />, code: <Code />, shortcuts: <Shortcuts />,
     privacy: <Privacy wsl={wsl} />, advanced: <Advanced config={config} user={user} />,
   }[pane]

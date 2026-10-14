@@ -80,6 +80,7 @@ export default function Home({
   const { prefs, set } = usePrefs()
   const [q, setQ] = useState('')
   const [items, setItems] = useState([])
+  const [itemsFor, setItemsFor] = useState('')      // the query these suggestions were fetched for
   const [ghErr, setGhErr] = useState('')
   const [hi, setHi] = useState(0)
   const [focus, setFocus] = useState(false)
@@ -100,7 +101,7 @@ export default function Home({
     if (!focus || phase !== 'idle') return undefined
     const ac = new AbortController()
     const t = setTimeout(() => {
-      api.suggestRepos(q, ac.signal).then((r) => { setItems(r.suggestions); setGhErr(r.github_error || ''); setHi(0) }).catch(() => {})
+      api.suggestRepos(q, ac.signal).then((r) => { setItems(r.suggestions); setItemsFor(q); setGhErr(r.github_error || ''); setHi(0) }).catch(() => {})
     }, q ? 140 : 0)
     return () => { clearTimeout(t); ac.abort() }
   }, [q, focus, phase])
@@ -143,24 +144,27 @@ export default function Home({
     else previewRepo(s.url)
   }, [onOpen, previewRepo])
 
+  const fresh = itemsFor === q                      // never act on suggestions for text that is no longer in the box
+  const live = fresh ? items : []
   const submit = () => {
     if (phase !== 'idle') return
     const kind = classifyInput(q)
     if (kind === 'github') previewRepo(q.trim())
     else if (kind === 'path') previewFolder(q.trim())
-    else if (items[hi]) pick(items[hi])
+    else if (live[hi] && (q.trim() || armed)) pick(live[hi])
     else setErr({ message: q.trim() ? `Nothing matches “${q.trim()}”. Paste a GitHub link, owner/name or a folder path.` : 'Paste a GitHub link, owner/name or a folder path.' })
   }
   const onKey = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setArmed(true); setHi((n) => Math.min(items.length - 1, n + 1)) }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setArmed(true); setHi((n) => Math.min(live.length - 1, n + 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((n) => Math.max(0, n - 1)) }
     else if (e.key === 'Enter') { e.preventDefault(); submit() }
     else if (e.key === 'Escape') { setQ(''); setArmed(false); cancel() }
   }
 
-  const recents = useMemo(() => sortWorkspaces(workspaces, 'recent').slice(0, 6), [workspaces])
   const resume = current && (current.events > 0 || current.repo_url) ? current : null
-  const showList = focus && phase === 'idle' && items.length > 0 && (q.trim() !== '' || armed)
+  const recents = useMemo(
+    () => sortWorkspaces(workspaces.filter((w) => !resume || w.id !== resume.id), 'recent').slice(0, 6), [workspaces, resume])
+  const showList = focus && phase === 'idle' && live.length > 0 && (q.trim() !== '' || armed)
   const providers = config.providers || {}
   const anyModel = Boolean(providers.anthropic || providers.openai)
   const steps = [
@@ -203,14 +207,14 @@ export default function Home({
                    onChange={(e) => { setQ(e.target.value); setErr(null); if (phase === 'preview') cancel() }}
                    onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => { setFocus(false); setArmed(false) }, 120)} onKeyDown={onKey} />
             {phase === 'checking' ? <span className="spinner" role="status" aria-label="Checking" />
-              : <button className="primary bar-go" onClick={submit} disabled={phase !== 'idle' || (!q.trim() && !items.length)}>
-                {classifyInput(q) === 'github' || classifyInput(q) === 'path' ? 'Preview' : items[hi] && items[hi].kind === 'workspace' ? 'Open' : 'Go'}
+              : <button className="primary bar-go" onClick={submit} disabled={phase !== 'idle' || !q.trim()}>
+                {classifyInput(q) === 'github' || classifyInput(q) === 'path' ? 'Preview' : live[hi] && live[hi].kind === 'workspace' ? 'Open' : 'Go'}
                 <Icon name="return" size={14} /></button>}
           </div>
 
           {showList && (
             <div id="home-list" role="listbox" className="sugg-list glass" aria-label="Suggestions">
-              {items.map((s, i) => <Suggestion key={`${s.kind}-${s.url || s.workspace_id}`} s={s} on={i === hi}
+              {live.map((s, i) => <Suggestion key={`${s.kind}-${s.url || s.workspace_id}`} s={s} on={i === hi}
                                               onHover={() => setHi(i)} onPick={() => pick(s)} />)}
               {ghErr && <div className="sugg-note muted small">GitHub repositories are unavailable: {ghErr}</div>}
             </div>
@@ -218,7 +222,6 @@ export default function Home({
           </div>
 
           <div className="launch-actions">
-            <button onClick={() => { setQ(''); input.current && input.current.focus() }}><Icon name="github" size={14} />Clone from GitHub</button>
             <button onClick={chooseFolder} disabled={!desktop} title={desktop ? 'Open a local Git repository' : 'Available in the desktop app'}>
               <Icon name="folder" size={14} />Open Folder…</button>
             <button onClick={onNew}><Icon name="plus" size={14} />New Workspace…</button>
@@ -268,21 +271,6 @@ export default function Home({
               <li><span className={`dot ${providers.openai ? 'ok' : ''}`} />
                 <span className="conn-text">OpenAI<span className="muted small">{providers.openai ? 'Key set' : 'No key'}</span></span>
                 <button className="small-btn" onClick={() => goSettings('providers')}>{providers.openai ? 'Manage' : 'Add key'}</button></li>
-            </ul>
-          </section>
-          <section className="rail-group" aria-labelledby="cap-h">
-            <h3 id="cap-h" className="first">What you can do</h3>
-            <ul className="caps">
-              <li><button className="cap" onClick={() => go('analysis')}><Icon name="graph" size={16} /><span><b>Analysis</b>
-                <span className="muted small">Ranked attack paths and the cheapest fix</span></span></button></li>
-              <li><button className="cap" onClick={() => go('repo')}><Icon name="repo" size={16} /><span><b>Repository</b>
-                <span className="muted small">Findings, verified patches, pull requests</span></span></button></li>
-              <li><button className="cap" onClick={() => go('assistant')}><Icon name="chat" size={16} /><span><b>Assistant</b>
-                <span className="muted small">Ask questions grounded in your analysis</span></span></button></li>
-              <li><button className="cap" onClick={() => go('activity')}><Icon name="activity" size={16} /><span><b>Activity</b>
-                <span className="muted small">Scan history and remediation steps</span></span></button></li>
-              <li><button className="cap" onClick={() => go('ingest')}><Icon name="upload" size={16} /><span><b>Log data</b>
-                <span className="muted small">Paste or send logs from your systems</span></span></button></li>
             </ul>
           </section>
         </aside>

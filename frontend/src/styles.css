@@ -140,9 +140,9 @@ html[data-platform="win32"] .toolbar { padding-right: 150px; }
 .resizer::after { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background 0.12s; }
 .resizer:hover::after, .resizer:focus-visible::after { background: var(--accent); width: 2px; left: 3px; }
 
-/* Tabs and segmented controls: fully rounded liquid glass; pressing one flashes a sunset glow (disabled by Reduce Motion) */
-:root { --glass-hi: rgba(255, 255, 255, 0.85); --glass-lo: rgba(255, 255, 255, 0.45); --glass-edge: rgba(255, 255, 255, 0.9);
-  --sunset-a: #ffa24a; --sunset-b: #ff5a6e; --sunset-c: #b45cff; }
+/* Tabs and segmented controls: fully rounded glass pill; selecting one runs a single crisp sweep of light across it
+   (Reduce Motion: no sweep). No colour, no bloom. */
+:root { --glass-hi: rgba(255, 255, 255, 0.85); --glass-lo: rgba(255, 255, 255, 0.45); --glass-edge: rgba(255, 255, 255, 0.9); }
 @media (prefers-color-scheme: dark) {
   :root { --glass-hi: rgba(255, 255, 255, 0.22); --glass-lo: rgba(255, 255, 255, 0.07); --glass-edge: rgba(255, 255, 255, 0.4); }
 }
@@ -155,23 +155,13 @@ html[data-platform="win32"] .toolbar { padding-right: 150px; }
 .seg button.on { color: var(--text); font-weight: 600;
   background: linear-gradient(180deg, var(--glass-hi), var(--glass-lo));
   -webkit-backdrop-filter: blur(14px) saturate(180%); backdrop-filter: blur(14px) saturate(180%);
-  box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--line);
-  animation: sunset-glow 0.9s var(--ease); }
-/* the sunset: three warm light sources that bloom and fade */
-.seg button::after { content: ""; position: absolute; inset: -40%; z-index: -1; opacity: 0; pointer-events: none;
-  background:
-    radial-gradient(75% 120% at 25% 105%, var(--sunset-a), transparent 70%),
-    radial-gradient(65% 110% at 80% 0%, var(--sunset-b), transparent 68%),
-    radial-gradient(40% 70% at 55% 50%, var(--sunset-c), transparent 72%);
-  filter: saturate(1.3) blur(2px); }
-.seg button.on::after { animation: sunset-flash 0.9s var(--ease); }
-.seg button:active::after { opacity: 0.85; transform: scale(1); }
-.seg button:active { transform: scale(0.97); }
-@keyframes sunset-flash { 0% { opacity: 0; transform: scale(0.55) rotate(-8deg); } 22% { opacity: 1; }
-  100% { opacity: 0; transform: scale(1.25) rotate(6deg); } }
-@keyframes sunset-glow { 0% { box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 0 0 rgba(255, 140, 90, 0), 0 0 0 0.5px var(--line); }
-  28% { box-shadow: inset 0 1px 0 var(--glass-edge), 0 0 16px 3px rgba(255, 140, 90, 0.6), 0 0 34px 8px rgba(255, 80, 140, 0.35), 0 0 0 0.5px var(--line); }
-  100% { box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--line); } }
+  box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--line); }
+.seg button::after { content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 32%, rgba(255, 255, 255, 0.55) 50%, transparent 68%);
+  transform: translateX(-100%); }
+.seg button.on::after { animation: shine-sweep 0.7s cubic-bezier(0.3, 0, 0.2, 1) 1 both; }
+.seg button:active { transform: scale(0.98); }
+@keyframes shine-sweep { 0% { opacity: 1; transform: translateX(-100%); } 100% { opacity: 1; transform: translateX(100%); } }
 @media (prefers-reduced-transparency: reduce) { .seg button.on { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--bg); } }
 .seg.small { display: flex; margin-bottom: 14px; }
 .seg.small button { flex: 1; justify-content: center; }
@@ -619,30 +609,30 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
 .palette-input input { font-size: 14px; min-height: 40px; }
 .palette-item { padding: 5px 10px; }
 
-/* ---- selected state: a slowly rotating sunset ring with a soft halo (replaces the blue highlight) ----
-   One conic gradient, rotated through a registered custom property so the colours flow around the edge
-   without any layout change. Interior stays solid for legibility; Reduce Motion freezes it. */
-@property --sun-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
-:root {
-  --sun: conic-gradient(from var(--sun-a), #f0507a 0%, #ee74c8 20%, #b583e6 40%, #6f8cf5 60%, #8fa9f4 74%, #b583e6 88%, #f0507a 100%);
-}
-@keyframes sun-spin { to { --sun-a: 360deg; } }
+/* ---- selected state: a clean neutral edge; one bright highlight sweeps across it once ----
+   No colour and no blur: a hairline ring plus a crisp band of light. Reduce Motion shows the plain ring. */
+:root { --ring: rgba(255, 255, 255, 0.26); --shine-rgb: 255 255 255; }
+@media (prefers-color-scheme: light) { :root { --ring: rgba(0, 0, 0, 0.26); --shine-rgb: 0 0 0; } }
+/* the highlight is a soft diagonal band in a box three times the panel's width; sliding the box moves it
+   left to right across the edge once, and it ends fully off to the right, leaving the plain ring */
+@keyframes shine-lap { from { background-position: 100% 0, 0 0; } to { background-position: 0% 0, 0 0; } }
 
 .bar.focus, .rows.selectable > li.on, .sugg.on, .palette-item.on { position: relative; isolation: isolate; }
 .bar.focus::before, .rows.selectable > li.on::before, .sugg.on::before, .palette-item.on::before {
   content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; z-index: 1; pointer-events: none;
-  background: var(--sun);
+  background:
+    linear-gradient(105deg, transparent 41%, rgb(var(--shine-rgb) / 0.95) 50%, transparent 59%) 100% 0 / 300% 100% no-repeat,
+    var(--ring);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  animation: sun-spin 1.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both; }
+  animation: shine-lap 0.95s cubic-bezier(0.4, 0, 0.2, 1) 1 both; }
 .bar { position: relative; z-index: 1; }
 .bar-wrap .sugg-list { z-index: 15; }
-.rows.selectable > li.on { box-shadow: 0 6px 20px -8px rgba(238, 116, 200, 0.45); }
 
-/* the panel itself stays quiet: no blue border, fill or halo */
+/* the panel itself stays quiet: no coloured border, fill, halo or shadow */
 .bar.focus { border-color: transparent; box-shadow: none; color: var(--text); }
-.bar.focus.bad::before { opacity: 0.9; }
-.rows.selectable > li.on { border-color: transparent; background: var(--bg-2); }
+.bar.focus.bad::before { background: var(--bad); animation: none; }
+.rows.selectable > li.on { border-color: transparent; background: var(--bg-2); box-shadow: none; }
 .sugg.on, .palette-item.on { background: var(--bg-3); color: var(--text); }
 .sugg.on .sugg-title, .sugg.on .sugg-sub, .sugg.on .muted, .palette-item.on .muted { color: inherit; opacity: 1; }
 .sugg.on .sugg-sub, .palette-item.on .muted { color: var(--text-2); }
@@ -651,10 +641,9 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
 .sugg-list { padding: 8px; }
 .palette-list { padding: 8px; }
 @media (prefers-reduced-motion: reduce) {
-  .bar.focus::before, .rows.selectable > li.on::before,
-  .sugg.on::before, .palette-item.on::before { animation: none; }
+  .bar.focus::before, .rows.selectable > li.on::before, .sugg.on::before, .palette-item.on::before { animation: none; }
+  .seg button.on::after { animation: none; }
 }
-
 
 .content > .insights { padding-top: calc(var(--toolbar-h) + 16px); }
 .wide-card { grid-column: 1 / -1; }

@@ -32,23 +32,6 @@ export default function Sidebar({ view, setView, graph, empty, canPlay, playing,
                          onHome={onHome} onManage={onManage} rail={rail} />
       <nav aria-label="Workspace" className="nav">{WS.map(item)}</nav>
 
-      {!rail && <section className="side-group" aria-label="Workspace status">
-        {empty ? <p className="muted small">No data yet. Import a repository or add logs.</p> : (
-          <>
-            <div className="row-top"><Severity level={graph.severity} />
-              <span className="muted small">{graph.events} {graph.events === 1 ? 'event' : 'events'}</span></div>
-            <dl className="kv">
-              <dt>Worst path</dt><dd>{graph.worst.toFixed(2)}</dd>
-              <dt>Combined</dt><dd>{graph.risk.toFixed(2)}</dd>
-            </dl>
-          </>
-        )}
-        <div className="actions">
-          {canPlay && <button onClick={onPlay} disabled={playing}><Icon name="play" size={14} />{playing ? 'Playing' : 'Play Sample'}</button>}
-          <button onClick={onReset}><Icon name="refresh" size={14} />Reset…</button>
-        </div>
-      </section>}
-
       <span className="spacer" />
       <nav aria-label="System" className="nav">{FOOT.map(item)}</nav>
       {!desktop && user && (

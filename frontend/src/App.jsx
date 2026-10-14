@@ -253,7 +253,6 @@ function Shell({ config, user, onSignOut, onExpired }) {
             <button className="tool nodrag" onClick={() => run('toggle-inspector')} aria-pressed={inspectorOpen}
                     aria-label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} title="Show or hide inspector"><Icon name="inspector" size={16} /></button>
           )}
-          <button className="tool nodrag" onClick={() => setPalette(true)} aria-label="Command palette" title="Command palette"><Icon name="search" size={16} /></button>
         </div>
         {view === 'home' && (
           <Home workspaces={wsl.workspaces} current={wsl.current} desktop={config.desktop} config={config} onOpen={openWs}
@@ -269,7 +268,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
         {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} />}
         {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} workspaceEmpty={ws.empty} />}
-        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} />}
+        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
                     desktop={config.desktop} inspectorOpen={inspectorOpen} />
