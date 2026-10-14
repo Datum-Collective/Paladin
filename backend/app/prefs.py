@@ -1,8 +1,6 @@
 """Per-user preferences with a closed schema: unknown keys and bad values are rejected, and a bad patch applies
 nothing. Defaults are the single source of truth; the UI renders whatever this returns."""
-import json
-
-from . import store
+from . import supa
 
 DEFAULTS: dict = {
     "general.startup": "home",            # home | last
@@ -47,12 +45,12 @@ def _check(key: str, value) -> None:
             raise ValueError(f"{key} must be true or false")
 
 
-def get(user_id: int) -> dict:
+def get(user_id: str) -> dict:
     out = dict(DEFAULTS)
-    for r in store.q("SELECT key,value FROM prefs WHERE user_id=?", (user_id,)):
+    for r in supa.select("prefs", {"user_id": supa.eq(user_id)}, columns="key,value"):
         if r["key"] in DEFAULTS:
             try:
-                v = json.loads(r["value"])
+                v = r["value"]
                 _check(r["key"], v)
                 out[r["key"]] = v
             except (ValueError, TypeError):
@@ -60,10 +58,9 @@ def get(user_id: int) -> dict:
     return out
 
 
-def patch(user_id: int, changes: dict) -> dict:
+def patch(user_id: str, changes: dict) -> dict:
     for k, v in changes.items():
         _check(k, v)
-    for k, v in changes.items():
-        store.run("INSERT INTO prefs(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value",
-                  (user_id, k, json.dumps(v)))
+    if changes:   # one request, so a bad patch applies nothing
+        supa.upsert("prefs", [{"user_id": user_id, "key": k, "value": v} for k, v in changes.items()], "user_id,key")
     return get(user_id)

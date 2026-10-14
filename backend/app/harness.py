@@ -2,6 +2,7 @@
 
 Repo code is never executed. Git runs with hooks off and symlinks off. The GitHub token is server env only."""
 import base64
+import contextvars
 import difflib
 import json
 import os
@@ -12,9 +13,8 @@ import threading
 import time
 from pathlib import Path
 
-import httpx
-
-from . import ai, codescan, fixers, keys, store
+from . import ai, codescan, fixers, keys, supa
+from . import config as settings
 
 URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?/?$")
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
@@ -150,85 +150,100 @@ def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, 
     }
 
 
-# ---- job storage ----
-_ensured_for = None
-
-
-def _ensure() -> None:
-    global _ensured_for
-    c = store.conn()
-    if _ensured_for is c:
-        return
-    store.run("""CREATE TABLE IF NOT EXISTS jobs(
-        id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, repo_url TEXT NOT NULL, state TEXT NOT NULL,
-        log TEXT NOT NULL DEFAULT '[]', findings TEXT NOT NULL DEFAULT '[]', fixes TEXT NOT NULL DEFAULT '[]',
-        branch TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '', diff TEXT NOT NULL DEFAULT '',
-        ai_used INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created REAL NOT NULL,
-        updated REAL NOT NULL)""")
-    cols = {r["name"] for r in store.q("PRAGMA table_info(jobs)")}
-    if "report" not in cols:
-        store.run("ALTER TABLE jobs ADD COLUMN report TEXT NOT NULL DEFAULT '{}'")
-    _ensured_for = c
+# ---- job storage (Supabase, as the signed-in user) ----
+RUNNING = ("queued", "cloning", "scanning", "fixing")
+STALE_S = 600   # a running job with no progress for this long, and no thread here, was cut off (quit, crash, deploy)
+INTERRUPTED = "Interrupted: the app closed before this scan finished. Retry to run it again."
+_JSON_COLS = ("log", "findings", "fixes", "report")
 
 
 def ensure() -> None:
-    _ensure()
+    """Kept for callers from the SQLite days; the schema now comes from the Supabase migrations."""
 
 
-RUNNING = ("queued", "cloning", "scanning", "fixing")
+def _live() -> set[int]:
+    return {jid for jid, t in list(_threads.items()) if t.is_alive()}
 
 
-def recover_interrupted() -> int:
-    """A scan runs in a thread of this process, so any job still 'running' at startup was cut off by a quit or
-    crash. Mark it failed with a reason the user can act on (Retry), instead of leaving it spinning forever."""
-    _ensure()
-    with store.lock():      # one statement: a job cannot slip between a count and an update
-        cur = store.conn().execute(
-            f"UPDATE jobs SET state='failed', error=?, updated=? WHERE state IN ({','.join('?' * len(RUNNING))})",
-            ("Interrupted: the app closed before this scan finished. Retry to run it again.", time.time(), *RUNNING))
-        return cur.rowcount
+def effective_state(row: dict) -> str:
+    """A scan runs in a thread of the process that started it. If that process is gone, the row still says
+    running: report it as failed so the user can retry instead of watching it spin forever."""
+    if (row.get("state") in RUNNING and row.get("id") not in _live()
+            and time.time() - (row.get("updated") or 0) > STALE_S):
+        return "failed"
+    return row.get("state", "")
+
+
+def recover_interrupted(max_age_s: float = STALE_S) -> int:
+    """Mark the current user's cut-off scans failed. Jobs this process is running are never touched."""
+    cutoff = time.time() - max_age_s
+    rows = supa.select("jobs", {"state": supa.in_(RUNNING), "updated": supa.lt(cutoff)}, columns="id")
+    ids = [r["id"] for r in rows if r["id"] not in _live()]
+    if ids:
+        supa.update("jobs", {"id": supa.in_(ids), "state": supa.in_(RUNNING)},
+                    {"state": "failed", "error": INTERRUPTED, "updated": time.time()}, returning=None)
+    return len(ids)
 
 
 def _upd(jid: int, **cols) -> None:
     cols["updated"] = time.time()
-    store.run(f"UPDATE jobs SET {','.join(k + '=?' for k in cols)} WHERE id=?", (*cols.values(), jid))
+    for k in _JSON_COLS:
+        if isinstance(cols.get(k), str):
+            cols[k] = json.loads(cols[k])
+    if "ai_used" in cols:
+        cols["ai_used"] = bool(cols["ai_used"])
+    supa.update("jobs", {"id": supa.eq(jid)}, cols, returning=None)
 
 
 def _log(jid: int, msg: str) -> None:
-    r = store.q("SELECT log FROM jobs WHERE id=?", (jid,))
-    lg = json.loads(r[0]["log"]) + [{"t": round(time.time(), 1), "msg": msg[:300]}]
-    _upd(jid, log=json.dumps(lg[-200:]))
+    r = supa.first("jobs", {"id": supa.eq(jid)}, columns="log")
+    lg = (r["log"] if r and isinstance(r["log"], list) else []) + [{"t": round(time.time(), 1), "msg": msg[:300]}]
+    _upd(jid, log=lg[-200:])
 
 
-def get(ws: int, jid: int) -> dict:
-    _ensure()
-    r = store.q("SELECT * FROM jobs WHERE id=? AND ws=?", (jid, ws))
-    if not r:
-        raise KeyError(jid)
-    d = dict(r[0])
-    for k in ("log", "findings", "fixes", "report"):
-        d[k] = json.loads(d[k]) if d[k] else _json_default(k)
-    d["ai_used"] = bool(d["ai_used"])
+def _shape(r: dict) -> dict:
+    d = dict(r)
+    d.pop("user_id", None)
+    for k in _JSON_COLS:
+        if k in d:
+            want = dict if k == "report" else list
+            d[k] = d[k] if isinstance(d[k], want) else _json_default(k)
+    d["ai_used"] = bool(d.get("ai_used"))
+    d["state"] = effective_state(d)
+    if d["state"] == "failed" and r.get("state") in RUNNING:
+        d["error"] = INTERRUPTED
     return d
 
 
+def get(ws: int, jid: int) -> dict:
+    r = supa.first("jobs", {"id": supa.eq(jid), "ws": supa.eq(ws)})
+    if not r:
+        raise KeyError(jid)
+    return _shape(r)
+
+
 def list_jobs(ws: int) -> list[dict]:
-    _ensure()
-    return [{k: v for k, v in get(ws, r["id"]).items() if k not in ("log", "diff", "findings", "report")}
-            for r in store.q("SELECT id FROM jobs WHERE ws=? ORDER BY id DESC LIMIT 30", (ws,))]
+    cols = "id,ws,repo_url,state,fixes,branch,pr_url,ai_used,error,created,updated"
+    return [_shape(r) for r in supa.select("jobs", {"ws": supa.eq(ws)}, columns=cols, order="id.desc", limit=30)]
 
 
-def start(ws: int, url: str) -> dict:
-    _ensure()
+def start(ws: int, url: str, *, token: str | None = None) -> dict:
+    """Start a scan. `token` is the credential for cloning a private repo: on the web, a short-lived GitHub App
+    token limited to this one repo (resolved by the caller from the user's own installation); on the desktop,
+    None means the user's own token from the keychain."""
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
-    busy = store.q("SELECT 1 FROM jobs WHERE ws=? AND state IN ('queued','cloning','scanning','fixing')", (ws,))
+    busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")
+            if effective_state(r) in RUNNING]
     if busy:
         raise RuntimeError("a job is already running for this workspace")
     now = time.time()
-    jid = store.run("INSERT INTO jobs(ws,repo_url,state,created,updated) VALUES(?,?,?,?,?)",
-                    (ws, f"{owner}/{repo}" if owner != "local" else clone_url, "queued", now, now))
-    t = threading.Thread(target=_run, args=(ws, jid, owner, repo, clone_url), daemon=True)
+    jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now, "updated": now,
+                               "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
+                      returning="id")[0]["id"]
+    # the thread keeps this request's Supabase session (context copy), so its writes are still the user's own
+    ctx = contextvars.copy_context()
+    t = threading.Thread(target=ctx.run, args=(_run, ws, jid, owner, repo, clone_url, token), daemon=True)
     _threads[jid] = t
     t.start()
     return get(ws, jid)
@@ -240,15 +255,16 @@ def wait(jid: int, timeout: float = 60) -> None:
         t.join(timeout)
 
 
-def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
+def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | None = None) -> None:
     work = data_root() / str(jid)
+    if token is None and owner != "local":
+        token = keys.get("GITHUB_TOKEN")   # desktop only; always None on the web server
     try:
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
         src = work / "repo"
         _upd(jid, state="cloning")
         _log(jid, f"cloning {owner}/{repo} (depth 1, hooks off, symlinks off)")
-        token = keys.get("GITHUB_TOKEN") if owner != "local" else None
         local = owner == "local"
         # a file:// URL makes git copy objects (no hardlinks into the user's repo) and honour --depth
         source = Path(clone_url).resolve().as_uri() if local else clone_url
@@ -317,8 +333,12 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
              fixes=json.dumps([{k: v for k, v in x.items() if k != "content"} for x in fixes]))
         _log(jid, f"committed {len(fixes)} fix(es) on local branch {branch}; waiting for human approval to open PR")
     except Exception as e:  # noqa: BLE001 - recorded, never leaked as a stack trace
-        _upd(jid, state="failed", error=str(e)[:300])
-        _log(jid, f"failed: {str(e)[:200]}")
+        msg = str(e).replace(token, "***") if token else str(e)
+        try:
+            _upd(jid, state="failed", error=msg[:300])
+            _log(jid, f"failed: {msg[:200]}")
+        except Exception:  # noqa: BLE001 - e.g. the session expired mid-scan: the row goes stale, shows as failed
+            pass
 
 
 def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict]) -> list[dict]:
@@ -421,22 +441,15 @@ def patch_text(ws: int, jid: int) -> str:
 
 
 # ---- GitHub ----
-def gh_api(method: str, path: str, token: str, body: dict | None = None) -> dict:
-    r = httpx.request(method, f"https://api.github.com{path}", json=body, timeout=30, headers={
-        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"})
-    if r.status_code >= 400:
-        raise RuntimeError(f"GitHub {method} {path} -> {r.status_code}")
-    return r.json()
-
-
 def pr_body(job: dict) -> str:
-    rows = "\n".join(f"- `{x['file']}:{x['line']}` {x['rule']} ({x['cwe']}, ATT&CK {x['technique']}): "
-                     f"{x['explanation']} _[{x['method']}]_"
-                     f"{' **AI-drafted: review the semantics carefully**' if x['method'] == 'haiku' else ''}"
-                     for x in job["fixes"])
+    # the job row is the user's own and could have been edited through the API: read every field defensively
+    fixes = [x for x in job["fixes"] if isinstance(x, dict)]
+    rows = "\n".join(f"- `{x.get('file')}:{x.get('line')}` {x.get('rule')} ({x.get('cwe')}, ATT&CK {x.get('technique')}): "
+                     f"{x.get('explanation')} _[{x.get('method')}]_"
+                     f"{' **AI-drafted: review the semantics carefully**' if x.get('method') == 'haiku' else ''}"
+                     for x in fixes)
     ai_note = "Claude Haiku was used to triage findings and/or draft patches. " if job["ai_used"] or any(
-        x["method"] == "haiku" for x in job["fixes"]) else ""
+        x.get("method") == "haiku" for x in fixes) else ""
     return (f"## Automated security fixes\n\n{rows}\n\n### How these were verified\n"
             "Each patch was checked by code: the matched text occurs exactly once, the file still parses, the "
             "triggering rule no longer matches and no new findings appear. **Tests were not run - please review "
@@ -444,45 +457,47 @@ def pr_body(job: dict) -> str:
             f"{ai_note}Generated by Attack Path Compiler (synthetic-data hackathon project).")
 
 
-def open_pr(ws: int, jid: int) -> dict:
-    job = get(ws, jid)
+class JobNotFound(Exception):
+    pass
+
+
+def pr_request(ws: int, jid: int) -> dict:
+    """What a pull request for this job would contain: the final content of every file the job changed, read from
+    the job's working copy. The PR itself is opened by github_access.open_job_pr (fixes branch, fast-forward only)."""
+    try:
+        job = get(ws, jid)
+    except KeyError:
+        raise JobNotFound(jid) from None
     if job["state"] != "ready":
         raise RuntimeError(f"job is {job['state']}, not ready")
-    token = keys.get("GITHUB_TOKEN")
-    if not token:
-        raise PermissionError("GITHUB_TOKEN is not configured on the server; download the patch instead")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", job["repo_url"]):
         raise RuntimeError("Pull requests are only available for GitHub repositories. Download the patch instead.")
+    root = (data_root() / str(jid) / "repo").resolve()
+    files = {}
+    for path in sorted({f["file"] for f in job["fixes"] if isinstance(f, dict) and isinstance(f.get("file"), str)}):
+        target = (root / path).resolve()
+        if root not in target.parents or not target.is_file() or target.is_symlink():
+            raise RuntimeError("This scan's working copy was cleared. Run the scan again to open a pull request.")
+        files[path] = target.read_text(encoding="utf-8")
+    if not files:
+        raise RuntimeError("This scan has no fixes to send.")
     owner, repo = job["repo_url"].split("/", 1)
-    src = data_root() / str(jid) / "repo"
-    info = gh_api("GET", f"/repos/{owner}/{repo}", token)
-    base = info["default_branch"]
-    head_repo, head_ref = (owner, repo), job["branch"]
-    if not info.get("permissions", {}).get("push"):
-        me = gh_api("GET", "/user", token)["login"]
-        gh_api("POST", f"/repos/{owner}/{repo}/forks", token, {})
-        for _ in range(15):
-            try:
-                gh_api("GET", f"/repos/{me}/{repo}", token)
-                break
-            except RuntimeError:
-                time.sleep(2)
-        head_repo, head_ref = (me, repo), f"{me}:{job['branch']}"
-    _git(["push", f"https://github.com/{head_repo[0]}/{head_repo[1]}.git", f"HEAD:refs/heads/{job['branch']}"],
-         cwd=src, token=token, timeout=120)
-    pr = gh_api("POST", f"/repos/{owner}/{repo}/pulls", token, {
-        "title": f"Security: fix {len(job['fixes'])} finding(s) (Attack Path Compiler)", "head": head_ref,
-        "base": base, "body": pr_body(job), "maintainer_can_modify": True})
-    _upd(jid, state="pr_opened", pr_url=pr["html_url"])
-    _log(jid, f"opened PR {pr['html_url']}")
+    return {"job": job, "owner": owner, "repo": repo, "files": files,
+            "title": f"Security: fix {len(job['fixes'])} finding(s) (Attack Path Compiler)", "body": pr_body(job),
+            "commit_message": f"Fix {len(job['fixes'])} security finding(s) found by Attack Path Compiler"}
+
+
+def mark_pr_opened(ws: int, jid: int, url: str) -> dict:
+    _upd(jid, state="pr_opened", pr_url=url)
+    _log(jid, f"opened PR {url} from the fixes branch")
     return get(ws, jid)
 
 
 def config() -> dict:
-    return {"github_enabled": bool(keys.get("GITHUB_TOKEN")), "ai_enabled": ai.enabled()}
+    gh = settings.GITHUB_ENABLED if not settings.desktop_mode() else bool(keys.get("GITHUB_TOKEN"))
+    return {"github_enabled": gh, "ai_enabled": ai.enabled()}
 
 
 def wipe(ws: int) -> None:
-    _ensure()
-    for r in store.q("SELECT id FROM jobs WHERE ws=?", (ws,)):
+    for r in supa.select("jobs", {"ws": supa.eq(ws)}, columns="id"):
         shutil.rmtree(data_root() / str(r["id"]), ignore_errors=True)
