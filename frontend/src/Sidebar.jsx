@@ -52,7 +52,7 @@ export default function Sidebar({ view, setView, graph, empty, canPlay, playing,
       <span className="spacer" />
       <nav aria-label="System" className="nav">{FOOT.map(item)}</nav>
       {!desktop && user && (
-        <button className="nav-item" onClick={onSignOut}><Icon name="logout" size={16} /><span>Sign out</span></button>
+        <button className="nav-item" onClick={onSignOut}><Icon name="logout" size={16} /><span>Sign Out</span></button>
       )}
     </aside>
   )

@@ -154,7 +154,7 @@ export default function RepoView({ onDone }) {
                 <a className="btn" href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download</a>
                 {job.state === 'ready' && (
                   <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
-                    {busy ? 'Opening' : 'Open pull request'}
+                    {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}
               </div>

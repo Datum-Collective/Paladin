@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
+import Icon from './Icons.jsx'
 
 const Ctx = createContext({ push: () => {} })
 export const useToast = () => useContext(Ctx).push
+const GLYPH = { ok: 'check', bad: 'alert', warn: 'alert', info: 'info' }
 
 export function ToastProvider({ children }) {
   const [items, setItems] = useState([])
@@ -19,8 +21,9 @@ export function ToastProvider({ children }) {
       <div className="toasts" role="status" aria-live="polite">
         {items.map((t) => (
           <div key={t.id} className={`toast ${t.tone}`}>
-            <span>{t.msg}</span>
-            <button className="toast-x" aria-label="Dismiss" onClick={() => dismiss(t.id)}>×</button>
+            <span className="toast-ic" aria-hidden="true"><Icon name={GLYPH[t.tone] || 'info'} size={13} /></span>
+            <span className="toast-msg">{t.msg}</span>
+            <button className="toast-x" aria-label="Dismiss" onClick={() => dismiss(t.id)}><Icon name="x" size={12} /></button>
           </div>
         ))}
       </div>

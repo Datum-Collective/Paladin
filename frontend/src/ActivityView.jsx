@@ -45,7 +45,7 @@ export default function ActivityView({ onRetry, goSettings }) {
           </div>
           {busy && <span className="muted small"><span className="spinner tiny" aria-hidden="true" /> A scan is running</span>}
         </div>
-        {err && <div className="inline-error" role="alert"><span>{err}</span><button onClick={load}>Try again</button></div>}
+        {err && <div className="inline-error" role="alert"><span>{err}</span><button onClick={load}>Try Again</button></div>}
         {items === null && !err && <p className="muted">Loading…</p>}
         {items && shown.length === 0 && (
           <div className="empty-block"><h2>No activity yet</h2>

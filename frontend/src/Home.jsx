@@ -44,9 +44,9 @@ function Preview({ p, busy, onConfirm, onOpenExisting, onCancel }) {
             : 'Scans the committed code in place. The folder is read, never modified or executed.'}</dd>
       </dl>
       <div className="actions">
-        {existing && <button className="primary" onClick={onOpenExisting}>Open workspace</button>}
+        {existing && <button className="primary" onClick={onOpenExisting}>Open Workspace</button>}
         <button className={existing ? '' : 'primary'} onClick={onConfirm} disabled={busy}>
-          {busy ? 'Starting…' : existing ? 'Scan again' : p.type === 'github' ? 'Clone and scan' : 'Scan folder'}
+          {busy ? 'Starting…' : existing ? 'Scan Again' : p.type === 'github' ? 'Clone and Scan' : 'Scan Folder'}
         </button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>
@@ -230,7 +230,7 @@ export default function Home({
               <span>{err.message}</span>
               <span className="actions">
                 {err.token && <button onClick={() => goSettings('github')}>Open GitHub Settings</button>}
-                {err.retry && <button onClick={() => (preview ? confirm() : submit())}>Try again</button>}
+                {err.retry && <button onClick={() => (preview ? confirm() : submit())}>Try Again</button>}
               </span>
             </div>
           )}

@@ -36,15 +36,15 @@ function Login({ onDone, config }) {
     <form className="login" onSubmit={(e) => { e.preventDefault(); go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw))) }}>
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>}
+      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with Demo Account</button>}
       {config.demo && <div className="or">or</div>}
       <input placeholder="Email" aria-label="Email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
       <input placeholder="Password" aria-label="Password" type="password"
              autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={pw}
              onChange={(e) => setPw(e.target.value)} />
-      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign In' : 'Create Account'}</button>
       <button type="button" className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? 'Create an account' : 'I already have an account'}
+        {mode === 'login' ? 'Create an Account' : 'Sign In Instead'}
       </button>
       {err && <p className="err" role="alert">{err}</p>}
     </form>
@@ -58,7 +58,7 @@ function Splash({ error, onRetry }) {
       {error ? (
         <>
           <p className="err" role="alert">{error}</p>
-          <button onClick={onRetry}>Try again</button>
+          <button onClick={onRetry}>Try Again</button>
         </>
       ) : <p className="muted">Starting…</p>}
     </div>
