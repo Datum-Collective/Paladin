@@ -661,3 +661,8 @@ h1 { font-size: 18px; line-height: 24px; margin: 0 0 12px; }
 
 /* one lap, then rest: the halo is brightest while the ring travels and eases to a quiet glow */
 @keyframes sun-settle { from { opacity: 0.5; } to { opacity: 0.2; } }
+
+.content > .insights { padding-top: calc(var(--toolbar-h) + 16px); }
+.wide-card { grid-column: 1 / -1; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin-top: 16px; }
+.two-col h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); font-weight: 600; }

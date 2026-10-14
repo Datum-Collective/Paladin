@@ -104,7 +104,9 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const fx = ws.fixes
 
   const openWs = useCallback(async (id) => {
-    if (await wsl.open(id)) { setSelected(null); setTab('paths'); setView((v) => (v === 'home' || v === null ? 'analysis' : v)) }
+    // opening a workspace lands inside it; if you are already in one of its views, stay on that view
+    const inside = new Set(['analysis', 'repo', 'insights', 'assistant', 'activity'])
+    if (await wsl.open(id)) { setSelected(null); setTab('paths'); setView((v) => (inside.has(v) ? v : 'analysis')) }
   }, [wsl])
   const createNamed = useCallback(async (name) => {
     const w = await wsl.create(name)

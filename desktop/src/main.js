@@ -119,7 +119,7 @@ function smokeTest(w) {
       console.log('SMOKE', JSON.stringify(r))
       if (process.env.PALADIN_SCREENSHOT) {
         // optional: load a few real log lines, wait for the UI to settle, save a PNG of the window
-        await w.webContents.executeJavaScript(`fetch('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},
+        if (process.env.PALADIN_NO_INGEST !== '1') await w.webContents.executeJavaScript(`fetch('/api/ingest',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({format:'linux_auth',lines:['May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2']})})`)
         await new Promise((res) => setTimeout(res, 2000))
         if (process.env.PALADIN_SEED === '1') {   // a few realistic workspaces so list screens can be reviewed
