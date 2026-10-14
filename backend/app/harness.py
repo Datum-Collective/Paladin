@@ -5,16 +5,20 @@ import base64
 import contextvars
 import difflib
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 from . import ai, codescan, fixers, keys, supa
 from . import config as settings
+
+log = logging.getLogger("uvicorn.error")
 
 URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.-]{1,100}?)(?:\.git)?/?$")
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
@@ -39,19 +43,61 @@ def parse_url(url: str) -> tuple[str, str, str]:
 
 def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60,
          allow_file: bool = False):
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/tmp"), "GIT_TERMINAL_PROMPT": "0",
-           "GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"}
-    if token:
+    base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never",
+            "-c", "credential.helper="]   # never ask a credential manager: the only credential is `token`
+    # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
+    base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
+    try:
+        r = subprocess.run(base + args, cwd=cwd, env=git_env(token), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"git {args[0]} timed out: {NETWORK_ERROR}") from None
+    if r.returncode != 0:
+        stderr = r.stderr.replace(token, "***") if token else r.stderr
+        log.warning("git %s failed: %s", args[0], stderr.strip()[:500])   # full detail stays in the server log
+        raise RuntimeError(f"git {args[0]} failed: {git_error(stderr)}")
+    return r.stdout
+
+
+# Copied from the parent environment because git cannot work without them: SYSTEMROOT/WINDIR (Windows needs them to
+# start networking; without them every host lookup fails with "Could not resolve host"), TEMP/TMP, and the proxy
+# settings of networks that require one. Nothing else is passed, so no server secret reaches git or a repo.
+GIT_ENV_PASSTHROUGH = ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+                       "http_proxy", "https_proxy", "no_proxy")
+NETWORK_ERROR = ("could not reach github.com from the Paladin engine (network or DNS problem). Check the internet "
+                 "connection or proxy and retry.")
+NOT_FOUND_ERROR = ("repository not found, or Paladin has no access to it. For a private repository, connect it "
+                   "through the GitHub App on Integrations (desktop: add a GitHub token in Settings).")
+
+
+def git_env(token: str | None = None) -> dict:
+    env = {k: os.environ[k] for k in GIT_ENV_PASSTHROUGH if os.environ.get(k)}
+    env.update({
+        "HOME": tempfile.gettempdir(),       # no user files; config is ignored below anyway
+        "GIT_CONFIG_NOSYSTEM": "1",          # no system git config (e.g. a credential manager)
+        "GIT_CONFIG_GLOBAL": os.devnull,     # no user git config
+        "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "LC_ALL": "C",
+    })
+    if token:   # as an HTTP header for github.com only, never in the URL (so never in remotes or error text)
         hdr = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.https://github.com/.extraheader",
                    GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {hdr}")
-    base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never"]
-    # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
-    base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
-    r = subprocess.run(base + args, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
-    if r.returncode != 0:
-        raise RuntimeError(f"git {args[0]} failed: {r.stderr.strip()[:200]}")
-    return r.stdout
+    return env
+
+
+def git_error(stderr: str) -> str:
+    """What the user sees: the kind of failure, never git's raw text (it contains server paths)."""
+    # only git's own error lines: progress lines such as "Cloning into '<path>'" contain repo names and paths
+    s = "\n".join(line for line in stderr.lower().splitlines() if line.startswith(("fatal:", "error:", "remote:")))
+    if any(m in s for m in ("could not resolve host", "could not resolve proxy", "failed to connect", "timed out",
+                            "connection refused", "connection reset", "network is unreachable", "ssl certificate",
+                            "schannel", "gnutls", "proxy connect")):
+        return NETWORK_ERROR
+    if any(m in s for m in ("repository not found", "not found", "authentication failed", "could not read username",
+                            "returned error: 401", "returned error: 403", "terminal prompts disabled")):
+        return NOT_FOUND_ERROR
+    if "does not appear to be a git repository" in s or "not a git repository" in s:
+        return "this folder is not a Git repository with committed code."
+    return "see the server log for details."
 
 
 def _dir_size(p: Path) -> int:

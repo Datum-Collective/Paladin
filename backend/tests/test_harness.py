@@ -181,3 +181,63 @@ def test_ai_patch_that_leaves_user_input_in_executor_is_rejected(monkeypatch):
     assert fixers.try_fix(src, f) is None
     monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: '{"cannot_fix": true, "reason": "whole cmd is user input"}')
     assert fixers.try_fix(src, f) is None
+
+
+# ---- how git is run ----
+SENSITIVE = {"SUPABASE_SERVICE_KEY": "svc", "SUPABASE_ANON_KEY": "anon", "SUPABASE_JWT_SECRET": "jwt",
+             "GITHUB_TOKEN": "ghp_server", "GITHUB_APP_PRIVATE_KEY": "pem", "GITHUB_APP_CLIENT_SECRET": "cs",
+             "ANTHROPIC_API_KEY": "sk-ant", "OPENAI_API_KEY": "sk-oai", "APC_DESKTOP_TOKEN": "desk"}
+
+
+def test_git_env_has_what_windows_needs_and_no_secrets(monkeypatch):
+    """Without SYSTEMROOT, Windows cannot start networking and every clone fails with 'Could not resolve host'."""
+    import os
+    for k, v in {"SYSTEMROOT": r"C:\Windows", "WINDIR": r"C:\Windows", "TEMP": r"C:\t", "TMP": r"C:\t",
+                 "HTTPS_PROXY": "http://proxy.campus:3128", "NO_PROXY": "localhost", **SENSITIVE}.items():
+        monkeypatch.setenv(k, v)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen.update(cmd=cmd, env=kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+    harness._git(["ls-remote", "https://github.com/a/b.git"])
+    env, cmd = seen["env"], seen["cmd"]
+    for k in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HTTPS_PROXY", "NO_PROXY"):
+        assert env[k] == os.environ[k], k
+    assert not set(SENSITIVE) & set(env), "a server secret was passed to git"
+    assert not any(v in str(env) for v in SENSITIVE.values())
+    # hardening is unchanged: no system or user config, no prompts, no credential helper, no hooks or symlinks
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_TERMINAL_PROMPT"] == "0" and env["GCM_INTERACTIVE"] == "never"
+    for opt in ("core.hooksPath=/dev/null", "core.symlinks=false", "protocol.ext.allow=never", "credential.helper=",
+                "protocol.file.allow=never"):
+        assert opt in cmd
+
+
+def test_clone_token_goes_only_into_a_github_header(monkeypatch):
+    env = harness.git_env("ghs_scoped")
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert "ghs_scoped" not in str(env)          # base64 inside the header value, never a URL or a plain variable
+
+
+@pytest.mark.parametrize("stderr,expect", [
+    ("Cloning into 'data_dir\jobs\9\repo'...\nfatal: unable to access 'https://github.com/a/b.git/': "
+     "Could not resolve host: github.com\n", "network or DNS"),
+    ("Cloning into 'x'...\nfatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com "
+     "port 443 after 21000 ms: Timed out\n", "network or DNS"),
+    ("Cloning into 'x'...\nremote: Repository not found.\nfatal: repository 'https://github.com/a/b.git/' not found\n",
+     "not found"),
+    ("Cloning into 'x'...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
+     "not found"),
+    # a repo named like a network word, in a job folder named 403, is still classified by git's error line only
+    ("Cloning into 'data_dir\jobs\403\ssl-timed-out'...\nfatal: weird\n", "server log"),
+])
+def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, expect):
+    monkeypatch.setattr(harness.subprocess, "run",
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 128, "", stderr))
+    with pytest.raises(RuntimeError) as e:
+        harness._git(["clone", "https://github.com/a/b.git", "dest"], token="ghs_t")
+    msg = str(e.value)
+    assert expect in msg and "data_dir" not in msg and "jobs" not in msg and "ghs_t" not in msg
