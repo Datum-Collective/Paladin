@@ -24,29 +24,55 @@ import { useWorkspace } from './useWorkspace.js'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
 
+// What the backend sent us back with after a redirect (sign-in, GitHub App install); read once, then cleaned up
+const RETURN = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
+if (typeof history !== 'undefined' && ['login_error', 'github_connected', 'github_error'].some((k) => RETURN.has(k))) {
+  history.replaceState(null, '', '/')
+}
+
 function Login({ onDone, config }) {
-  const [email, setEmail] = useState('')
-  const [pw, setPw] = useState('')
-  const [mode, setMode] = useState('login')
-  const [err, setErr] = useState('')
-  const go = async (fn) => {
+  const [err, setErr] = useState(RETURN.has('login_error') ? 'GitHub sign-in did not finish. Try again.' : '')
+  const [waiting, setWaiting] = useState(false)   // desktop: the sign-in is running in the browser
+
+  // desktop: the browser signs in and the engine parks the session; collect it as soon as it is there
+  useEffect(() => {
+    if (!waiting) return undefined
+    let stop = false
+    const started = Date.now()
+    const tick = async () => {
+      if (stop) return
+      try {
+        if ((await api.claim()).signed_in) { onDone(); return }
+      } catch (e) { setErr(e.message); setWaiting(false); return }
+      if (Date.now() - started > 10 * 60 * 1000) { setWaiting(false); setErr('Sign-in timed out. Try again.'); return }
+      setTimeout(tick, 1500)
+    }
+    tick()
+    return () => { stop = true }
+  }, [waiting, onDone])
+
+  const start = async () => {
     setErr('')
-    try { await fn(); onDone() } catch (e) { setErr(e.message) }
+    if (!config.desktop) { window.location.assign('/api/auth/login'); return }   // the backend runs the whole flow
+    try { await bridge.signIn(); setWaiting(true) } catch { setErr('Could not open your browser to sign in.') }
   }
   return (
-    <form className="login" onSubmit={(e) => { e.preventDefault(); go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw))) }}>
+    <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      {config.demo && <button type="button" className="primary" onClick={() => go(api.demo)}>Continue with Demo Account</button>}
-      {config.demo && <div className="or">or</div>}
-      <input placeholder="Email" aria-label="Email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input placeholder="Password" aria-label="Password" type="password"
-             autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={pw}
-             onChange={(e) => setPw(e.target.value)} />
-      <button type="submit" className={config.demo ? '' : 'primary'}>{mode === 'login' ? 'Sign In' : 'Create Account'}</button>
-      <button type="button" className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? 'Create an Account' : 'Sign In Instead'}
-      </button>
+      {!config.signin ? (
+        <p className="err" role="alert">Sign-in is not configured on this server.</p>
+      ) : waiting ? (
+        <>
+          <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
+          <button type="button" onClick={start}>Open the Browser Again</button>
+          <button type="button" className="link" onClick={() => setWaiting(false)}>Cancel</button>
+        </>
+      ) : (
+        <button type="submit" className="primary"><Icon name="github" size={16} /> Sign In with GitHub</button>
+      )}
+      <p className="muted small">GitHub asks which account to use. Signing in shares only your public profile and email;
+        repository access is a separate step you choose later.</p>
       {err && <p className="err" role="alert">{err}</p>}
     </form>
   )
@@ -90,10 +116,18 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [pane, setPane] = useStored('settings-pane', 'general')
   const [recents, setRecents] = useStored('palette-recents', [])
 
-  // first screen honours the "Start with" preference, once
+  // first screen honours the "Start with" preference, once; coming back from installing the GitHub App lands on
+  // Integrations with the result
   useEffect(() => {
-    if (view === null && prefsReady && wsl.loaded) setView(prefs['general.startup'] === 'last' && wsl.current ? 'analysis' : 'home')
-  }, [view, prefsReady, wsl.loaded, wsl.current, prefs])
+    if (view !== null || !prefsReady || !wsl.loaded) return
+    if (RETURN.has('github_connected') || RETURN.has('github_error')) {
+      setView('integrations')
+      if (RETURN.has('github_connected')) toast('GitHub repositories connected', 'ok')
+      else toast('Could not connect GitHub. Install the app on the same account you signed in with, on your personal account (not an organization), and try again.', 'bad')
+      return
+    }
+    setView(prefs['general.startup'] === 'last' && wsl.current ? 'analysis' : 'home')
+  }, [view, prefsReady, wsl.loaded, wsl.current, prefs, toast])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
@@ -320,7 +354,7 @@ export default function App() {
         setUser(await api.me())
       } catch (e) {
         if (e.status !== 401) throw e
-        if (cfg.desktop) { await api.local(); setUser(await api.me()) } else setUser(null)
+        setUser(null)
       }
     } catch (e) {
       setError(e.message === 'request failed' ? 'Could not reach the analysis engine.' : e.message)
@@ -332,18 +366,17 @@ export default function App() {
     boot()
   }, [boot])
 
-  const signOut = useCallback(async () => { await api.logout(); setUser(null) }, [])
-  // desktop has no account screen: a lapsed session is silently renewed through the local-account endpoint
-  const renew = useCallback(async () => {
-    try { await api.local(); setUser(await api.me()) } catch (e) { setError(e.message) }
-  }, [])
+  const signOut = useCallback(async () => { try { await api.logout() } finally { setUser(null) } }, [])
+  // a lapsed session (refresh rejected or revoked) goes back to the sign-in screen
+  const expired = useCallback(() => setUser(null), [])
+  const signedIn = useCallback(() => api.me().then(setUser), [])
 
   if (error) return <Splash error={error} onRetry={boot} />
   if (!config || user === undefined) return <Splash />
   return (
     <ToastProvider>
       <PrefsProvider key={user ? 'u' : 'anon'}>
-        {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={config.desktop ? renew : signOut} /> : <Login config={config} onDone={() => api.me().then(setUser)} />}
+        {user ? <Shell config={config} user={user} onSignOut={signOut} onExpired={expired} /> : <Login config={config} onDone={signedIn} />}
       </PrefsProvider>
     </ToastProvider>
   )
