@@ -80,3 +80,18 @@ def test_removed_edges_drop_risk():
 
 def test_severity():
     assert severity(0.5) == "CRITICAL" and severity(0.1) == "HIGH" and severity(0.01) == "LOW"
+
+
+def test_impact_can_outrank_likelihood_with_small_k():
+    nodes = [N("net", "external"), N("a", "host"), N("b", "host"),
+             N("jA", "data", 8), N("jB", "data", 10)]
+    edges = [E("e1", "net", "a", 0.95, 1), E("e2", "a", "jA", 0.95, 1),   # likeliest, risk .72
+             E("e3", "net", "b", 0.9, 1), E("e4", "b", "jB", 0.9, 1)]     # less likely, risk .81
+    g = build_graph(nodes, edges)
+    top = top_paths(g, 1)
+    assert top[0]["nodes"][-1] == "jB"
+
+
+def test_zero_time_budget_still_returns_a_path():
+    g = build_graph(*toy())
+    assert len(top_paths(g, 5, budget_s=0.0)) >= 1

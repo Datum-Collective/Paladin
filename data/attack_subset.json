@@ -112,6 +112,31 @@
     "initial-access"
    ]
   },
+  "T1110": {
+   "mitigations": [
+    "M1018",
+    "M1036",
+    "M1032",
+    "M1027"
+   ],
+   "name": "Brute Force",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1189": {
+   "mitigations": [
+    "M1050",
+    "M1051",
+    "M1048",
+    "M1021",
+    "M1017"
+   ],
+   "name": "Drive-by Compromise",
+   "tactics": [
+    "initial-access"
+   ]
+  },
   "T1190": {
    "mitigations": [
     "M1048",
@@ -145,6 +170,34 @@
    "name": "Unsecured Credentials",
    "tactics": [
     "credential-access"
+   ]
+  },
+  "T1552.001": {
+   "mitigations": [
+    "M1017",
+    "M1047",
+    "M1022",
+    "M1027"
+   ],
+   "name": "Credentials In Files",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1557": {
+   "mitigations": [
+    "M1037",
+    "M1041",
+    "M1035",
+    "M1042",
+    "M1017",
+    "M1031",
+    "M1030"
+   ],
+   "name": "Adversary-in-the-Middle",
+   "tactics": [
+    "credential-access",
+    "collection"
    ]
   },
   "T1558": {

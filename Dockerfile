@@ -20,6 +20,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/var/lib/apc
 
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 

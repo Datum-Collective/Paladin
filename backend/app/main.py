@@ -12,9 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analyze, auth, engine, inventory, store
+from . import analyze, auth, codescan, engine, inventory, metrics, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
+from . import harness
+from .harness_api import router as harness_router
+from .remediation_api import router as remediation_router
 
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
@@ -30,6 +33,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Attack Path Compiler", lifespan=lifespan)
+app.include_router(remediation_router)
+app.include_router(harness_router)
 origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
@@ -105,7 +110,12 @@ def demo(response: Response, request: Request):
     u, p = os.environ.get("DEMO_USER"), os.environ.get("DEMO_PASSWORD")
     if not (u and p):
         raise HTTPException(404, "demo account not configured")
-    return _login(Creds(email=u, password=p), response, request)
+    out = _login(Creds(email=u, password=p), response, request)
+    row = store.q("SELECT id FROM users WHERE email=?", (u.lower(),))
+    if row:  # the shared demo account always opens on an empty workspace
+        harness.wipe(row[0]["id"])
+        store.wipe_workspace(row[0]["id"])
+    return out
 
 
 @app.post("/api/auth/logout")
@@ -129,7 +139,10 @@ def _normalize(ev: Event) -> Event:
 
 def ingest_events(ws: int, events: list[Event]) -> int:
     """The ONE ingest path: HTTP upload, API key and Play all end up here."""
-    return store.add_events(ws, [_normalize(e) for e in events])
+    t0 = time.perf_counter()
+    n = store.add_events(ws, [_normalize(e) for e in events])
+    metrics.record_ingest(n, (time.perf_counter() - t0) * 1000)
+    return n
 
 
 def _rate(ws: int) -> None:
@@ -192,9 +205,23 @@ def _sim_step(ws: int, n: int):
     return {"position": pos + len(batch), "total": len(s), "done": pos + len(batch) >= len(s)}
 
 
+@app.get("/api/simulate/status")
+def sim_status(u: dict = Depends(auth.require_user)):
+    return {"total": len(_samples()), "position": store.sim_pos(u["id"])}
+
+
+@app.get("/api/events")
+def events(limit: int = 100, u: dict = Depends(auth.require_user)):
+    limit = max(1, min(limit, 500))
+    evs = store.get_events(u["id"])
+    return {"total": len(evs), "events": [e.model_dump(exclude={"raw"}) | {"raw": e.raw[:240]}
+                                          for e in reversed(evs[-limit:])]}
+
+
 @app.post("/api/simulate/reset")
 def sim_reset(u: dict = Depends(auth.require_user)):
-    store.reset_workspace(u["id"])
+    harness.wipe(u["id"])
+    store.wipe_workspace(u["id"])
     return {"ok": True}
 
 
@@ -240,6 +267,45 @@ def apply_fix(b: FixBody, u: dict = Depends(auth.require_user)):
     store.apply_fix(u["id"], b.edges)
     s = engine.snapshot(u["id"])
     return {"risk": s["risk"], "severity": analyze.severity(s["risk"]), "applied": sorted(s["fixed"])}
+
+
+class ScanBody(BaseModel):
+    repo: str = Field(default="uploaded", max_length=120)
+    files: list[dict] = Field(max_length=codescan.MAX_FILES * 3)
+
+
+@app.post("/api/codescan")
+def code_scan(b: ScanBody, u: dict = Depends(auth.require_user)):
+    _rate(u["id"])
+    return codescan.run(u["id"], b.repo, b.files)
+
+
+@app.get("/api/codescan")
+def code_report(u: dict = Depends(auth.require_user)):
+    return codescan.report(u["id"])
+
+
+@app.delete("/api/codescan")
+def code_clear(u: dict = Depends(auth.require_user)):
+    codescan.clear(u["id"])
+    return {"ok": True}
+
+
+@app.get("/api/metrics")
+def get_metrics(u: dict = Depends(auth.require_user)):
+    s = engine.snapshot(u["id"])
+    return {**metrics.summary(), "compression": engine.compression(s), "current_analysis_ms": s["timings"]}
+
+
+@app.get("/api/timeline")
+def get_timeline(u: dict = Depends(auth.require_user)):
+    return {**engine.timeline(u["id"]), "risk_series": engine.risk_series(u["id"])}
+
+
+@app.get("/api/benchmarks")
+def get_benchmarks(u: dict = Depends(auth.require_user)):
+    p = inventory.seed_dir() / "benchmarks.json"
+    return json.loads(p.read_text()) if p.exists() else {"runs": []}
 
 
 @app.post("/api/keys")
