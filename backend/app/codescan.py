@@ -158,13 +158,21 @@ def _ensure() -> None:
         files INTEGER NOT NULL, model TEXT NOT NULL, findings TEXT NOT NULL)""")
 
 
+def scan(files: list[dict]) -> tuple[list[dict], bool, int]:
+    kept = accept_files(files)
+    findings = static_scan(kept)
+    return findings, triage(findings), len(kept)
+
+
 def run(ws: int, repo: str, files: list[dict]) -> dict:
+    findings, ai_used, n = scan(files)
+    return persist(ws, repo, findings, ai_used, n)
+
+
+def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: int) -> dict:
     from .narrate import technique
 
     _ensure()
-    kept = accept_files(files)
-    findings = static_scan(kept)
-    ai_used = triage(findings)
 
     def mitigation_for(t: str) -> str:
         m = technique(t).get("mitigations", [])
@@ -174,7 +182,7 @@ def run(ws: int, repo: str, files: list[dict]) -> dict:
     store.run("INSERT INTO code_models(ws,repo,created,ai_used,files,model,findings) VALUES(?,?,?,?,?,?,?) "
               "ON CONFLICT(ws) DO UPDATE SET repo=excluded.repo, created=excluded.created, "
               "ai_used=excluded.ai_used, files=excluded.files, model=excluded.model, findings=excluded.findings",
-              (ws, repo[:120], time.time(), int(ai_used), len(kept), json.dumps(model), json.dumps(findings)))
+              (ws, repo[:120], time.time(), int(ai_used), n_files, json.dumps(model), json.dumps(findings)))
     return report(ws)
 
 

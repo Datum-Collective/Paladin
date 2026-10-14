@@ -7,3 +7,4 @@ frontend/dist/
 .venv/
 .pytest_cache/
 *.db
+.env.local

@@ -35,5 +35,10 @@ export const api = {
   codeScan: (repo, files) => req('POST', '/api/codescan', { repo, files }),
   codeReport: () => req('GET', '/api/codescan'),
   codeClear: () => req('DELETE', '/api/codescan'),
+  hConfig: () => req('GET', '/api/harness/config'),
+  hStart: (repo_url) => req('POST', '/api/harness/jobs', { repo_url }),
+  hJobs: () => req('GET', '/api/harness/jobs'),
+  hJob: (id) => req('GET', `/api/harness/jobs/${id}`),
+  hPr: (id) => req('POST', `/api/harness/jobs/${id}/pr`),
   createKey: (label) => req('POST', '/api/keys', { label }),
 }

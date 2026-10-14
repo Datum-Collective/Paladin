@@ -219,6 +219,82 @@ function CodeScan({ onDone }) {
   )
 }
 
+const RUNNING = ['queued', 'cloning', 'scanning', 'fixing']
+
+function Repo({ onDone }) {
+  const [url, setUrl] = useState('')
+  const [job, setJob] = useState(null)
+  const [cfg, setCfg] = useState({ github_enabled: false, ai_enabled: false })
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.hConfig().then(setCfg).catch(() => {})
+    api.hJobs().then((r) => r.jobs[0] && api.hJob(r.jobs[0].id).then(setJob)).catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (!job || !RUNNING.includes(job.state)) return
+    const t = setTimeout(async () => {
+      const j = await api.hJob(job.id)
+      setJob(j)
+      if (!RUNNING.includes(j.state)) onDone()
+    }, 1200)
+    return () => clearTimeout(t)
+  }, [job])
+
+  const run = async () => {
+    setErr('')
+    try { setJob(await api.hStart(url.trim())) } catch (e) { setErr(e.message) }
+  }
+  const openPr = async () => {
+    setErr(''); setBusy(true)
+    try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div>
+      <h4>Scan a GitHub repo</h4>
+      <input style={{ width: '100%' }} placeholder="https://github.com/owner/repo" value={url}
+        onChange={(e) => setUrl(e.target.value)} />
+      <button className="primary" onClick={run} disabled={!url || (job && RUNNING.includes(job.state))}>
+        Scan and fix
+      </button>
+      <p className="muted">
+        Shallow clone, hooks off, repo code is never executed. AI: {cfg.ai_enabled ? 'on (Claude Haiku)' : 'off (rules only)'}
+        {' · '}PR: {cfg.github_enabled ? 'enabled' : 'patch download only (no GITHUB_TOKEN)'}
+      </p>
+      {err && <p className="err">{err}</p>}
+      {job && (
+        <>
+          <p><b>{job.repo_url}</b> <span className={`state st-${job.state}`}>{job.state}</span></p>
+          {job.error && <p className="err">{job.error}</p>}
+          <ul className="hops">{job.log.slice(-8).map((l, i) => <li key={i} className="muted">{l.msg}</li>)}</ul>
+          {job.fixes.length > 0 && (
+            <>
+              <h4>{job.fixes.length} fix(es) on branch {job.branch}</h4>
+              <ul className="paths">
+                {job.fixes.map((f) => (
+                  <li key={f.id}>
+                    <b>{f.rule}</b> <span className="muted">{f.cwe} · {f.technique} · {f.method}</span>
+                    <div className="muted">{f.file}:{f.line} — {f.explanation}</div>
+                  </li>
+                ))}
+              </ul>
+              <pre className="curl">{job.diff.slice(0, 6000)}</pre>
+              <a href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download patch</a>{' '}
+              {job.state === 'ready' && (
+                <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
+                  Approve and open PR
+                </button>
+              )}
+              {job.pr_url && <p>PR: <a href={job.pr_url} target="_blank" rel="noreferrer">{job.pr_url}</a></p>}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function Sources() {
   const [key, setKey] = useState('')
   const make = async () => setKey((await api.createKey('source')).key)
@@ -292,7 +368,7 @@ export default function App() {
       <main>
         <aside>
           <div className="tabs">
-            {['paths', 'ingest', 'code', 'sources'].map((t) => (
+            {['paths', 'repo', 'ingest', 'code', 'sources'].map((t) => (
               <button key={t} className={tab === t ? 'tab on' : 'tab'} onClick={() => setTab(t)}>{t}</button>
             ))}
           </div>
@@ -307,6 +383,7 @@ export default function App() {
             </ul>
           ))}
           {tab === 'ingest' && <Upload onDone={refresh} />}
+          {tab === 'repo' && <Repo onDone={refresh} />}
           {tab === 'code' && <CodeScan onDone={refresh} />}
           {tab === 'sources' && <Sources />}
         </aside>

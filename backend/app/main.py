@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from . import analyze, auth, codescan, engine, inventory, store
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
+from .harness_api import router as harness_router
 from .remediation_api import router as remediation_router
 
 MAX_BODY = 2_000_000
@@ -32,6 +33,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Attack Path Compiler", lifespan=lifespan)
 app.include_router(remediation_router)
+app.include_router(harness_router)
 origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
