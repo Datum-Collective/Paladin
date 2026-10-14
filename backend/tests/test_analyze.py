@@ -95,3 +95,23 @@ def test_impact_can_outrank_likelihood_with_small_k():
 def test_zero_time_budget_still_returns_a_path():
     g = build_graph(*toy())
     assert len(top_paths(g, 5, budget_s=0.0)) >= 1
+
+
+def test_combined_risk_is_a_probability_not_a_sum():
+    from app.analyze import total_risk
+    ps = [{"risk": 0.3}, {"risk": 0.3}, {"risk": 0.3}]
+    assert abs(total_risk(ps) - (1 - 0.7 ** 3)) < 1e-9          # noisy-or
+    assert total_risk([{"risk": 0.0}]) == 0 and total_risk([{"risk": 1.0}, {"risk": 0.5}]) == 1.0
+    many_small = [{"risk": 0.02}] * 40
+    assert total_risk(many_small) < 0.6                           # a sum would have been 0.8
+
+
+def test_headline_severity_is_the_worst_path_not_the_aggregate(client):
+    client.post("/api/auth/demo")
+    client.post("/api/ingest", json={"format": "web_access", "lines": [
+        '185.199.110.42 - - [14/May/2024:13:00:01 +0000] "GET /.env HTTP/1.1" 404 153 "-" "Nikto/2.1.6"']})
+    p = client.get("/api/paths").json()
+    worst = max(x["risk"] for x in p["paths"])
+    assert p["worst"] == worst and p["severity"] == p["paths"][0]["severity"]
+    g = client.get("/api/graph").json()
+    assert g["severity"] == p["severity"] and g["worst"] == worst and g["risk"] <= 1.0

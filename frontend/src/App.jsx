@@ -2,14 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
 import Graph from './Graph.jsx'
 import Insights from './Insights.jsx'
+import RepoView from './RepoView.jsx'
+import Icon from './Icons.jsx'
 
-const SEV = { CRITICAL: 'sev-critical', HIGH: 'sev-high', MEDIUM: 'sev-medium', LOW: 'sev-low' }
+const SEV_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'ok' }
 const KILL_CHAIN = ['reconnaissance', 'initial-access', 'execution', 'persistence', 'privilege-escalation',
   'defense-evasion', 'credential-access', 'discovery', 'lateral-movement', 'collection',
   'command-and-control', 'exfiltration', 'impact']
-const RUNNING = ['queued', 'cloning', 'scanning', 'fixing']
-const NEXT_ACTION = { proposed: 'approve', approved: 'execute', executed: 'verify' }
+const NEXT_ACTION = { proposed: 'Approve', approved: 'Execute', executed: 'Verify' }
+const STEP = { Approve: 'approve', Execute: 'execute', Verify: 'verify' }
 const hhmm = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(5, 16)
+
+function Severity({ level }) {
+  return <span className={`pill ${SEV_TONE[level]}`}>{level.toLowerCase()}</span>
+}
 
 function Login({ onDone }) {
   const [email, setEmail] = useState('')
@@ -24,15 +30,16 @@ function Login({ onDone }) {
     <div className="login">
       <h1>Attack Path Compiler</h1>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      <button className="primary" onClick={() => go(api.demo)}>Use demo account</button>
-      <hr />
-      <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input placeholder="password" type="password" value={pw} onChange={(e) => setPw(e.target.value)} />
+      <button className="primary" onClick={() => go(api.demo)}>Continue with demo account</button>
+      <div className="or">or</div>
+      <input placeholder="Email" aria-label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <input placeholder="Password" aria-label="Password" type="password" value={pw}
+             onChange={(e) => setPw(e.target.value)} />
       <button onClick={() => go(() => (mode === 'login' ? api.login(email, pw) : api.register(email, pw)))}>
         {mode === 'login' ? 'Sign in' : 'Create account'}
       </button>
       <button className="link" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-        {mode === 'login' ? 'Need an account?' : 'Have an account?'}
+        {mode === 'login' ? 'Create an account' : 'I already have an account'}
       </button>
       {err && <p className="err">{err}</p>}
     </div>
@@ -41,7 +48,7 @@ function Login({ onDone }) {
 
 function KillChain({ tactics }) {
   return (
-    <div className="killchain">
+    <div className="killchain" aria-label="Kill chain stages">
       {KILL_CHAIN.map((t) => (
         <span key={t} className={tactics.includes(t) ? 'kc on' : 'kc'}>{t.replace(/-/g, ' ')}</span>
       ))}
@@ -50,30 +57,34 @@ function KillChain({ tactics }) {
 }
 
 function PathDetail({ path }) {
-  if (!path) return <p className="muted">Select a path to see its story, assets and evidence.</p>
+  if (!path) return <p className="muted">Select a path to see how it works, which assets it touches and the evidence.</p>
   return (
     <div>
-      <h3><span className={`badge ${SEV[path.severity]}`}>{path.severity}</span> risk {path.risk.toFixed(3)}</h3>
+      <div className="row-top"><h2>Attack path</h2><Severity level={path.severity} /></div>
+      <p className="muted">Risk {path.risk.toFixed(3)}</p>
       <p>{path.narrative}</p>
       <KillChain tactics={path.tactics} />
-      <h4>Affected assets</h4>
-      <ul className="assets">
+      <h3>Affected assets</h3>
+      <ul className="plain">
         {path.assets.map((a) => (
-          <li key={a.id}><b>{a.label}</b> <span className="muted">{a.kind} · criticality {a.criticality}</span></li>
+          <li key={a.id}>{a.label} <span className="muted">{a.kind}, criticality {a.criticality}</span></li>
         ))}
       </ul>
-      <h4>Attack progression</h4>
-      <ol className="hops">
+      <h3>Progression</h3>
+      <ol className="steps">
         {path.hops.map((h) => (
           <li key={h.edge}>
-            <b>{h.src}</b> → <b>{h.dst}</b>
-            <div className="muted">{h.technique} {h.technique_name} · p={h.p} ·{' '}
-              {h.observed ? <span className="obs">confirmed</span> : 'possible (no events yet)'}</div>
+            <div><b>{h.src}</b> <span className="muted">to</span> <b>{h.dst}</b></div>
+            <div className="muted">
+              {h.technique} {h.technique_name} · p {h.p} · {h.observed ? 'confirmed by events' : 'possible, no events yet'}
+            </div>
             {h.events.map((e) => (
-              <div key={e.id} className="ev"><span className="muted">{e.id} · {hhmm(e.ts)} · {e.source}</span>
-                <code>{e.raw || `${e.type} ${e.actor} ${e.src_ip}`}</code></div>
+              <div key={e.id} className="ev">
+                <span className="muted">{e.id} · {hhmm(e.ts)} · {e.source}</span>
+                <code className="snippet">{e.raw || `${e.type} ${e.actor} ${e.src_ip}`}</code>
+              </div>
             ))}
-            {h.mitigation && <div className="muted">fix: {h.mitigation} {h.mitigation_name}</div>}
+            {h.mitigation && <div className="muted">Mitigation {h.mitigation} {h.mitigation_name}</div>}
           </li>
         ))}
       </ol>
@@ -84,21 +95,23 @@ function PathDetail({ path }) {
 function Fixes({ fixes, onPropose }) {
   if (!fixes || (!fixes.cheapest_cut && !fixes.best_single)) return null
   const card = (title, f) => f && (
-    <div className="fix">
-      <h4>{title}</h4>
-      <div>Cut {f.edges.join(', ')} · cost {f.total_cost} · breaks {f.paths_broken} path(s) ·
-        removes {f.risk_removed_pct}% of risk</div>
-      <div className="muted">{f.mitigations.map((m) => `${m.technique} → ${m.mitigation}`).join('; ')}</div>
-      <button onClick={() => onPropose(f.edges, title)}>Propose fix</button>
+    <div className="card">
+      <div className="row-top"><b>{title}</b><span className="muted">cost {f.total_cost}</span></div>
+      <p className="muted">
+        Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
+        {' '}{f.mitigations.map((m) => m.mitigation).filter(Boolean).join(', ')}
+      </p>
+      <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose fix</button>
     </div>
   )
   return (
     <div>
-      <h4>Recommended fixes</h4>
+      <h3>Recommended fixes</h3>
       {card('Cheapest cut', fixes.cheapest_cut)}
-      {card('Best single fix', fixes.best_single)}
+      {fixes.best_single && (!fixes.cheapest_cut ||
+        fixes.best_single.edges.join() !== fixes.cheapest_cut.edges.join()) && card('Best single fix', fixes.best_single)}
       {fixes.edge_count_cut_cost != null && (
-        <p className="muted">A cut minimising edge count would cost {fixes.edge_count_cut_cost}.</p>
+        <p className="muted small">A cut that only minimises step count would cost {fixes.edge_count_cut_cost}.</p>
       )}
     </div>
   )
@@ -119,26 +132,28 @@ function Remediations({ items, onChange }) {
   if (!items.length) return null
   return (
     <div>
-      <h4>Remediation workflow</h4>
+      <h3>Remediation</h3>
       {err && <p className="err">{err}</p>}
       {items.map((r) => (
-        <div key={r.id} className="fix">
-          <div onClick={() => show(r.id)} style={{ cursor: 'pointer' }}>
-            <b>#{r.id}</b> {r.title} <span className={`state st-${r.state}`}>{r.state}</span>
-            <div className="muted">{r.edges.join(', ')}{r.ai_drafted ? ' · AI-drafted runbook' : ''}</div>
-          </div>
-          {r.note && <div className="err">{r.note}</div>}
+        <div key={r.id} className="card">
+          <button className="row-btn" onClick={() => show(r.id)} aria-expanded={open === r.id}>
+            <b>{r.title}</b>
+            <span className={`pill ${r.state === 'verified' ? 'ok' : r.state === 'failed' ? 'bad' : 'info'}`}>{r.state.replace('_', ' ')}</span>
+          </button>
+          {r.note && <p className="err">{r.note}</p>}
           {r.risk_before != null && (
-            <div className="muted">risk {r.risk_before} → {r.risk_after} · paths {r.paths_before} → {r.paths_after}</div>
+            <p className="muted">Risk {r.risk_before} to {r.risk_after} · dangerous paths {r.paths_before} to {r.paths_after}</p>
           )}
-          {NEXT_ACTION[r.state] && <button onClick={() => step(r.id, NEXT_ACTION[r.state])}>{NEXT_ACTION[r.state]}</button>}
-          {['executed', 'verified', 'failed'].includes(r.state) &&
-            <button onClick={() => step(r.id, 'rollback')}>rollback</button>}
+          <div className="actions">
+            {NEXT_ACTION[r.state] && <button className="primary" onClick={() => step(r.id, STEP[NEXT_ACTION[r.state]])}>{NEXT_ACTION[r.state]}</button>}
+            {['executed', 'verified', 'failed'].includes(r.state) && <button onClick={() => step(r.id, 'rollback')}>Roll back</button>}
+          </div>
           {open === r.id && detail && (
             <>
-              <pre className="curl">{detail.runbook}</pre>
-              <ul className="hops">
-                {detail.audit.map((a, i) => <li key={i}>{a.action} · {a.actor}<span className="muted"> {a.detail}</span></li>)}
+              <pre className="runbook">{detail.runbook}</pre>
+              {detail.ai_drafted && <p className="muted small">Runbook drafted by AI from the computed facts.</p>}
+              <ul className="plain">
+                {detail.audit.map((a, i) => <li key={i}>{a.action} <span className="muted">by {a.actor} {a.detail}</span></li>)}
               </ul>
             </>
           )}
@@ -152,12 +167,12 @@ function Events({ data }) {
   if (!data || !data.events.length) return <p className="muted">No events yet.</p>
   return (
     <div>
-      <p className="muted">{data.total} events (latest {data.events.length})</p>
-      <ul className="paths">
+      <p className="muted">{data.total} events, newest first</p>
+      <ul className="rows">
         {data.events.map((e) => (
           <li key={e.id}>
-            <span className="muted">{e.id} · {hhmm(e.ts)} · {e.source} · {e.type}</span>
-            <div><code>{e.raw || `${e.actor} ${e.src_ip}`}</code></div>
+            <div className="muted">{e.id} · {hhmm(e.ts)} · {e.source} · {e.type}</div>
+            <code className="snippet">{e.raw || `${e.actor} ${e.src_ip}`}</code>
           </li>
         ))}
       </ul>
@@ -173,7 +188,7 @@ function Ingest({ onDone }) {
   const send = async () => {
     try {
       const r = await api.ingest(fmt, text.split('\n').filter(Boolean))
-      setMsg(`accepted ${r.accepted}, rejected ${r.rejected}`)
+      setMsg(`${r.accepted} accepted, ${r.rejected} rejected`)
       onDone()
     } catch (e) { setMsg(e.message) }
   }
@@ -182,104 +197,33 @@ function Ingest({ onDone }) {
   -d '{"format":"${fmt}","lines":["<one log line>"]}'`
   return (
     <div>
-      <h4>Upload logs</h4>
-      <select value={fmt} onChange={(e) => setFmt(e.target.value)}>
+      <h3>Add log data</h3>
+      <select value={fmt} onChange={(e) => setFmt(e.target.value)} aria-label="Log format">
         <option value="linux_auth">Linux auth (syslog)</option>
         <option value="web_access">Web access (combined)</option>
         <option value="snort_alert">IDS alert (Snort format)</option>
       </select>
-      <input type="file" onChange={file} />
-      <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="paste log lines" />
-      <button className="primary" onClick={send} disabled={!text}>Ingest</button> <span className="muted">{msg}</span>
-      <h4>Send from your own system</h4>
+      <input type="file" onChange={file} aria-label="Log file" />
+      <textarea rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste log lines" />
+      <div className="actions">
+        <button className="primary" onClick={send} disabled={!text}>Ingest</button>
+        <span className="muted">{msg}</span>
+      </div>
+      <h3>Send from your own system</h3>
       <button onClick={async () => setKey((await api.createKey('source')).key)}>Create API key</button>
-      {key && <pre className="curl">{curl}</pre>}
+      {key && <pre className="runbook">{curl}</pre>}
     </div>
   )
 }
 
-function Repo({ onDone }) {
-  const [url, setUrl] = useState('')
-  const [job, setJob] = useState(null)
-  const [cfg, setCfg] = useState({ github_enabled: false, ai_enabled: false })
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    api.hConfig().then(setCfg).catch(() => {})
-    api.hJobs().then((r) => r.jobs[0] && api.hJob(r.jobs[0].id).then(setJob)).catch(() => {})
-  }, [])
-  useEffect(() => {
-    if (!job || !RUNNING.includes(job.state)) return
-    const t = setTimeout(async () => {
-      const j = await api.hJob(job.id)
-      setJob(j)
-      if (!RUNNING.includes(j.state)) onDone()
-    }, 1200)
-    return () => clearTimeout(t)
-  }, [job])
-
-  const run = async () => {
-    setErr('')
-    try { setJob(await api.hStart(url.trim())) } catch (e) { setErr(e.message) }
-  }
-  const openPr = async () => {
-    setErr(''); setBusy(true)
-    try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
-  }
-  return (
-    <div>
-      <h4>Scan a GitHub repository</h4>
-      <input style={{ width: '100%' }} placeholder="https://github.com/owner/repo" value={url}
-        onChange={(e) => setUrl(e.target.value)} />
-      <button className="primary" onClick={run} disabled={!url || (job && RUNNING.includes(job.state))}>
-        Scan and fix
-      </button>
-      <p className="muted">
-        Repo code is never executed. AI: {cfg.ai_enabled ? 'on' : 'off (rules only)'} · Pull requests:{' '}
-        {cfg.github_enabled ? 'enabled' : 'patch download only'}
-      </p>
-      {err && <p className="err">{err}</p>}
-      {job && (
-        <>
-          <p><b>{job.repo_url}</b> <span className={`state st-${job.state}`}>{job.state}</span></p>
-          {job.error && <p className="err">{job.error}</p>}
-          <ul className="hops">{job.log.slice(-6).map((l, i) => <li key={i} className="muted">{l.msg}</li>)}</ul>
-          {job.fixes.length > 0 && (
-            <>
-              <h4>{job.fixes.length} verified fix(es) on {job.branch}</h4>
-              <ul className="paths">
-                {job.fixes.map((f) => (
-                  <li key={f.id}>
-                    <b>{f.rule}</b> <span className="muted">{f.cwe} · {f.technique} · {f.method}</span>
-                    <div className="muted">{f.file}:{f.line}: {f.explanation}</div>
-                  </li>
-                ))}
-              </ul>
-              <pre className="curl">{job.diff.slice(0, 5000)}</pre>
-              <a href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download patch</a>{' '}
-              {job.state === 'ready' && (
-                <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
-                  Approve and open PR
-                </button>
-              )}
-              {job.pr_url && <p>PR: <a href={job.pr_url} target="_blank" rel="noreferrer">{job.pr_url}</a></p>}
-            </>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-function Empty({ canPlay, onPlay, goTab }) {
+function Empty({ canPlay, onPlay, go }) {
   return (
     <div className="empty">
-      <h2>Nothing analysed yet</h2>
-      <p className="muted">Bring in signals and the attack paths appear here.</p>
-      <div className="empty-actions">
-        <button className="primary" onClick={() => goTab('repo')}>Scan a GitHub repo</button>
-        <button onClick={() => goTab('ingest')}>Upload or send logs</button>
+      <h2>Nothing to analyse yet</h2>
+      <p className="muted">Scan a repository or add log data, and the attack paths appear here.</p>
+      <div className="actions center">
+        <button className="primary" onClick={() => go('repo')}>Scan a repository</button>
+        <button onClick={() => go('ingest')}>Add log data</button>
         {canPlay && <button onClick={onPlay}>Play sample scenario</button>}
       </div>
     </div>
@@ -297,7 +241,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false)
   const [canPlay, setCanPlay] = useState(false)
   const [tab, setTab] = useState('paths')
-  const [view, setView] = useState('dashboard')
+  const [view, setView] = useState('analysis')
   const timer = useRef(null)
 
   const refresh = useCallback(async () => {
@@ -326,53 +270,69 @@ export default function App() {
     }
     tick()
   }
+  const go = (target) => {
+    if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
+  }
 
   if (user === undefined) return null
   if (!user) return <Login onDone={() => api.me().then(setUser)} />
 
   const selected = paths.find((p) => p.id === sel)
   const empty = !graph || (graph.events === 0 && paths.length === 0)
-  const sev = graph ? graph.severity : 'LOW'
+  const NAV = [['analysis', 'Analysis', 'graph'], ['repo', 'Repository', 'repo'], ['insights', 'Insights', 'chart']]
   return (
     <div className="app">
-      <header>
-        <b>Attack Path Compiler</b>
-        {!empty && <span className={`badge ${SEV[sev]}`}>{sev}</span>}
-        {!empty && <span className="muted">risk {graph.risk.toFixed(3)} · {graph.events} events</span>}
+      <header className="topbar">
+        <span className="brand">Attack Path Compiler</span>
+        <nav className="seg" aria-label="Sections">
+          {NAV.map(([id, label, icon]) => (
+            <button key={id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>
+              <Icon name={icon} size={14} /> {label}
+            </button>
+          ))}
+        </nav>
         <span className="spacer" />
-        {canPlay && <button className="primary" disabled={playing} onClick={play}>{playing ? 'Playing…' : 'Play'}</button>}
-        <button onClick={() => setView(view === 'dashboard' ? 'insights' : 'dashboard')}>
-          {view === 'dashboard' ? 'Insights' : 'Dashboard'}
-        </button>
+        {!empty && graph && (
+          <span className="status-inline">
+            <Severity level={graph.severity} />
+            <span className="muted">worst path {graph.worst.toFixed(2)} · combined {graph.risk.toFixed(2)}{graph.events > 0 ? ` · ${graph.events} events` : ''}</span>
+          </span>
+        )}
+        {canPlay && (
+          <button disabled={playing} onClick={play}><Icon name="play" size={14} /> {playing ? 'Playing' : 'Play'}</button>
+        )}
         <button onClick={async () => { await api.simReset(); setSel(null); refresh() }}>Reset</button>
-        <button onClick={async () => { await api.logout(); setUser(null) }}>Sign out</button>
+        <button className="icon-btn" aria-label="Sign out" title="Sign out"
+                onClick={async () => { await api.logout(); setUser(null) }}><Icon name="logout" /></button>
       </header>
-      {view === 'insights' ? <Insights key={graph ? graph.events : 0} rems={rems} /> : (
-        <main>
-          <aside>
-            <div className="tabs">
-              {[['paths', 'Paths'], ['events', 'Events'], ['ingest', 'Ingest'], ['repo', 'Repo']].map(([t, l]) => (
-                <button key={t} className={tab === t ? 'tab on' : 'tab'} onClick={() => setTab(t)}>{l}</button>
+
+      {view === 'insights' && <Insights key={graph ? graph.events : 0} rems={rems} />}
+      {view === 'repo' && <RepoView onDone={refresh} />}
+      {view === 'analysis' && (
+        <main className="analysis">
+          <aside className="pane left">
+            <div className="seg small" role="tablist">
+              {[['paths', 'Paths', 'list'], ['events', 'Events', 'file'], ['ingest', 'Add data', 'upload']].map(([t, l]) => (
+                <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{l}</button>
               ))}
             </div>
             {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
-              <ul className="paths">
+              <ul className="rows selectable">
                 {paths.map((p) => (
                   <li key={p.id} className={p.id === sel ? 'on' : ''} onClick={() => setSel(p.id)}>
-                    <span className={`badge ${SEV[p.severity]}`}>{p.severity}</span> {p.risk.toFixed(3)}
-                    <div className="muted">{p.nodes.join(' → ')}</div>
+                    <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
+                    <div className="path-line">{p.nodes.join(' → ')}</div>
                   </li>
                 ))}
               </ul>
             ))}
             {tab === 'events' && <Events data={events} />}
             {tab === 'ingest' && <Ingest onDone={refresh} />}
-            {tab === 'repo' && <Repo onDone={refresh} />}
           </aside>
-          <section>
-            {empty ? <Empty canPlay={canPlay} onPlay={play} goTab={setTab} /> : <Graph graph={graph} highlight={selected} />}
+          <section className="canvas">
+            {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={selected} />}
           </section>
-          <aside className="right">
+          <aside className="pane right">
             {!empty && <PathDetail path={selected} />}
             {!empty && <Fixes fixes={fixes} onPropose={async (edges, title) => { await api.propose(edges, title); refresh() }} />}
             <Remediations items={rems} onChange={refresh} />

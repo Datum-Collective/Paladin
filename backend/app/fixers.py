@@ -19,6 +19,10 @@ def _secret_py(line: str, path: str):
 
 
 DETERMINISTIC = {
+    "permissive-cors": lambda l, p: re.sub(
+        r"allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]",
+        'allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")', l)
+    if p.endswith(".py") and "allow_origins" in l else None,
     "blank-noopener": lambda l, p: re.sub(r"""(target\s*=\s*["']_blank["'])""", r'\1 rel="noopener noreferrer"', l, 1),
     "http-script-src": lambda l, p: re.sub(r"""(<script[^>]+src\s*=\s*["'])http://""", r"\1https://", l, 1, re.I),
     "weak-hash": lambda l, p: re.sub(r"hashlib\.(md5|sha1)\(", "hashlib.sha256(", l)
@@ -79,7 +83,7 @@ def _window(content: str, line: int, r: int = 25) -> str:
 
 
 def _ai_edit(content: str, f: dict) -> tuple[str, str] | None:
-    win = _window(content, f["line"])
+    win = codescan.REDACT.sub(r"\1***\1", _window(content, f["line"]))   # secrets never leave the process
     text = ai.complete(FIX_SYSTEM, json.dumps({"file": f["file"], "rule": f["rule"], "cwe": f["cwe"],
                                                "line_in_file": f["line"], "code_window": win}), 900)
     if not text:
@@ -96,7 +100,7 @@ def _ai_edit(content: str, f: dict) -> tuple[str, str] | None:
         return None
     if not isinstance(old, str) or not isinstance(new, str) or not old.strip() or old == new:
         return None
-    if len(old) > MAX_PATCH_CHARS or len(new) > MAX_PATCH_CHARS or content.count(old) != 1:
+    if "***[" in old or len(old) > MAX_PATCH_CHARS or len(new) > MAX_PATCH_CHARS or content.count(old) != 1:
         return None
     return content.replace(old, new, 1), str(d.get("explanation", ""))[:200]
 
@@ -112,10 +116,43 @@ def _locate(content: str, f: dict) -> int | None:
     return None
 
 
+def _flagged_line_changed(old: str, new: str, f: dict) -> bool:
+    """True when the line the finding points at no longer appears in the patched file."""
+    h = f.get("line_hash")
+    if not h:
+        return True
+    lines = old.split("\n")
+    near = range(max(0, f["line"] - 4), min(len(lines), f["line"] + 3))
+    if not any(codescan.line_hash(lines[i]) == h for i in near):
+        return False  # cannot locate the flagged line, so we cannot show it was fixed
+    return all(codescan.line_hash(ln) != h for ln in new.split("\n"))
+
+
+def _syntax_check(path: str, content: str) -> dict:
+    if path.endswith(".py"):
+        return {"name": "file still parses", "passed": _syntax_ok(path, content)}
+    if path.endswith(".json"):
+        try:
+            json.loads(content)
+            return {"name": "file still parses", "passed": True}
+        except ValueError:
+            return {"name": "file still parses", "passed": False}
+    if path.endswith((".yml", ".yaml")):
+        try:
+            import yaml
+            list(yaml.safe_load_all(content))
+            return {"name": "file still parses", "passed": True}
+        except Exception:  # noqa: BLE001
+            return {"name": "file still parses", "passed": False}
+    return {"name": "syntax not checked for this file type (not syntax-checked)", "passed": None}
+
+
 def try_fix(content: str, f: dict) -> dict | None:
-    """Return {content, method, explanation} for an accepted patch, or None."""
+    """Return {content, method, explanation, checks} for an accepted patch, or None. Every check that decided
+    acceptance is returned by name so a reviewer can see exactly what was verified (and what was not)."""
     path, rule = f["file"], f["rule"]
-    before_rule, before_total = _count(rule, content, path), _total(content, path)
+    known = any(r[0] == rule for r in codescan.RULES)
+    before_rule, before_total = (_count(rule, content, path) if known else 0), _total(content, path)
     candidates = []
     fn = DETERMINISTIC.get(rule)
     if fn:
@@ -132,8 +169,24 @@ def try_fix(content: str, f: dict) -> dict | None:
         candidates.append(("haiku", edit[0], edit[1]))
     for method, new_content, why in candidates:
         new_content = _ensure_os_import(path, new_content)
-        if not _syntax_ok(path, new_content):
+        syn = _syntax_check(path, new_content)
+        if syn["passed"] is False:
             continue
-        if _count(rule, new_content, path) < before_rule and _total(new_content, path) <= before_total - 1:
-            return {"content": new_content, "method": method, "explanation": why}
+        checks = [{"name": "edit located and applied exactly once" if method == "haiku"
+                   else "deterministic rewrite of the flagged line", "passed": True}, syn]
+        total_after = _total(new_content, path)
+        if known:
+            rule_after = _count(rule, new_content, path)
+            checks.append({"name": "rule no longer matches", "passed": rule_after < before_rule})
+            ok = rule_after < before_rule and total_after <= before_total - 1
+        else:
+            changed = _flagged_line_changed(content, new_content, f)
+            checks.append({"name": "flagged line is gone", "passed": changed})
+            ok = new_content != content and total_after <= before_total and changed
+        checks.append({"name": "no new findings introduced", "passed": total_after <= before_total})
+        if method == "haiku":
+            checks.append({"name": "user input not left in an executor",
+                           "passed": not STILL_TAINTED.search(new_content)})
+        if ok and all(c["passed"] is not False for c in checks):
+            return {"content": new_content, "method": method, "explanation": why, "checks": checks}
     return None

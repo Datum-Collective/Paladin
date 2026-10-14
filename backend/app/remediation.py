@@ -31,21 +31,28 @@ STEPS = {
 }
 
 
+_ensured_for = None
+
+
 def _ensure() -> None:
+    global _ensured_for
+    c = store.conn()
+    if _ensured_for is c:
+        return
     store.run("""CREATE TABLE IF NOT EXISTS remediations(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, edges TEXT NOT NULL, state TEXT NOT NULL,
         title TEXT NOT NULL, runbook TEXT NOT NULL, ai_drafted INTEGER NOT NULL DEFAULT 0,
         connector TEXT NOT NULL, mark INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL, updated REAL NOT NULL)""")
+    have = {r["name"] for r in store.q("PRAGMA table_info(remediations)")}
     for col, typ in (("risk_before", "REAL"), ("risk_after", "REAL"), ("paths_before", "INTEGER"),
                      ("paths_after", "INTEGER")):
-        try:
+        if col not in have:
             store.run(f"ALTER TABLE remediations ADD COLUMN {col} {typ}")
-        except Exception:  # column already exists
-            pass
     store.run("""CREATE TABLE IF NOT EXISTS audit(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, rem INTEGER NOT NULL, actor TEXT NOT NULL,
         action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', ts REAL NOT NULL)""")
+    _ensured_for = c
 
 
 def _audit(ws: int, rem: int, actor: str, action: str, detail: str = "") -> None:
@@ -86,7 +93,7 @@ def template_runbook(facts: dict) -> str:
 
 def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     _ensure()
-    valid = {e.id for e in inventory.load()["edges"]} | {e["id"] for e in codescan.load_model(ws)["edges"]}
+    valid = {e.id for e in engine.workspace_model(ws)[1]}
     if not edge_ids or any(e not in valid for e in edge_ids):
         raise ValueError("unknown edge id")
     facts = _facts(ws, edge_ids)
@@ -160,8 +167,7 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     if cur["state"] != "executed":
         raise ValueError(f"cannot go from {cur['state']} to verified")
     from .models import Edge
-    inv = {e.id: e for e in inventory.load()["edges"]}
-    inv.update({e["id"]: Edge(**e) for e in codescan.load_model(ws)["edges"]})
+    inv = {e.id: e for e in engine.workspace_model(ws)[1]}
     later = store.get_events(ws)[cur["mark"]:]
     still = [ev.id for ev in later for eid in cur["edges"] if matches(inv[eid], ev)]
     closed = set(cur["edges"]) <= store.applied_fixes(ws)

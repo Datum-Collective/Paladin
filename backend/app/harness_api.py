@@ -48,6 +48,15 @@ def patch(jid: int, u: dict = Depends(auth.require_user)):
     return _get(u["id"], jid)["diff"]
 
 
+@router.get("/jobs/{jid}/file")
+def patched_file(jid: int, path: str, u: dict = Depends(auth.require_user)):
+    _get(u["id"], jid)
+    try:
+        return harness.patched_file(u["id"], jid, path)
+    except (KeyError, OSError, UnicodeDecodeError):
+        raise HTTPException(404, "file not found among this job's changes")
+
+
 @router.post("/jobs/{jid}/pr")
 def pr(jid: int, u: dict = Depends(auth.require_user)):
     _get(u["id"], jid)

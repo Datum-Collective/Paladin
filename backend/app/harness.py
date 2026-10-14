@@ -70,14 +70,103 @@ def load_files(root: Path) -> list[dict]:
     return out
 
 
+BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".pdf", ".zip", ".gz", ".tar", ".woff",
+              ".woff2", ".ttf", ".eot", ".mp4", ".mp3", ".pyc", ".so", ".dll", ".exe", ".bin", ".csv", ".parquet"}
+DOC_EXT = {".md", ".txt", ".rst", ".adoc"}
+
+
+def _json_default(key: str):
+    return {} if key == "report" else []
+
+
+def _skip_reason(rel: str, size: int, kept: set[str]) -> str | None:
+    """None when the file was scanned, otherwise the reason it was not."""
+    low = rel.lower()
+    if rel in kept:
+        return None
+    if any(d in low + "/" or low.startswith(d) or ("/" + d) in "/" + low for d in codescan.SKIP_DIRS):
+        return "vendored or build output"
+    ext = Path(low).suffix
+    base = Path(low).name
+    if base.startswith(".env") or base.endswith((".pem", ".key", "id_rsa")):
+        return "credential files (deliberately not read)"
+    if low.endswith(codescan.SKIP_FILES) or ext in (".map", ".lock"):
+        return "lockfiles, minified, source maps"
+    if ext in DOC_EXT:
+        return "docs"
+    if ext in BINARY_EXT:
+        return "binary or media"
+    if ext in codescan.CODE_EXT:
+        return "oversized or over the scan limit" if size > codescan.MAX_FILE_BYTES else "over the scan limit"
+    return "other file types"
+
+
+def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, ai_on: bool) -> dict:
+    kept_paths = {f["path"] for f in kept}
+    skipped: dict[str, dict] = {}
+    total = 0
+    vendored = {d.rstrip("/") for d in codescan.SKIP_DIRS}
+
+    def note(why: str, n: int, example: str) -> None:
+        d = skipped.setdefault(why, {"count": 0, "examples": []})
+        d["count"] += n
+        if example not in d["examples"] and len(d["examples"]) < 4:
+            d["examples"].append(example)
+
+    for root, dirs, names in os.walk(src):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        rel_root = Path(root).relative_to(src)
+        top = rel_root.parts[0] if rel_root.parts else ""
+        if rel_root.parts and rel_root.parts[-1] in vendored:   # count without stat-ing every vendored file
+            n = sum(len(fs) for _, _, fs in os.walk(root))
+            total += n
+            note("vendored or build output", n, rel_root.as_posix())
+            dirs[:] = []
+            continue
+        for name in names:
+            p = Path(root) / name
+            if p.is_symlink():
+                continue
+            total += 1
+            rel = (rel_root / name).as_posix()
+            why = _skip_reason(rel, p.stat().st_size, kept_paths)
+            if why:
+                note(why, 1, top or name)
+    judged_no = sum(1 for f in findings if f["exploitable"] is False)
+    return {
+        "files_total": total, "scanned": len(kept), "lines_scanned": ai_stats.get("lines", 0),
+        "skipped": skipped, "scanned_files": sorted(kept_paths)[:80],
+        "rules": [{"id": r[0], "title": r[5], "cwe": r[2]} for r in codescan.RULES],
+        "candidates": sum(1 for f in findings if f["triaged_by"] != "haiku-review"),
+        "judged_not_exploitable": judged_no,
+        "ai": {"enabled": ai_on, "triage": ai_stats.get("triage", False),
+               "review_files": ai_stats.get("files_reviewed", 0), "review_findings": ai_stats.get("findings", 0),
+               "claims_rejected": ai_stats.get("claims_rejected", 0),
+               "review_truncated": ai_stats.get("truncated", [])},
+        "limits": "Pattern rules plus an AI review of up to 10 files; not a full static-analysis or "
+                  "dependency audit. Repo code is never executed.",
+    }
+
+
 # ---- job storage ----
+_ensured_for = None
+
+
 def _ensure() -> None:
+    global _ensured_for
+    c = store.conn()
+    if _ensured_for is c:
+        return
     store.run("""CREATE TABLE IF NOT EXISTS jobs(
         id INTEGER PRIMARY KEY AUTOINCREMENT, ws INTEGER NOT NULL, repo_url TEXT NOT NULL, state TEXT NOT NULL,
         log TEXT NOT NULL DEFAULT '[]', findings TEXT NOT NULL DEFAULT '[]', fixes TEXT NOT NULL DEFAULT '[]',
         branch TEXT NOT NULL DEFAULT '', pr_url TEXT NOT NULL DEFAULT '', diff TEXT NOT NULL DEFAULT '',
         ai_used INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', created REAL NOT NULL,
         updated REAL NOT NULL)""")
+    cols = {r["name"] for r in store.q("PRAGMA table_info(jobs)")}
+    if "report" not in cols:
+        store.run("ALTER TABLE jobs ADD COLUMN report TEXT NOT NULL DEFAULT '{}'")
+    _ensured_for = c
 
 
 def _upd(jid: int, **cols) -> None:
@@ -97,21 +186,22 @@ def get(ws: int, jid: int) -> dict:
     if not r:
         raise KeyError(jid)
     d = dict(r[0])
-    for k in ("log", "findings", "fixes"):
-        d[k] = json.loads(d[k])
+    for k in ("log", "findings", "fixes", "report"):
+        d[k] = json.loads(d[k]) if d[k] else _json_default(k)
     d["ai_used"] = bool(d["ai_used"])
     return d
 
 
 def list_jobs(ws: int) -> list[dict]:
     _ensure()
-    return [{k: v for k, v in get(ws, r["id"]).items() if k not in ("log", "diff", "findings")}
+    return [{k: v for k, v in get(ws, r["id"]).items() if k not in ("log", "diff", "findings", "report")}
             for r in store.q("SELECT id FROM jobs WHERE ws=? ORDER BY id DESC LIMIT 30", (ws,))]
 
 
 def start(ws: int, url: str) -> dict:
     _ensure()
     owner, repo, clone_url = parse_url(url)
+    cleanup_old()
     busy = store.q("SELECT 1 FROM jobs WHERE ws=? AND state IN ('queued','cloning','scanning','fixing')", (ws,))
     if busy:
         raise RuntimeError("a job is already running for this workspace")
@@ -154,12 +244,18 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         if not kept:
             sample = ", ".join(sorted(Path(f["path"]).name for f in files)[:6])
             codescan.persist(ws, f"{owner}/{repo}", [], False, 0)
-            _upd(jid, state="done", fixes="[]")
+            _upd(jid, state="done", fixes="[]",
+                 report=json.dumps(coverage(src, [], [], {}, ai.enabled())))
             _log(jid, f"nothing to scan: no source files in a supported language (found: {sample or 'no text files'})")
             return
-        findings, ai_used, n = codescan.scan(files)
-        _log(jid, f"scanned {n} files: {len(findings)} candidate findings"
-                  f"{' (Haiku triaged)' if ai_used else ' (static only)' if findings else ''}")
+        _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
+                  f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
+        findings, ai_used, n, stats = codescan.scan_full(files)
+        rep = coverage(src, kept, findings, stats, ai.enabled())
+        _upd(jid, report=json.dumps(rep))
+        _log(jid, f"scanned {n} files, {rep['lines_scanned']} lines against {len(rep['rules'])} rules: "
+                  f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
+                  f"{rep['judged_not_exploitable']} judged not exploitable")
         codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
         _upd(jid, state="fixing", ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings)
@@ -169,14 +265,27 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         if not fixes:
             _upd(jid, state="done", fixes="[]")
             live = [f for f in findings if f["exploitable"] is not False]
-            _log(jid, "clean: no findings, nothing to fix" if not findings else
-                 f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
+            if not findings:
+                msg = f"no issues found: {len(rep['rules'])} rules over {rep['lines_scanned']} lines in {n} files"
+                if stats["files_reviewed"]:
+                    msg += f", plus AI review of {stats['files_reviewed']} files"
+                if stats["truncated"]:
+                    msg += f" ({len(stats['truncated'])} too long to review in full)"
+                _log(jid, msg + " (this is not a proof of safety)")
+                return
+            _log(jid, f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
                  f"{len(live)} need a manual fix (no safe automatic patch)")
             return
         branch = f"apc/fix-{jid}-{int(time.time())}"
         _git(["checkout", "-q", "-b", branch], cwd=src)
         for p, new in _final_contents(files, fixes).items():
             (src / p).write_text(new, encoding="utf-8")
+        verification = _verify_tree(src, files, fixes, findings)
+        rep["verification"] = verification
+        _upd(jid, report=json.dumps(rep))
+        _log(jid, f"verified on disk: {verification['python_files_compiled']}/{verification['python_files_changed']} "
+                  f"changed Python file(s) compile; findings {verification['findings_before']} -> "
+                  f"{verification['findings_after']}")
         _git(["add", "-A"], cwd=src)
         msg = f"Fix {len(fixes)} security finding(s) found by Attack Path Compiler"
         _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg], cwd=src)
@@ -206,9 +315,75 @@ def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict]) -> li
         f["fixed"] = True
         done.append({"id": f["id"], "file": f["file"], "line": f["line"], "rule": f["rule"], "cwe": f["cwe"],
                      "technique": f["technique"], "method": res["method"], "explanation": res["explanation"],
-                     "content": res["content"]})
+                     "checks": res["checks"], "content": res["content"]})
         _log(jid, f"fixed {f['rule']} at {f['file']}:{f['line']} via {res['method']}")
     return done
+
+
+def _verify_tree(src: Path, files: list[dict], fixes: list[dict], findings: list[dict]) -> dict:
+    """Independent re-check of what is now ON DISK: compile changed Python, then re-scan the changed files."""
+    changed = sorted({f["file"] for f in fixes})
+    py = [p for p in changed if p.endswith(".py")]
+    compiled = 0
+    for p in py:
+        try:
+            compile((src / p).read_text(encoding="utf-8"), p, "exec")
+            compiled += 1
+        except (SyntaxError, ValueError, OSError):
+            pass
+    now = []
+    for p in changed:
+        try:
+            now.append({"path": p, "content": (src / p).read_text(encoding="utf-8")})
+        except OSError:
+            pass
+    after = codescan.static_scan(now) if now else []
+    before = [f for f in findings if f["file"] in changed and f["triaged_by"] != "haiku-review"]
+    fixed_rules = {f["rule"] for f in fixes}
+    still = sorted({a["rule"] for a in after if a["rule"] in fixed_rules})
+    return {"changed_files": len(changed), "python_files_changed": len(py), "python_files_compiled": compiled,
+            "findings_before": len(before), "findings_after": len(after), "fixed_rules_still_matching": still}
+
+
+def patched_file(ws: int, jid: int, path: str) -> dict:
+    """Content of a file as it is on the job's branch, restricted to files the job actually changed."""
+    job = get(ws, jid)
+    changed = {f["file"] for f in job["fixes"]}
+    if path not in changed:
+        raise KeyError(path)
+    root = (data_root() / str(jid) / "repo").resolve()
+    target = (root / path).resolve()
+    if root not in target.parents or not target.is_file() or target.is_symlink():
+        raise KeyError(path)
+    text = target.read_text(encoding="utf-8")
+    import re as _re
+    changed_lines: list[int] = []
+    for m in _re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", _file_diff(job["diff"], path), _re.M):
+        start, n = int(m[1]), int(m[2] or 1)
+        changed_lines += list(range(start, start + n))
+    return {"path": path, "content": text[:400_000], "changed_lines": sorted(set(changed_lines))}
+
+
+def _file_diff(diff: str, path: str) -> str:
+    parts = diff.split("diff --git ")
+    for part in parts:
+        if part.startswith(f"a/{path} b/{path}"):
+            return part
+    return ""
+
+
+def cleanup_old(max_age_s: float = 86400) -> None:
+    """Delete job clones nobody is waiting on. Called when a new job starts, so disk use stays bounded."""
+    root = data_root()
+    if not root.exists():
+        return
+    now = time.time()
+    for d in root.iterdir():
+        try:
+            if d.is_dir() and now - d.stat().st_mtime > max_age_s:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def _final_contents(files: list[dict], fixes: list[dict]) -> dict[str, str]:

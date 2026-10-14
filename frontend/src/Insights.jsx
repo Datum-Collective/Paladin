@@ -1,41 +1,41 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
 
-const SRC_COLOR = { linux_auth: '#38bdf8', web_access: '#a78bfa', ids_alert: '#f59e0b', json: '#94a3b8' }
+const SRC_COLOR = { linux_auth: 'var(--info)', web_access: 'var(--text-2)', ids_alert: 'var(--warn)', json: 'var(--bg-3)' }
 const fmtTime = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(11, 16)
 
 function Timeline({ data }) {
-  const W = 640, H = 150, P = 28
+  const W = 640, H = 150, P = 28, NB = 24
   const rows = data.buckets
   if (!rows.length) return <p className="muted">No events yet.</p>
   const max = Math.max(...rows.map((r) => r.total), 1)
-  const bw = (W - P * 2) / Math.max(rows.length, 1)
+  const bw = (W - P * 2) / NB            // width of one time bucket, not of one non-empty bucket
   const sources = [...new Set(rows.flatMap((r) => Object.keys(r.by_source)))]
   const lo = Date.parse(data.range[0]), hi = Date.parse(data.range[1])
   const xOf = (ts) => P + ((Date.parse(ts) - lo) / Math.max(1, hi - lo)) * (W - P * 2)
   return (
-    <svg viewBox={`0 0 ${W} ${H + 24}`} className="chart" role="img" aria-label="Events over time">
+    <svg viewBox={`0 0 ${W} ${H + 40}`} className="chart" role="img" aria-label="Events over time">
       {rows.map((r, i) => {
         let y = H - 6
         return Object.entries(r.by_source).map(([s, c]) => {
           const h = (c / max) * (H - 30)
           y -= h
           return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h}
-                       fill={SRC_COLOR[s] || '#64748b'}><title>{`${s}: ${c}`}</title></rect>
+                       style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }}><title>{`${s}: ${c}`}</title></rect>
         })
       })}
       {data.confirmed.map((c) => (
         <g key={c.edge}>
-          <line x1={xOf(c.first_seen)} x2={xOf(c.first_seen)} y1={6} y2={H - 6} stroke="#ef4444" strokeDasharray="3 3" />
-          <circle cx={xOf(c.first_seen)} cy={8} r={4} fill="#ef4444"><title>{`${c.technique} ${c.src} → ${c.dst}`}</title></circle>
+          <line x1={xOf(c.first_seen)} x2={xOf(c.first_seen)} y1={6} y2={H - 6} style={{ stroke: 'var(--bad)' }} strokeDasharray="3 3" />
+          <circle cx={xOf(c.first_seen)} cy={8} r={4} style={{ fill: 'var(--bad)' }}><title>{`${c.technique} ${c.src} → ${c.dst}`}</title></circle>
         </g>
       ))}
       <line x1={P} x2={W - P} y1={H - 5} y2={H - 5} stroke="currentColor" opacity=".3" />
       <text x={P} y={H + 14} fontSize="10" fill="currentColor">{fmtTime(data.range[0])}</text>
       <text x={W - P} y={H + 14} fontSize="10" textAnchor="end" fill="currentColor">{fmtTime(data.range[1])}</text>
       {sources.map((s, i) => (
-        <g key={s}><rect x={P + i * 110} y={H + 4} width="8" height="8" fill={SRC_COLOR[s] || '#64748b'} />
-          <text x={P + i * 110 + 12} y={H + 12} fontSize="10" fill="currentColor">{s}</text></g>
+        <g key={s}><rect x={P + i * 120} y={H + 26} width="8" height="8" rx="2" style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }} />
+          <text x={P + i * 120 + 12} y={H + 34} fontSize="10" fill="currentColor">{s}</text></g>
       ))}
     </svg>
   )
@@ -44,13 +44,13 @@ function Timeline({ data }) {
 function RiskLine({ series }) {
   const W = 640, H = 130, P = 30
   if (series.length < 2) return <p className="muted">Needs at least two checkpoints of events.</p>
-  const max = Math.max(...series.map((s) => s.risk), 0.05)
+  const max = Math.max(1, ...series.map((s) => s.risk))
   const pts = series.map((s, i) => [P + (i / (series.length - 1)) * (W - P * 2), H - 18 - (s.risk / max) * (H - 36), s])
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Risk over time">
-      <polyline fill="none" stroke="#ef4444" strokeWidth="2" points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')} />
+      <polyline fill="none" style={{ stroke: 'var(--bad)' }} strokeWidth="2" points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')} />
       {pts.map((p, i) => (
-        <circle key={i} cx={p[0]} cy={p[1]} r="3" fill="#ef4444">
+        <circle key={i} cx={p[0]} cy={p[1]} r="3" style={{ fill: 'var(--bad)' }}>
           <title>{`${p[2].events} events: risk ${p[2].risk}, ${p[2].paths} paths`}</title></circle>
       ))}
       <text x={4} y={14} fontSize="10" fill="currentColor">{max.toFixed(2)}</text>

@@ -39,6 +39,7 @@ export const api = {
   hStart: (repo_url) => req('POST', '/api/harness/jobs', { repo_url }),
   hJobs: () => req('GET', '/api/harness/jobs'),
   hJob: (id) => req('GET', `/api/harness/jobs/${id}`),
+  hFile: (id, path) => req('GET', `/api/harness/jobs/${id}/file?path=${encodeURIComponent(path)}`),
   hPr: (id) => req('POST', `/api/harness/jobs/${id}/pr`),
   events: () => req('GET', '/api/events?limit=100'),
   simStatus: () => req('GET', '/api/simulate/status'),

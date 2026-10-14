@@ -7,12 +7,24 @@ from .correlate import correlate
 from .narrate import narrate
 
 
+def workspace_model(ws: int) -> tuple[list[Node], list[Edge]]:
+    """Nodes and edges this workspace is actually about. The demo-company inventory is only the frame for
+    log events, so it is included only once events exist; a code scan contributes its own separate graph."""
+    nodes: list[Node] = []
+    edges: list[Edge] = []
+    if store.event_count(ws) > 0:
+        inv = inventory.load()
+        nodes += inv["nodes"]
+        edges += inv["edges"]
+    cm = codescan.load_model(ws)
+    nodes += [Node(**n) for n in cm["nodes"]]
+    edges += [Edge(**e) for e in cm["edges"]]
+    return nodes, edges
+
+
 def snapshot(ws: int, k: int = 10) -> dict:
     t0 = time.perf_counter()
-    inv = inventory.load()
-    cm = codescan.load_model(ws)
-    all_nodes = inv["nodes"] + [Node(**n) for n in cm["nodes"]]
-    all_edges = inv["edges"] + [Edge(**e) for e in cm["edges"]]
+    all_nodes, all_edges = workspace_model(ws)
     events = store.get_events(ws)
     fixed = store.applied_fixes(ws)
     t1 = time.perf_counter()
@@ -20,7 +32,8 @@ def snapshot(ws: int, k: int = 10) -> dict:
     t2 = time.perf_counter()
     g = analyze.build_graph(all_nodes, edges, removed=fixed)
     t3 = time.perf_counter()
-    paths = analyze.top_paths(g, k)
+    # no evidence at all (no events, no code scan): there is nothing to analyse, so do not report prior-only risk
+    paths = analyze.top_paths(g, k) if all_nodes else []
     t4 = time.perf_counter()
     by_id = {e.id: e for e in edges}
     labels = {n.id: n.label for n in all_nodes}
@@ -49,10 +62,7 @@ def snapshot(ws: int, k: int = 10) -> dict:
 
 def risk_series(ws: int, points: int = 12) -> list[dict]:
     """Risk recomputed on growing prefixes of the event stream (what the analyst would have seen then)."""
-    inv = inventory.load()
-    cm = codescan.load_model(ws)
-    nodes = inv["nodes"] + [Node(**n) for n in cm["nodes"]]
-    base = inv["edges"] + [Edge(**e) for e in cm["edges"]]
+    nodes, base = workspace_model(ws)
     events = store.get_events(ws)
     fixed = store.applied_fixes(ws)
     if not events:
@@ -69,10 +79,9 @@ def risk_series(ws: int, points: int = 12) -> list[dict]:
 
 
 def timeline(ws: int, buckets: int = 24) -> dict:
-    inv = inventory.load()
-    cm = codescan.load_model(ws)
-    edges = correlate(inv["edges"] + [Edge(**e) for e in cm["edges"]], store.get_events(ws))
+    _, base = workspace_model(ws)
     events = store.get_events(ws)
+    edges = correlate(base, events)
     if not events:
         return {"buckets": [], "confirmed": [], "events": 0}
     ordered = sorted(events, key=lambda e: e.ts)
