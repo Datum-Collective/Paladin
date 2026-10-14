@@ -44,6 +44,7 @@ def test_session_uses_security_controls_and_cleans_up():
         assert result.ok
 
     run = next(call.args for call in client.calls if call.args[0] == "run")
+    assert "--init" in run
     assert "--read-only" in run
     assert ["--network", "bridge"] == run[run.index("--network"):run.index("--network") + 2]
     assert ["--cap-drop", "ALL"] == run[run.index("--cap-drop"):run.index("--cap-drop") + 2]
