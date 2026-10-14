@@ -1,9 +1,12 @@
+from conftest import sign_in
+from fakes import OTHER
+
 LOG = "May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2"
 SCAN = '185.199.110.42 - - [14/May/2024:13:00:01 +0000] "GET /.env HTTP/1.1" 404 153 "-" "Nikto/2.1.6"'
 
 
 def setup(c):
-    c.post("/api/auth/demo")
+    sign_in(c)
     c.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     return c.get("/api/fixes").json()["best_single"]["edges"]
 
@@ -25,7 +28,7 @@ def test_full_lifecycle_verified(client):
 
 def test_verify_fails_when_still_observed(client):
     c = client
-    c.post("/api/auth/demo")
+    sign_in(c)
     c.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     rid = c.post("/api/remediations", json={"edges": ["scan-web"]}).json()["id"]
     c.post(f"/api/remediations/{rid}/approve")
@@ -47,21 +50,21 @@ def test_rollback_restores_risk(client):
 
 def test_validation_auth_and_isolation(client):
     assert client.get("/api/remediations").status_code == 401
-    client.post("/api/auth/demo")
+    sign_in(client)
     assert client.post("/api/remediations", json={"edges": ["nope"]}).status_code == 422
     # the demo-company edges only exist in a workspace that has events
     assert client.post("/api/remediations", json={"edges": ["scan-web"]}).status_code == 422
     client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     rid = client.post("/api/remediations", json={"edges": ["scan-web"]}).json()["id"]
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
+    sign_in(client, OTHER)
     assert client.get(f"/api/remediations/{rid}").status_code == 404
 
 
 def test_ai_draft_used_when_available(client, monkeypatch):
     from app import ai
     monkeypatch.setattr(ai, "draft", lambda facts: "1. AI steps")
-    client.post("/api/auth/demo")
+    sign_in(client)
     client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
     r = client.post("/api/remediations", json={"edges": ["scan-web"]}).json()
     assert r["ai_drafted"] is True and r["runbook"] == "1. AI steps"
@@ -76,7 +79,7 @@ def test_before_after_risk_recorded(client):
 
 
 def test_metrics_timeline_and_benchmarks_endpoints(client):
-    client.post("/api/auth/demo")
+    sign_in(client)
     client.post("/api/ingest", json={"format": "web_access", "lines": [SCAN, SCAN.replace("13:00:01", "13:07:01")]})
     client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
     m = client.get("/api/metrics").json()
@@ -91,7 +94,7 @@ def test_metrics_timeline_and_benchmarks_endpoints(client):
     assert client.get("/api/metrics").status_code == 401
 
 
-def test_demo_login_starts_clean_and_paths_before_after(client):
+def test_accounts_are_separate_and_paths_before_after(client):
     edges = setup(client)
     top = client.get("/api/paths").json()["paths"]  # inspect evidence before the fix removes the edge
     hop = next(h for p in top for h in p["hops"] if h["observed"])
@@ -102,9 +105,13 @@ def test_demo_login_starts_clean_and_paths_before_after(client):
     r = client.post(f"/api/remediations/{rid}/execute").json()
     assert r["paths_before"] is not None and r["paths_before"] >= r["paths_after"] >= 0
     client.post("/api/auth/logout")
-    client.post("/api/auth/demo")  # evaluator opens the demo account: nothing left over
+    sign_in(client, OTHER)  # another account: nothing of the first one's
     assert client.get("/api/events").json()["total"] == 0
     assert client.get("/api/remediations").json()["remediations"] == []
     assert client.get("/api/codescan").json()["scanned"] is False
     assert client.get("/api/harness/jobs").json()["jobs"] == []
     assert client.get("/api/simulate/status").json()["total"] >= 0
+    client.post("/api/auth/logout")
+    sign_in(client)         # the first account's own work is still there (no shared demo account to wipe)
+    assert client.get("/api/events").json()["total"] >= 1
+    assert len(client.get("/api/remediations").json()["remediations"]) == 1

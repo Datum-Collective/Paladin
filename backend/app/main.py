@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import json
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -12,7 +14,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, analyze, auth, keys, workspaces, codescan, engine, inventory, metrics, store
+from . import ai, analyze, auth, config as settings, keys, workspaces, codescan, engine, inventory, metrics, store, supa
+from . import github_access
 from .models import Event
 from .parsers.registry import PARSERS, parse_lines
 from . import harness
@@ -24,18 +27,22 @@ from .workspaces_api import router as workspaces_router
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
 INGEST_RATE = (120, 60)  # requests per window seconds
-_hits: dict[int, deque] = defaultdict(deque)
+_hits: dict[str, deque] = defaultdict(deque)
+log = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    store.conn()
-    harness.recover_interrupted()
-    auth.seed_demo()
+    if not settings.SUPABASE_ENABLED:
+        log.warning("SUPABASE_URL / SUPABASE_ANON_KEY are not set: sign-in and all data endpoints will fail")
     yield
+    supa.reset_client()   # the shared async client (http.py) lives as long as the process
 
 
 app = FastAPI(title="Attack Path Compiler", lifespan=lifespan)
+app.include_router(auth.router)
+app.include_router(github_access.router)
+app.include_router(github_access.app_router)
 app.include_router(remediation_router)
 app.include_router(harness_router)
 app.include_router(providers_router)
@@ -44,6 +51,15 @@ origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(supa.DataError)
+async def data_error(_: Request, e: supa.DataError):
+    return JSONResponse({"detail": e.message}, status_code=e.status)
+
+
+# Registered before `guard`, so it runs inside it: guard still catches anything it raises
+app.middleware("http")(auth.session_middleware)
 
 
 @app.middleware("http")
@@ -61,15 +77,6 @@ async def guard(request: Request, call_next):
     return resp
 
 
-def _secure() -> bool:
-    return os.environ.get("COOKIE_SECURE", "1") == "1"
-
-
-class Creds(BaseModel):
-    email: str = Field(max_length=320)
-    password: str = Field(max_length=256)
-
-
 class IngestBody(BaseModel):
     format: str = Field(default="json", max_length=32)
     lines: list[str] = Field(default=[], max_length=MAX_LINES)
@@ -80,10 +87,6 @@ class FixBody(BaseModel):
     edges: list[str] = Field(max_length=50)
 
 
-class KeyBody(BaseModel):
-    label: str = Field(default="source", max_length=64)
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -92,67 +95,17 @@ def health():
 @app.get("/api/config")
 def config():
     """Public, non-secret capability flags the UI uses to pick its first screen."""
-    return {"desktop": auth.desktop_mode(), "demo": bool(os.environ.get("DEMO_USER") and os.environ.get("DEMO_PASSWORD")),
-            "ai": ai.enabled(), "github": keys.configured("github"),
+    desktop = auth.desktop_mode()
+    return {"desktop": desktop, "auth": "github", "signin": settings.SUPABASE_ENABLED,
+            "ai": ai.enabled(),
+            # web: our GitHub App (per-user installations); desktop: the user's own token from the keychain
+            "github": keys.configured("github") if desktop else github_access.app_enabled(),
+            "github_mode": "token" if desktop else "app",
             "providers": keys.status(),
             "version": os.environ.get("APP_VERSION", "dev")}
 
 
-# ---- auth ----
-@app.post("/api/auth/register")
-def register(c: Creds, response: Response, request: Request):
-    auth.register(c.email, c.password)
-    return _login(c, response, request)
-
-
-@app.post("/api/auth/login")
-def login(c: Creds, response: Response, request: Request):
-    return _login(c, response, request)
-
-
-def _login(c: Creds, response: Response, request: Request):
-    ip = request.client.host if request.client else "?"
-    tok = auth.login(c.email, c.password, ip)
-    response.set_cookie(auth.COOKIE, tok, httponly=True, samesite="lax", secure=_secure(),
-                        max_age=auth.SESSION_TTL, path="/")
-    return {"email": c.email.strip().lower()}
-
-
-@app.post("/api/auth/demo")
-def demo(response: Response, request: Request):
-    """One-click sign-in to the seeded demo account; credentials stay server-side."""
-    u, p = os.environ.get("DEMO_USER"), os.environ.get("DEMO_PASSWORD")
-    if not (u and p):
-        raise HTTPException(404, "demo account not configured")
-    out = _login(Creds(email=u, password=p), response, request)
-    row = store.q("SELECT id FROM users WHERE email=?", (u.lower(),))
-    if row:  # the shared demo account always opens on an empty workspace
-        ws = workspaces.active(row[0]["id"])
-        harness.wipe(ws)
-        store.wipe_workspace(ws)
-    return out
-
-
-@app.post("/api/auth/local")
-def local(request: Request, response: Response):
-    if not auth.desktop_mode():
-        raise HTTPException(404, "not available")
-    tok = auth.local_login(request.headers.get("x-desktop-token", ""))
-    response.set_cookie(auth.COOKIE, tok, httponly=True, samesite="strict", secure=False,
-                        max_age=auth.SESSION_TTL, path="/")
-    return {"email": auth.LOCAL_EMAIL}
-
-
-@app.post("/api/auth/logout")
-def logout(request: Request, response: Response):
-    auth.logout(request.cookies.get(auth.COOKIE))
-    response.delete_cookie(auth.COOKIE, path="/")
-    return {"ok": True}
-
-
-@app.get("/api/me")
-def me(u: dict = Depends(auth.require_user)):
-    return {"email": u["email"]}
+# ---- auth: see auth.py (GitHub through Supabase; no passwords, no shared demo account) ----
 
 
 # ---- ingest ----
@@ -170,8 +123,8 @@ def ingest_events(ws: int, events: list[Event]) -> int:
     return n
 
 
-def _rate(ws: int) -> None:
-    now, d = time.time(), _hits[ws]
+def _rate(key: str) -> None:
+    now, d = time.time(), _hits[key]
     while d and d[0] < now - INGEST_RATE[1]:
         d.popleft()
     if len(d) >= INGEST_RATE[0]:
@@ -181,7 +134,8 @@ def _rate(ws: int) -> None:
 
 @app.post("/api/ingest")
 def ingest(b: IngestBody, u: dict = Depends(auth.user_or_key)):
-    _rate(u["user_id"])        # per account: switching or multiplying workspaces must not multiply the budget
+    # per account (or per key): switching or multiplying workspaces must not multiply the budget
+    _rate(u["user_id"] or "key:" + hashlib.sha256(u["api_key"].encode()).hexdigest())
     bad: list[dict] = []
     if b.lines:
         if b.format not in PARSERS:
@@ -189,7 +143,16 @@ def ingest(b: IngestBody, u: dict = Depends(auth.user_or_key)):
         events, bad = parse_lines(b.format, b.lines)
     else:
         events = b.events
-    n = ingest_events(u["id"], events)
+    if u.get("api_key"):
+        t0 = time.perf_counter()
+        try:
+            out = store.ingest_with_key(u["api_key"], [_normalize(e) for e in events])
+        except supa.DataError as e:
+            raise HTTPException(401 if e.status in (400, 401, 404) else e.status, "invalid API key") from None
+        n = out.get("accepted", 0)
+        metrics.record_ingest(n, (time.perf_counter() - t0) * 1000)
+    else:
+        n = ingest_events(u["id"], events)
     return {"accepted": n, "rejected": len(bad), "errors": bad[:10]}
 
 
@@ -336,11 +299,6 @@ def get_benchmarks(u: dict = Depends(auth.require_user)):
     return json.loads(p.read_text()) if p.exists() else {"runs": []}
 
 
-@app.post("/api/keys")
-def make_key(b: KeyBody, u: dict = Depends(auth.require_user)):
-    return {"key": auth.create_key(u["user_id"], b.label, u["id"])}
-
-
 @app.get("/api/stream")
 async def stream(request: Request, u: dict = Depends(auth.require_user)):
     ws = u["id"]
@@ -348,7 +306,10 @@ async def stream(request: Request, u: dict = Depends(auth.require_user)):
     async def gen():
         last = None
         while not await request.is_disconnected():
-            ver = (store.event_count(ws), len(store.applied_fixes(ws)))
+            try:   # Supabase calls block: off the event loop (the thread inherits this request's session)
+                ver = await asyncio.to_thread(lambda: (store.event_count(ws), len(store.applied_fixes(ws))))
+            except supa.DataError:
+                return   # e.g. the session expired: the browser reconnects, and the reconnect refreshes it
             if ver != last:
                 last = ver
                 s = await asyncio.to_thread(engine.snapshot, ws)

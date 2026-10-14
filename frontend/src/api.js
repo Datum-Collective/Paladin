@@ -23,11 +23,9 @@ async function req(method, url, body, signal) {
 
 export const api = {
   config: () => req('GET', '/api/config'),
-  local: () => req('POST', '/api/auth/local'),
   me: () => req('GET', '/api/me'),
-  login: (email, password) => req('POST', '/api/auth/login', { email, password }),
-  register: (email, password) => req('POST', '/api/auth/register', { email, password }),
-  demo: () => req('POST', '/api/auth/demo'),
+  // desktop: collect a sign-in finished in the browser (Electron's main process authorises this one request)
+  claim: () => req('POST', '/api/auth/desktop/claim'),
   logout: () => req('POST', '/api/auth/logout'),
   graph: () => req('GET', '/api/graph'),
   paths: () => req('GET', '/api/paths?k=15'),
@@ -56,6 +54,12 @@ export const api = {
   timeline: () => req('GET', '/api/timeline'),
   benchmarks: () => req('GET', '/api/benchmarks'),
   createKey: (label) => req('POST', '/api/keys', { label }),
+  keys: () => req('GET', '/api/keys'),
+  revokeKey: (id) => req('DELETE', `/api/keys/${encodeURIComponent(id)}`),
+  // GitHub App (web): connect, list, manage, disconnect
+  githubInstallUrl: () => req('GET', '/api/github/install-url'),
+  githubRepos: () => req('GET', '/api/github/repos'),
+  githubDisconnect: (id) => req('DELETE', `/api/github/installations/${encodeURIComponent(id)}`),
   workspaces: () => req('GET', '/api/workspaces'),
   createWorkspace: (name) => req('POST', '/api/workspaces', { name: name || null }),
   importRepo: (query) => req('POST', '/api/workspaces/import', { query }),

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import { hhmm } from './lib.js'
 import { useToast } from './toast.jsx'
@@ -200,8 +200,15 @@ export function Ingest({ onDone, desktop }) {
     } catch (e) { toast(e.message, 'bad') }
   }
   const file = async (e) => { const f = e.target.files[0]; if (f) setText(await f.text()) }
+  const [keys, setKeys] = useState([])
+  const [label, setLabel] = useState('')
+  const loadKeys = useCallback(() => api.keys().then((r) => setKeys(r.keys)).catch(() => {}), [])
+  useEffect(() => { loadKeys() }, [loadKeys])
   const makeKey = async () => {
-    try { setKey((await api.createKey('source')).key) } catch (e) { toast(e.message, 'bad') }
+    try { setKey((await api.createKey(label.trim() || 'source')).key); setLabel(''); loadKeys() } catch (e) { toast(e.message, 'bad') }
+  }
+  const revoke = async (id) => {
+    try { await api.revokeKey(id); toast('Key revoked', 'ok'); loadKeys() } catch (e) { toast(e.message, 'bad') }
   }
   const curl = `curl -X POST ${location.origin}/api/ingest -H "X-API-Key: ${key}" -H "Content-Type: application/json" \\
   -d '{"format":"${fmt}","lines":["<one log line>"]}'`
@@ -219,8 +226,24 @@ export function Ingest({ onDone, desktop }) {
         <button className="primary" onClick={send} disabled={!text}>Import Logs</button>
       </div>
       <h3>Send from your own system</h3>
-      <button onClick={makeKey}>Create API Key</button>
+      <div className="actions">
+        <input value={label} maxLength={64} onChange={(e) => setLabel(e.target.value)} placeholder="Key name, e.g. web-01 syslog"
+               aria-label="API key name" />
+        <button onClick={makeKey}>Create API Key</button>
+      </div>
+      {key && <p className="muted small">Copy this key now. It is shown only once; Paladin stores only a hash of it.</p>}
       {key && <pre className="runbook">{curl}</pre>}
+      {keys.length > 0 && (
+        <ul className="keylist">
+          {keys.map((k) => (
+            <li key={k.id}>
+              <code>{k.key_prefix}…</code> <span>{k.label}</span>{' '}
+              {k.revoked_at ? <span className="muted small">revoked</span>
+                : <button className="link" onClick={() => revoke(k.id)} aria-label={`Revoke ${k.label}`}>Revoke</button>}
+            </li>
+          ))}
+        </ul>
+      )}
       {key && desktop && (
         <p className="muted small">The desktop engine listens on this machine only, on a port that changes at each launch.</p>
       )}

@@ -1,5 +1,6 @@
 """Minimal GitHub REST client for repository onboarding: parse links, resolve a repo, list the user's repos."""
 import hashlib
+import os
 import re
 import time
 
@@ -59,7 +60,9 @@ def _classify(r: httpx.Response) -> GitHubError:
     if r.status_code in (403, 429) and (r.headers.get("x-ratelimit-remaining") == "0" or "rate limit" in msg.lower()):
         return GitHubError("rate_limit", "GitHub rate limit reached. Add a token in Settings or try again later.", 429)
     if r.status_code in (403, 404):
-        return GitHubError("not_found", "Repository not found. If it is private, add a GitHub token in Settings.", 404)
+        hint = ("add a GitHub token in Settings" if os.environ.get("DESKTOP_MODE") == "1"
+                else "connect it through the GitHub App on the Integrations page")
+        return GitHubError("not_found", f"Repository not found. If it is private, {hint}.", 404)
     if r.status_code >= 500:
         return GitHubError("server", "GitHub is having problems. Try again shortly.", r.status_code)
     return GitHubError("invalid", msg or f"GitHub returned HTTP {r.status_code}.", r.status_code)

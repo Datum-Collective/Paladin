@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
 import { Ingest } from './parts.jsx'
+import GitHubApp from './GitHubApp.jsx'
 
 function Row({ name, desc, state, tone, actions }) {
   return (
@@ -20,7 +21,8 @@ export default function IntegrationsView({ config, desktop, goSettings, onIngest
   const [gh, setGh] = useState(null)
   const [checks, setChecks] = useState({})
   const providers = config.providers || {}
-  useEffect(() => { if (config.github) api.githubStatus().then(setGh).catch(() => setGh({ ok: false, error: 'Could not reach GitHub.' })) }, [config.github])
+  const appMode = config.github_mode === 'app'   // web: per-user GitHub App; desktop: the user's own token
+  useEffect(() => { if (config.github && !appMode) api.githubStatus().then(setGh).catch(() => setGh({ ok: false, error: 'Could not reach GitHub.' })) }, [config.github, appMode])
   const check = async (id) => {
     setChecks((c) => ({ ...c, [id]: { label: 'Checking…', tone: 'info' } }))
     try {
@@ -52,13 +54,13 @@ export default function IntegrationsView({ config, desktop, goSettings, onIngest
         <section className="fgroup">
           <h3>Source control</h3>
           <div className="frows">
-            <Row name="GitHub" desc="Search your repositories, open private ones and send pull requests." state={ghState} tone={ghState.tone}
+            {appMode ? <GitHubApp configured={Boolean(config.github)} /> : <Row name="GitHub" desc="Search your repositories, open private ones and send pull requests." state={ghState} tone={ghState.tone}
                  actions={(
                    <>
                      {config.github && <button onClick={() => { setGh(null); api.githubStatus().then(setGh).catch(() => {}) }}>Verify</button>}
                      <button onClick={() => goSettings('github')}>{config.github ? 'Manage' : 'Connect'}</button>
                    </>
-                 )} />
+                 )} />}
           </div>
         </section>
         <section className="fgroup">

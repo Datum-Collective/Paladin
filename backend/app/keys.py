@@ -10,6 +10,10 @@ _mem: dict[str, str] = {}
 
 
 def get(env_name: str) -> str | None:
+    if env_name == "GITHUB_TOKEN" and os.environ.get("DESKTOP_MODE") != "1":
+        # A server-wide GitHub token would let every signed-in user reach whatever that token can see. On the web,
+        # repo access is per user through the GitHub App (github_access.py); this token is desktop-only.
+        return None
     return _mem.get(env_name) or os.environ.get(env_name) or None
 
 

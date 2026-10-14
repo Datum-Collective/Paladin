@@ -47,20 +47,40 @@ function resolveCommand({ packaged, resourcesPath, repoRoot }) {
   if (packaged) {
     const dir = path.join(resourcesPath, 'backend')
     return { cmd: path.join(dir, EXE), args: [], cwd: dir, staticDir: path.join(resourcesPath, 'ui'),
-             seedDir: path.join(resourcesPath, 'data') }
+             seedDir: path.join(resourcesPath, 'data'), supabaseConfig: path.join(resourcesPath, 'supabase.json') }
   }
   const py = process.platform === 'win32'
     ? path.join(repoRoot, 'backend', '.venv', 'Scripts', 'python.exe')
     : path.join(repoRoot, 'backend', '.venv', 'bin', 'python')
   return { cmd: py, args: [path.join(repoRoot, 'backend', 'desktop_server.py')], cwd: path.join(repoRoot, 'backend'),
-           staticDir: path.join(repoRoot, 'frontend', 'dist'), seedDir: path.join(repoRoot, 'data') }
+           staticDir: path.join(repoRoot, 'frontend', 'dist'), seedDir: path.join(repoRoot, 'data'),
+           // dev: optional; without it the engine reads SUPABASE_URL / SUPABASE_ANON_KEY from backend/.env
+           supabaseConfig: path.join(repoRoot, 'desktop', 'build', 'supabase.json') }
 }
 
-function buildEnv({ base, port, token, dataDir, staticDir, seedDir, version, extra }) {
-  const { ANTHROPIC_API_KEY, GITHUB_TOKEN, ...clean } = base // keys come only from the Settings store
+// Server-only secrets that must never reach the engine on a user's machine, even if set in the parent environment
+const SERVER_SECRETS = ['SUPABASE_SERVICE_KEY', 'SUPABASE_JWT_SECRET', 'GITHUB_APP_CLIENT_SECRET', 'GITHUB_APP_PRIVATE_KEY',
+  'GITHUB_APP_PRIVATE_KEY_PATH', 'GITHUB_APP_ID', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_SLUG', 'APP_URL']
+
+/** Public Supabase settings (project URL + anon key) for sign-in and data. A secret key is refused outright. */
+function readSupabaseConfig(file) {
+  let cfg
+  try { cfg = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null }
+  const url = String(cfg.url || ''), anonKey = String(cfg.anonKey || '')
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url) || !anonKey) return null
+  if (anonKey.startsWith('sb_secret_') || /service_role/.test(Buffer.from(anonKey.split('.')[1] || '', 'base64').toString())) {
+    throw new Error('supabase.json holds a secret key; only the publishable (anon) key may ship with the app')
+  }
+  return { url, anonKey }
+}
+
+function buildEnv({ base, port, token, dataDir, staticDir, seedDir, version, extra, supabase }) {
+  const { ANTHROPIC_API_KEY, GITHUB_TOKEN, ...rest } = base // keys come only from the Settings store
+  const clean = Object.fromEntries(Object.entries(rest).filter(([k]) => !SERVER_SECRETS.includes(k)))
   return {
     ...clean,
     ...extra,
+    ...(supabase ? { SUPABASE_URL: supabase.url, SUPABASE_ANON_KEY: supabase.anonKey } : {}),
     HOST: '127.0.0.1',
     PORT: String(port),
     DATA_DIR: dataDir,
@@ -105,6 +125,7 @@ class Backend extends EventEmitter {
       base: process.env, port: this.port, token: this.token, dataDir,
       staticDir: command.staticDir, seedDir: command.seedDir,
       version, extra: this.opts.getExtraEnv ? this.opts.getExtraEnv() : {},
+      supabase: command.supabaseConfig ? readSupabaseConfig(command.supabaseConfig) : null,
     })
     if (!fs.existsSync(command.cmd)) throw new Error(`backend not found at ${command.cmd}`)
     const proc = spawn(command.cmd, command.args, { cwd: command.cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -150,4 +171,4 @@ class Backend extends EventEmitter {
   }
 }
 
-module.exports = { Backend, freePort, ping, waitHealthy, resolveCommand, buildEnv, EXE }
+module.exports = { readSupabaseConfig, SERVER_SECRETS, Backend, freePort, ping, waitHealthy, resolveCommand, buildEnv, EXE }

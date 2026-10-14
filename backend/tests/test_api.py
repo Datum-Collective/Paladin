@@ -1,10 +1,12 @@
+from conftest import sign_in
+from fakes import DEMO, OTHER
+
 LOG = ("May 14 13:05:11 WEB-BO-01 sshd[912]: Accepted password for www-data from 185.199.110.42 port 51544 ssh2")
 SCAN = ('185.199.110.42 - - [14/May/2024:13:00:01 +0000] "GET /.env HTTP/1.1" 404 153 "-" "Nikto/2.1.6"')
 
 
 def login(c):
-    r = c.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo-password"})
-    assert r.status_code == 200
+    sign_in(c)
 
 
 def test_requires_auth(client):
@@ -14,11 +16,12 @@ def test_requires_auth(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_bad_login_and_register(client):
-    assert client.post("/api/auth/login", json={"email": "demo@example.com", "password": "x"}).status_code == 401
-    assert client.post("/api/auth/register", json={"email": "bad", "password": "longenough1"}).status_code == 422
-    r = client.post("/api/auth/register", json={"email": "a@b.co", "password": "longenough1"})
-    assert r.status_code == 200 and client.get("/api/me").json()["email"] == "a@b.co"
+def test_password_and_demo_sign_in_are_gone(client):
+    """GitHub is the only way in: no password endpoints and no shared demo account."""
+    for path in ("/api/auth/register", "/api/auth/demo", "/api/auth/local"):
+        assert client.post(path, json={"email": "a@b.co", "password": "longenough1"}).status_code in (404, 405)
+    assert client.post("/api/auth/login", json={"email": "demo@example.com", "password": "x"}).status_code == 405
+    assert client.get("/api/me").status_code == 401
 
 
 def test_ingest_raises_risk_and_fix_lowers_it(client):
@@ -51,7 +54,7 @@ def test_workspaces_isolated(client):
     login(client)
     client.post("/api/ingest", json={"format": "linux_auth", "lines": [LOG]})
     client.post("/api/auth/logout")
-    client.post("/api/auth/register", json={"email": "other@b.co", "password": "longenough1"})
+    sign_in(client, OTHER)
     assert client.get("/api/graph").json()["events"] == 0
 
 
@@ -60,13 +63,14 @@ def test_unknown_edge_rejected(client):
     assert client.post("/api/fixes/apply", json={"edges": ["nope"]}).status_code == 422
 
 
-def test_demo_login(client):
-    assert client.post("/api/auth/demo").status_code == 200
-    assert client.get("/api/me").json()["email"] == "demo@example.com"
+def test_me_is_the_github_profile(client):
+    sign_in(client)
+    me = client.get("/api/me").json()
+    assert me["login"] == "demo-gh" and me["id"] == DEMO and me["avatar_url"].startswith("https://")
 
 
 def test_empty_workspace_reports_no_risk(client):
-    client.post("/api/auth/demo")
+    sign_in(client)
     g = client.get("/api/graph").json()
     assert g["events"] == 0 and g["risk"] == 0 and g["severity"] == "LOW"
     assert client.get("/api/paths").json()["paths"] == []

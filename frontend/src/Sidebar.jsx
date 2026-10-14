@@ -34,9 +34,10 @@ export default function Sidebar({ view, setView, graph, empty, canPlay, playing,
 
       <span className="spacer" />
       <nav aria-label="System" className="nav">{FOOT.map(item)}</nav>
-      {!desktop && user && (
-        <button className="nav-item" onClick={onSignOut} aria-label="Sign Out" title={rail ? 'Sign Out' : undefined}>
-          <Icon name="logout" size={16} />{!rail && <span>Sign Out</span>}</button>
+      {user && (
+        <button className="nav-item" onClick={onSignOut} aria-label={`Sign out ${user.login || ''}`.trim()}
+                title={rail ? `Sign Out${user.login ? ` (${user.login})` : ''}` : undefined}>
+          <Icon name="logout" size={16} />{!rail && <span>Sign Out{user.login ? <span className="muted"> · {user.login}</span> : null}</span>}</button>
       )}
       <button className="nav-item collapse" onClick={onToggleRail} aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
               title={rail ? 'Expand sidebar' : undefined}>

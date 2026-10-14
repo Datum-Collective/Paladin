@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
-const { Backend, freePort, waitHealthy, resolveCommand, buildEnv } = require('../src/backend')
+const { Backend, freePort, waitHealthy, resolveCommand, buildEnv, readSupabaseConfig } = require('../src/backend')
 
 test('freePort returns a bindable loopback port', async () => {
   const p = await freePort()
@@ -54,6 +54,33 @@ test('buildEnv pins loopback, desktop mode and drops the demo login', () => {
   assert.equal(env.PATH, '/bin')
   assert.equal(buildEnv({ base: { ANTHROPIC_API_KEY: 'leak' }, port: 1, token: 't', dataDir: '/d', staticDir: '/s',
                           seedDir: '/e', version: 'v', extra: {} }).ANTHROPIC_API_KEY, undefined)
+})
+
+test('buildEnv never passes server secrets to the engine, only the public Supabase settings', () => {
+  const env = buildEnv({ base: { SUPABASE_SERVICE_KEY: 'svc', GITHUB_APP_PRIVATE_KEY: 'pem', GITHUB_APP_CLIENT_SECRET: 'cs',
+                                 SUPABASE_JWT_SECRET: 'jwt', APP_URL: 'https://x', PATH: '/bin' },
+                         port: 1, token: 't', dataDir: '/d', staticDir: '/s', seedDir: '/e', version: 'v', extra: {},
+                         supabase: { url: 'https://abc.supabase.co', anonKey: 'sb_publishable_x' } })
+  for (const k of ['SUPABASE_SERVICE_KEY', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_APP_CLIENT_SECRET', 'SUPABASE_JWT_SECRET', 'APP_URL']) {
+    assert.equal(env[k], undefined, k)
+  }
+  assert.equal(env.SUPABASE_URL, 'https://abc.supabase.co')
+  assert.equal(env.SUPABASE_ANON_KEY, 'sb_publishable_x')
+})
+
+test('readSupabaseConfig accepts a publishable key and refuses a secret one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paladin-sb-'))
+  const f = path.join(dir, 'supabase.json')
+  fs.writeFileSync(f, JSON.stringify({ url: 'https://abc.supabase.co', anonKey: 'sb_publishable_x' }))
+  assert.deepEqual(readSupabaseConfig(f), { url: 'https://abc.supabase.co', anonKey: 'sb_publishable_x' })
+  fs.writeFileSync(f, JSON.stringify({ url: 'https://abc.supabase.co', anonKey: 'sb_secret_x' }))
+  assert.throws(() => readSupabaseConfig(f), /secret key/)
+  const legacy = ['x', Buffer.from('{"role":"service_role"}').toString('base64'), 'y'].join('.')
+  fs.writeFileSync(f, JSON.stringify({ url: 'https://abc.supabase.co', anonKey: legacy }))
+  assert.throws(() => readSupabaseConfig(f), /secret key/)
+  fs.writeFileSync(f, JSON.stringify({ url: 'http://evil.example', anonKey: 'k' }))
+  assert.equal(readSupabaseConfig(f), null)
+  assert.equal(readSupabaseConfig(path.join(dir, 'missing.json')), null)
 })
 
 test('Backend fails with a clear error when the binary is missing', async () => {
