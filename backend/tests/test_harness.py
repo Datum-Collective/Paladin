@@ -123,3 +123,40 @@ def test_validation_isolation_and_busy(client, repo):
     client.post("/api/auth/register", json={"email": "o@b.co", "password": "longenough1"})
     assert client.get(f"/api/harness/jobs/{j['id']}").status_code == 404
     assert client.get(f"/api/harness/jobs/{j['id']}/patch").status_code == 404
+
+
+def test_html_rules_and_fixers():
+    src = '<a href="x" target="_blank">x</a>\n<script src="http://cdn.example.com/a.js"></script>\n'
+    fs = __import__("app.codescan", fromlist=["x"]).static_scan([{"path": "index.html", "content": src}])
+    assert {f["rule"] for f in fs} == {"blank-noopener", "http-script-src"}
+    out = src
+    for f in sorted(fs, key=lambda f: -f["line"]):
+        r = fixers.try_fix(out, f)
+        assert r, f["rule"]
+        out = r["content"]
+    assert 'rel="noopener noreferrer"' in out and "https://cdn.example.com" in out
+
+
+def test_clean_and_unscannable_repos_say_so(client, tmp_path, monkeypatch):
+    import subprocess, os
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": os.environ["PATH"], "HOME": str(tmp_path)}
+
+    def mk(name, files):
+        r = tmp_path / name
+        r.mkdir()
+        for k, v in files.items():
+            (r / k).write_text(v)
+        for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "i"]):
+            subprocess.run(["git", *cmd], cwd=r, env=env, check=True)
+        return r
+
+    client.post("/api/auth/demo")
+    cases = [(mk("docs_only", {"README.md": "hi"}), "nothing to scan"),
+             (mk("clean", {"index.html": '<a target="_blank" rel="noopener" href="x">x</a>'}), "clean: no findings")]
+    for repo_dir, expect in cases:
+        j = client.post("/api/harness/jobs", json={"repo_url": str(repo_dir)}).json()
+        harness.wait(j["id"])
+        job = client.get(f"/api/harness/jobs/{j['id']}").json()
+        assert job["state"] == "done" and any(expect in l["msg"] for l in job["log"]), job["log"]

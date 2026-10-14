@@ -145,8 +145,20 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
             raise RuntimeError("repository too large")
         _upd(jid, state="scanning")
         files = load_files(src)
+        total = sum(1 for p in src.rglob("*") if p.is_file() and ".git" not in p.relative_to(src).parts)
+        kept = codescan.accept_files(files)
+        exts = sorted({Path(f["path"]).suffix or f["path"] for f in kept})
+        _log(jid, f"repo has {total} files; {len(kept)} are scannable source "
+                  f"({', '.join(exts) or 'none'}); {total - len(kept)} skipped (docs, binaries, lockfiles, "
+                  "vendored or oversized)")
+        if not kept:
+            sample = ", ".join(sorted(Path(f["path"]).name for f in files)[:6])
+            codescan.persist(ws, f"{owner}/{repo}", [], False, 0)
+            _upd(jid, state="done", fixes="[]")
+            _log(jid, f"nothing to scan: no source files in a supported language (found: {sample or 'no text files'})")
+            return
         findings, ai_used, n = codescan.scan(files)
-        _log(jid, f"scanned {n} source files: {len(findings)} candidate findings"
+        _log(jid, f"scanned {n} files: {len(findings)} candidate findings"
                   f"{' (Haiku triaged)' if ai_used else ' (static only)'}")
         codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
         _upd(jid, state="fixing", ai_used=int(ai_used))
@@ -156,7 +168,10 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str) -> None:
         _upd(jid, findings=json.dumps(findings))
         if not fixes:
             _upd(jid, state="done", fixes="[]")
-            _log(jid, "no safe automatic fixes were produced")
+            live = [f for f in findings if f["exploitable"] is not False]
+            _log(jid, "clean: no findings, nothing to fix" if not findings else
+                 f"{len(findings)} candidate(s), {len(findings) - len(live)} judged not exploitable, "
+                 f"{len(live)} need a manual fix (no safe automatic patch)")
             return
         branch = f"apc/fix-{jid}-{int(time.time())}"
         _git(["checkout", "-q", "-b", branch], cwd=src)

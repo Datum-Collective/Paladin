@@ -9,7 +9,8 @@ from . import ai, store
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FINDINGS = 300, 200_000, 3_000_000, 60
 SKIP_DIRS = ("node_modules/", ".git/", ".venv/", "venv/", "__pycache__/", "dist/", "build/", "vendor/")
 SKIP_FILES = (".env", ".pem", ".key", "id_rsa", "package-lock.json", "yarn.lock", ".min.js")
-CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rb", ".php", ".cs", ".sh", ".yaml", ".yml")
+CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".java", ".go", ".rb", ".php", ".cs", ".sh",
+            ".yaml", ".yml", ".html", ".htm", ".vue", ".svelte")
 ROUTE = re.compile(r"@(app|router|bp)\.(get|post|put|delete|route)|app\.(get|post|put|delete)\(|@RequestMapping|"
                    r"@(Get|Post)Mapping|http\.HandleFunc")
 
@@ -30,6 +31,10 @@ RULES = [
      "credentials", "Weak hash"),
     ("xss-sink", re.compile(r"innerHTML\s*=|dangerouslySetInnerHTML|document\.write\("), "CWE-79", "T1189",
      "sessions", "Unescaped HTML sink"),
+    ("blank-noopener", re.compile(r"""target\s*=\s*["']_blank["'](?![^>]*\brel\s*=)"""), "CWE-1022", "T1189",
+     "sessions", "target=_blank without rel=noopener"),
+    ("http-script-src", re.compile(r"""<script[^>]+src\s*=\s*["']http://""", re.I), "CWE-829", "T1189",
+     "sessions", "Script loaded over plain HTTP"),
     ("debug-on", re.compile(r"debug\s*=\s*True"), "CWE-489", "T1190", "host", "Debug mode enabled"),
 ]
 SINKS = {
