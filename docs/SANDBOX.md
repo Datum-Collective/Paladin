@@ -25,7 +25,7 @@ The Docker socket is available only to the trusted orchestrator. It is never mou
 ## Lifecycle
 
 1. Create a uniquely named, labelled Docker volume.
-2. Start the runner with a read-only root filesystem, non-root UID/GID, no added capabilities, `no-new-privileges`, CPU/memory/PID limits, bounded `/tmp`, bridge networking, and no published ports.
+2. Start the runner with a minimal init process, read-only root filesystem, non-root UID/GID, no added capabilities, `no-new-privileges`, CPU/memory/PID limits, bounded `/tmp`, bridge networking, and no published ports. The init process reaps orphaned child processes created by repository commands until teardown.
 3. Clone with hooks, submodules, symlinks, prompts, and the local Git transport disabled.
 4. Execute explicit analysis commands and capture bounded stdout, stderr, exit status, and timeout state.
 5. Read only requested, path-validated files for an orchestrator-side AI request.
