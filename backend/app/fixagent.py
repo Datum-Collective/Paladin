@@ -107,10 +107,13 @@ def run_tests(root: Path) -> TestRun:
         except Exception as e:  # noqa: BLE001 - infrastructure trouble is "could not run", never "passed"
             return TestRun(False, command=cmd, runner="docker sandbox", reason=f"sandbox failed: {e}"[:300])
     if os.environ.get("APC_ALLOW_LOCAL_TESTS") == "1":
-        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR") if k in os.environ}
-        env.update(HOME=os.environ.get("TMPDIR", "/tmp"), PYTHONDONTWRITEBYTECODE="1", CI="1")
+        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+               if k in os.environ}
+        tmp = os.environ.get("TMPDIR") or os.environ.get("TEMP") or "/tmp"
+        env.update(HOME=tmp, USERPROFILE=tmp, PYTHONDONTWRITEBYTECODE="1", CI="1")
         try:
-            r = subprocess.run(["/bin/sh", "-c", cmd.replace(" --user", "")], cwd=root, env=env, capture_output=True,
+            # the platform shell (sh, or cmd.exe on Windows); the command is ours, built in detect_tests
+            r = subprocess.run(cmd.replace(" --user", ""), shell=True, cwd=root, env=env, capture_output=True,  # noqa: S602
                                text=True, timeout=TEST_TIMEOUT)
             return TestRun(True, r.returncode == 0, cmd, r.returncode, (r.stdout + r.stderr)[-8000:], "this machine")
         except subprocess.TimeoutExpired:

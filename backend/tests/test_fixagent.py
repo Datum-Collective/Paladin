@@ -1,7 +1,6 @@
 """The fixing agent. A scripted Claude speaks the real Messages streaming wire format through the official SDK (mock
 transport); the repository's tests really run (pytest in a subprocess); the verdict never comes from the model."""
 import json
-import shlex
 import subprocess
 import sys
 import threading
@@ -73,7 +72,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setenv("APC_OSV", "0")
     monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
     monkeypatch.setattr(fixagent, "detect_tests",
-                        lambda root: f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider")
+                        lambda root: f'"{sys.executable}" -m pytest -x -q -p no:cacheprovider')
     return tmp_path
 
 
@@ -164,7 +163,10 @@ def test_without_a_sandbox_a_good_fix_is_never_called_verified(repo, monkeypatch
 
 def test_the_agent_cannot_weaken_checks_or_leave_the_repository(repo, monkeypatch):
     (repo.parent / "outside.txt").write_text("secret")
-    (repo / "link").symlink_to(repo.parent)
+    try:
+        (repo / "link").symlink_to(repo.parent)
+    except OSError:          # Windows without Developer Mode cannot create symlinks; the other checks still run
+        (repo / "link").mkdir()
     calls = [("edit_file", {"path": "test_app.py", "old": "assert", "new": "pass  #"}),
              ("read_file", {"path": "../outside.txt"}), ("read_file", {"path": "/etc/passwd"}),
              ("read_file", {"path": "link/outside.txt"}), ("read_file", {"path": ".git/config"}),
@@ -239,7 +241,7 @@ def test_endpoint_streams_the_run_and_commits_only_a_verified_fix(client, tmp_pa
     monkeypatch.setenv("APC_OSV", "0")
     monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
     monkeypatch.setattr(fixagent, "detect_tests",
-                        lambda root: f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider")
+                        lambda root: f'"{sys.executable}" -m pytest -x -q -p no:cacheprovider')
     r = tmp_path / "victim"
     r.mkdir()
     (r / "app.py").write_text(EXEC_APP)
