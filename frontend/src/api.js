@@ -79,6 +79,7 @@ export const api = {
   providers: () => req('GET', '/api/providers'),
   models: (pid) => req('GET', `/api/providers/${pid}/models`),
   validate: (pid) => req('POST', `/api/providers/${pid}/validate`),
+  testProvider: (pid, model) => req('POST', `/api/providers/${pid}/test`, { model }),
 }
 
 /** POST the conversation and call onEvent for each normalised event. Resolves when the stream ends; abort with the

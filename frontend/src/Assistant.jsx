@@ -33,7 +33,7 @@ function ErrorNote({ e, onRetry, goSettings }) {
   )
 }
 
-export default function Assistant({ goSettings, workspaceEmpty }) {
+export default function Assistant({ goSettings, onSetup, workspaceEmpty }) {
   const [providers, setProviders] = useState(null)
   const { prefs, set: setPref } = usePrefs()
   const provider = prefs['assistant.provider'] || 'anthropic'
@@ -133,7 +133,7 @@ export default function Assistant({ goSettings, workspaceEmpty }) {
               <>
                 <h2>Connect a model provider</h2>
                 <p className="muted">Add a Claude or OpenAI API key to ask questions about your attack paths. Keys are stored in the system keychain.</p>
-                <div className="actions center"><button className="primary" onClick={goSettings}>Open Settings</button></div>
+                <div className="actions center"><button className="primary" onClick={onSetup}>Set Up a Provider</button><button onClick={goSettings}>Open Settings</button></div>
               </>
             ) : !cfg.configured ? (
               <>

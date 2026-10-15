@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import { ago } from './lib.js'
+import { Skeleton } from './ui.jsx'
 import Icon from './Icons.jsx'
 
 const TONE = { failed: 'bad', done: 'ok', ready: 'ok', pr_opened: 'ok', queued: 'info', cloning: 'info', scanning: 'info', fixing: 'info' }
@@ -46,7 +47,7 @@ export default function ActivityView({ onRetry, goSettings }) {
           {busy && <span className="muted small"><span className="spinner tiny" aria-hidden="true" /> A scan is running</span>}
         </div>
         {err && <div className="inline-error" role="alert"><span>{err}</span><button onClick={load}>Try Again</button></div>}
-        {items === null && !err && <p className="muted">Loading…</p>}
+        {items === null && !err && <Skeleton lines={4} />}
         {items && shown.length === 0 && (
           <div className="empty-block"><h2>No activity yet</h2>
             <p className="muted">Scans and remediation steps for this workspace are recorded here.</p></div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Icon from './Icons.jsx'
 import { parseDiff, withInline } from './diffParse.js'
 import { api } from './api.js'
+import { Skeleton } from './ui.jsx'
 
 function Code({ line }) {
   if (!line.mark || line.mark[0] >= line.mark[1]) return <>{line.text || ' '}</>
@@ -37,7 +38,7 @@ function FullFile({ jobId, path }) {
     return () => { live = false }
   }, [jobId, path])
   if (err) return <p className="err">{err}</p>
-  if (!data) return <p className="muted">Loading file…</p>
+  if (!data) return <Skeleton lines={6} />
   const changed = new Set(data.changed_lines)
   return (
     <table className="diff full"><tbody>

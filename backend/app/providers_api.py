@@ -81,6 +81,22 @@ async def validate(pid: str, _: dict = Depends(auth.require_user)):
     return await _provider(pid).validate()
 
 
+class TestBody(BaseModel):
+    model: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/api/providers/{pid}/test")
+async def test_connection(pid: str, b: TestBody, _: dict = Depends(auth.require_user)):
+    """Setup's connection test: a real one-token round trip. Failures are a normal 200 {ok: false} so the UI can
+    show the provider's reason beside the field instead of a generic request error."""
+    try:
+        return await _provider(pid).probe(b.model)
+    except HTTPException:
+        raise
+    except Exception:  # a malformed provider reply must reach the UI as a reason, not a bare 500
+        return {"ok": False, "error": ProviderError("server", "The provider sent a reply Paladin could not read.").to_event()}
+
+
 @router.post("/api/assistant/chat")
 async def chat(b: ChatBody, request: Request, u: dict = Depends(auth.require_user)):
     p = _provider(b.provider)

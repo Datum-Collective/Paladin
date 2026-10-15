@@ -14,6 +14,7 @@ import { ConfirmDialog, NewWorkspaceDialog } from './Dialogs.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
+import Setup from './Setup.jsx'
 import { classifyInput, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
@@ -115,6 +116,8 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [homeFocus, setHomeFocus] = useState(0)
   const [homeIntent, setHomeIntent] = useState(null)
   const [newDlg, setNewDlg] = useState(false)
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [setupRuns, setSetupRuns] = useState(0)   // bumps when setup closes so Settings re-reads key state
   const [delTarget, setDelTarget] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
   const [rail, setRail] = useStored('sidebar-rail', false)
@@ -135,6 +138,18 @@ function Shell({ config, user, onSignOut, onExpired }) {
     }
     setView(prefs['general.startup'] === 'last' && wsl.current ? 'analysis' : 'home')
   }, [view, prefsReady, wsl.loaded, wsl.current, prefs, toast])
+
+  // First launch: nothing validated, nothing skipped, and no provider key anywhere. Returning users (including
+  // web users whose server already holds a key) go straight in; setup stays reachable from Settings and the palette.
+  const checkedSetup = useRef(false)
+  useEffect(() => {
+    if (checkedSetup.current || !prefsReady) return
+    checkedSetup.current = true
+    if (prefs['general.setup_done'] || prefs['general.setup_skipped']) return
+    api.providers().then((r) => {
+      if (!r.providers.some((p) => p.configured)) setSetupOpen(true)
+    }).catch(() => {})
+  }, [prefsReady, prefs])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
@@ -188,7 +203,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       },
       workspaces: () => setView('workspaces'), activity: () => setView('activity'), integrations: () => setView('integrations'),
       analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
-      assistant: () => setView('assistant'), settings: () => goSettings(), ingest: () => go('ingest'),
+      assistant: () => setView('assistant'), settings: () => goSettings(), setup: () => setSetupOpen(true), ingest: () => go('ingest'),
       events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
       'toggle-sidebar': () => setSidebarOpen((o) => !o), 'collapse-sidebar': () => { setSidebarOpen(true); setRail((r) => !r) }, 'toggle-inspector': () => setInspectorOpen((o) => !o),
       play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
@@ -240,6 +255,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
       { id: 'insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks' },
       { id: 'assistant', group: 'Go to', title: 'Assistant', icon: 'chat', hint: 'Ask about your paths', keywords: 'claude openai chat ask' },
+      { id: 'setup', group: 'Actions', title: 'Set up AI provider…', icon: 'shield', hint: 'Provider, key and model', keywords: 'onboarding claude openai api key model connect' },
       { id: 'settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys providers updates preferences' },
       { id: 'ingest', group: 'Actions', title: 'Add log data…', icon: 'upload', keywords: 'ingest upload paste logs' },
       { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
@@ -308,14 +324,15 @@ function Shell({ config, user, onSignOut, onExpired }) {
         {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
         {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} />}
-        {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} workspaceEmpty={ws.empty} />}
-        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
+        {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} />}
+        {view === 'settings' && <Settings key={setupRuns} pane={pane} setPane={setPane} onSetup={() => setSetupOpen(true)} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
                     desktop={config.desktop} inspectorOpen={inspectorOpen} />
         )}
       </div>
 
+      {setupOpen && <Setup config={config} onClose={() => { setSetupOpen(false); setSetupRuns((n) => n + 1) }} onOpenAssistant={() => setView('assistant')} />}
       {newDlg && (
         <NewWorkspaceDialog desktop={config.desktop} onCancel={() => setNewDlg(false)} onCreate={createNamed}
                             onImportRepo={importRepo} onImportFolder={importLocal} onChooseFolder={chooseFolder} />

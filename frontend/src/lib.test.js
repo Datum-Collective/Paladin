@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -121,5 +121,36 @@ describe('filter and sort workspaces', () => {
   it('names a folder from its path', () => {
     expect(folderName('/Users/me/code/api/')).toBe('api')
     expect(folderName('C:\\code\\api')).toBe('api')
+  })
+})
+
+describe('keyProblem', () => {
+  it('accepts well-formed keys for each provider', () => {
+    expect(keyProblem('anthropic', 'sk-ant-api03-' + 'a'.repeat(30))).toBe('')
+    expect(keyProblem('openai', 'sk-proj-' + 'b'.repeat(30))).toBe('')
+  })
+  it('names what is wrong', () => {
+    expect(keyProblem('anthropic', '')).toBe('')                      // empty is "not entered yet", not an error
+    expect(keyProblem('anthropic', 'sk-' + 'a'.repeat(40))).toMatch(/sk-ant-/)
+    expect(keyProblem('openai', 'nope-' + 'a'.repeat(40))).toMatch(/sk-/)
+    expect(keyProblem('openai', 'sk-abc')).toMatch(/short/i)
+    expect(keyProblem('openai', 'sk-abc def' + 'x'.repeat(30))).toMatch(/space/i)
+  })
+})
+
+describe('setupAdvice', () => {
+  it('sends credential problems back to the key step', () => {
+    expect(setupAdvice({ kind: 'auth' }).goto).toBe('key')
+    expect(setupAdvice({ kind: 'permission' }).goto).toBe('model')
+  })
+  it('sends model problems to the model step and transient ones to a retry', () => {
+    expect(setupAdvice({ kind: 'not_found' }).goto).toBe('model')
+    expect(setupAdvice({ kind: 'rate_limit' })).toMatchObject({ goto: null, retry: true })
+    expect(setupAdvice({ kind: 'network' })).toMatchObject({ goto: null, retry: true })
+    expect(setupAdvice({ kind: 'quota' })).toMatchObject({ goto: null, retry: false })
+  })
+  it('falls back to a retry for unknown kinds', () => {
+    expect(setupAdvice({ kind: 'weird' }).retry).toBe(true)
+    expect(setupAdvice(null).retry).toBe(true)
   })
 })

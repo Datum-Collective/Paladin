@@ -3,6 +3,7 @@ import Graph from './Graph.jsx'
 import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
+import { Tabs } from './ui.jsx'
 import { Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
 export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
@@ -27,13 +28,8 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
   return (
     <main className="analysis" ref={root} style={{ gridTemplateColumns: `${leftW}px 1fr ${rightW}px` }}>
       <section className="pane left" aria-label="Paths, events and data">
-        <div className="seg small" role="tablist">
-          {[['paths', 'Paths'], ['events', 'Events'], ['ingest', 'Import']].map(([t, l]) => (
-            <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-              {l}{t === 'paths' && paths.length > 0 && <span className="count"> {paths.length}</span>}
-            </button>
-          ))}
-        </div>
+        <Tabs label="Paths, events and data" value={tab} onChange={setTab}
+              tabs={[{ id: 'paths', label: 'Paths', count: paths.length }, { id: 'events', label: 'Events' }, { id: 'ingest', label: 'Import' }]} />
         {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
           <ul className="rows selectable" role="listbox" aria-label="Attack paths">
             {paths.map((p) => (
@@ -57,14 +53,8 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
 
       {inspectorOpen && <Resizer side="right" value={rightW} min={260} max={560} onChange={setRight} label="Resize inspector" />}
       <aside className="pane right" aria-label="Inspector" hidden={!inspectorOpen}>
-        <div className="seg small" role="tablist">
-          {[['path', 'Path'], ['fixes', 'Fixes'], ['rem', 'Remediation']].map(([t, l]) => (
-            <button key={t} role="tab" aria-selected={inspect === t} className={inspect === t ? 'on' : ''}
-                    onClick={() => setInspect(t)}>
-              {l}{t === 'rem' && pending > 0 && <span className="count"> {pending}</span>}
-            </button>
-          ))}
-        </div>
+        <Tabs label="Inspector" value={inspect} onChange={setInspect}
+              tabs={[{ id: 'path', label: 'Path' }, { id: 'fixes', label: 'Fixes' }, { id: 'rem', label: 'Remediation', count: pending }]} />
         {inspect === 'path' && (empty ? <p className="muted">Nothing selected.</p> : <PathDetail path={sel} />)}
         {inspect === 'fixes' && (empty ? <p className="muted">Nothing to fix yet.</p> : <Fixes fixes={fixes} onPropose={propose} />)}
         {inspect === 'rem' && <Remediations items={rems} onChange={refresh} />}
