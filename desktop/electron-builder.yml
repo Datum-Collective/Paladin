@@ -49,12 +49,18 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # No spaces: GitHub turns spaces in release file names into dots, and latest.yml must name the file exactly,
+  # or every installed copy fails to download its update.
+  artifactName: Paladin-Setup-${version}.${ext}
 publish:
   provider: github
   owner: Manipal-Hackathon-2026
   repo: DATUM
 # Hardening: turn off the Electron features this app never uses (Electron fuses guide).
 electronFuses:
+  # Session cookies (including the long-lived refresh token) are encrypted on disk with the OS key store (DPAPI on
+  # Windows). Without this fuse Electron writes them in plain text under %APPDATA%\Paladin\Network\Cookies.
+  enableCookieEncryption: true
   runAsNode: false
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
