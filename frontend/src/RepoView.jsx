@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from './api.js'
+import { api, downloadText } from './api.js'
 import { looksLikeRepo, scanStages } from './lib.js'
 import DiffView from './DiffView.jsx'
 import Icon from './Icons.jsx'
@@ -238,9 +238,11 @@ export default function RepoView({ onDone, onViewPaths }) {
               </div>
               <div className="actions">
                 <button onClick={copy}><Icon name="copy" size={14} /> {copied ? 'Copied' : 'Copy patch'}</button>
-                <a className="btn" href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download</a>
+                <button onClick={async () => { try { await downloadText(`/api/harness/jobs/${job.id}/patch`, `paladin-fixes-${job.id}.patch`) } catch (e) { setErr(e.message) } }}>
+                  Download Patch</button>
                 {job.state === 'ready' && (
-                  <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
+                  <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}
+                          title={cfg.github_enabled ? undefined : 'Pull requests need a connected GitHub account. Download the patch instead.'}>
                     {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}

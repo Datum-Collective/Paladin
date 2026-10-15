@@ -5,7 +5,9 @@ connector, and verifies against later events. Every transition is audited.
 """
 import time
 
-from . import ai, codescan, engine, inventory, store, supa
+import json
+
+from . import ai, codefix, codescan, engine, inventory, store, supa
 from .correlate import matches
 from .narrate import mitigation_name, technique
 
@@ -40,6 +42,10 @@ def _row(r) -> dict:
     d.pop("user_id", None)
     d["edges"] = [e for e in d["edges"] if isinstance(e, str)] if isinstance(d.get("edges"), list) else []
     d["ai_drafted"] = bool(d["ai_drafted"])
+    for k, want in (("files", list), ("finding_ids", list)):
+        if not isinstance(d.get(k), want):
+            d[k] = []
+    d.setdefault("kind", "model")
     return d
 
 
@@ -71,9 +77,20 @@ def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     valid = {e.id for e in engine.workspace_model(ws)[1]}
     if not edge_ids or any(e not in valid for e in edge_ids):
         raise ValueError("unknown edge id")
+    code = [e for e in edge_ids if codefix.is_code_edge(e)]
+    if code and len(code) != len(edge_ids):
+        raise ValueError("Code fixes and log-environment fixes are separate remediations. Propose them one at a time.")
+    if code and codefix.latest_job(ws) is not None:
+        return _propose_code(ws, actor, edge_ids, title)
+    # a code model with no repository scan behind it (findings uploaded through the API): there is no source copy to
+    # patch, so this stays a planning record and says so
+    no_source = bool(code)
     facts = _facts(ws, edge_ids)
     text = ai.draft(facts)
     runbook, used_ai = (text, True) if text else (template_runbook(facts), False)
+    if no_source:
+        runbook = ("No source copy is available for these findings (they were uploaded, not scanned from a "
+                   "repository), so this is a plan only: no files are changed.\n" + runbook)
     now = time.time()
     rid = supa.insert("remediations", {
         "ws": ws, "user_id": supa.user_id(), "edges": sorted(set(edge_ids)), "state": "proposed", "title": title[:120],
@@ -81,6 +98,24 @@ def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     }, returning="id")[0]["id"]
     _audit(ws, rid, actor, "proposed", ",".join(edge_ids))
     return get(ws, rid)
+
+
+def _propose_code(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
+    try:
+        p = codefix.plan(ws, edge_ids)
+    except codefix.FixError as e:
+        raise ValueError(str(e)) from None
+    now = time.time()
+    rid = supa.insert("remediations", {
+        "ws": ws, "user_id": supa.user_id(), "edges": sorted(set(edge_ids)), "state": "proposed", "title": title[:120],
+        "runbook": codefix.summary_runbook(p)[:20000], "ai_drafted": any(f["method"] == "haiku" for f in p["fixed"]),
+        "connector": "git", "created": now, "updated": now, "kind": "code", "job": p["job"], "patch": p["patch"],
+        "files": p["files"], "finding_ids": p["finding_ids"], "applied": "",
+    }, returning="id")[0]["id"]
+    _audit(ws, rid, actor, "proposed", f"{len(p['fixed'])} fix(es) in {len(p['files'])} file(s)")
+    out = get(ws, rid)
+    out["plan"] = {"fixed": p["fixed"], "manual": p["manual"]}
+    return out
 
 
 def get(ws: int, rid: int) -> dict:
@@ -127,12 +162,16 @@ def approve(ws: int, rid: int, actor: str) -> dict:
     return _set(ws, rid, "approved", actor)
 
 
-def execute(ws: int, rid: int, actor: str) -> dict:
+def execute(ws: int, rid: int, actor: str, applied_to: str = "") -> dict:
     """Model connector: closes the edges in the analysed environment. This is NOT a change to real hosts;
-    a real connector would replace this call and the state machine stays the same."""
+    a real connector would replace this call and the state machine stays the same. Code remediations are
+    applied by execute_code() instead, which changes files (or opens a pull request) before recording this."""
     cur = get(ws, rid)
     if cur["state"] != "approved":
         raise ValueError(f"cannot go from {cur['state']} to executed")
+    if cur["kind"] == "code":
+        return _set(ws, rid, "executed", actor, f"applied to {applied_to}"[:480], applied=applied_to[:480],
+                    mark=store.event_count(ws))
     def live(snap):  # paths an analyst would act on
         return sum(1 for p in snap["paths"] if p["severity"] in ("CRITICAL", "HIGH", "MEDIUM"))
 
@@ -151,6 +190,8 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
     if cur["state"] != "executed":
         raise ValueError(f"cannot go from {cur['state']} to verified")
+    if cur["kind"] == "code":
+        return _verify_code(ws, rid, actor, cur)
     from .models import Edge
     inv = {e.id: e for e in engine.workspace_model(ws)[1]}
     later = store.get_events(ws)[cur["mark"]:]
@@ -162,12 +203,72 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     return _set(ws, rid, "failed", actor, why, note=why)
 
 
+def _verify_code(ws: int, rid: int, actor: str, cur: dict) -> dict:
+    """Read the files as they are now (the folder, or the patch re-applied to the scanned copy for a pull
+    request), then update findings and the graph only when the check passed."""
+    kind, where = codefix.target(_job_repo(ws, cur))
+    try:
+        if kind == "local":
+            def read(path):
+                p = where / path
+                return p.read_text(encoding="utf-8") if p.is_file() and not p.is_symlink() else None
+            res = codefix.verify_files(read, cur["files"])
+            scope = "the files on disk"
+        else:
+            final = codefix.materialize(cur["job"], _job_repo(ws, cur), cur["files"], cur["patch"])
+            res = codefix.verify_files(final.get, cur["files"])
+            scope = "the patched files (the pull request is not merged yet)"
+    except codefix.FixError as e:
+        raise ValueError(str(e)) from None
+    if res["ok"]:
+        def live(snap):
+            return sum(1 for p in snap["paths"] if p["severity"] in ("CRITICAL", "HIGH", "MEDIUM"))
+        b = engine.snapshot(ws)
+        codescan.set_applied(ws, cur["finding_ids"], True)
+        a = engine.snapshot(ws)
+        detail = f"checked {scope}: parses, targeted rules no longer match. Tests were not run."
+        if res["notes"]:
+            detail += " " + "; ".join(res["notes"])
+        return _set(ws, rid, "verified", actor, detail[:480], risk_before=round(b["risk"], 4),
+                    risk_after=round(a["risk"], 4), paths_before=live(b), paths_after=live(a))
+    why = "; ".join(res["problems"])[:480]
+    return _set(ws, rid, "failed", actor, why, note=why)
+
+
+def _job_repo(ws: int, cur: dict) -> str:
+    r = supa.first("jobs", {"id": supa.eq(cur["job"]), "ws": supa.eq(ws)}, columns="repo_url") if cur.get("job") else None
+    if not r:
+        raise ValueError("The scan this fix came from no longer exists.")
+    return r["repo_url"]
+
+
 def rollback(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
+    if cur["kind"] == "code":
+        return _rollback_code(ws, rid, actor, cur)
     out = _set(ws, rid, "rolled_back", actor)
     keep = set()
     for other in list_(ws):
         if other["id"] != rid and other["state"] in ("executed", "verified"):
             keep |= set(other["edges"])
     store.remove_fixes(ws, sorted(set(cur["edges"]) - keep))
+    return out
+
+
+def _rollback_code(ws: int, rid: int, actor: str, cur: dict) -> dict:
+    if "rolled_back" not in NEXT[cur["state"]]:
+        raise ValueError(f"cannot go from {cur['state']} to rolled_back")
+    kind, where = codefix.target(_job_repo(ws, cur))
+    note = ""
+    if kind == "local":
+        try:
+            codefix.apply_local(where, cur["patch"], reverse=True)       # refuses if the files were edited since
+        except codefix.FixError as e:
+            raise ValueError(str(e)) from None
+        note = "restored the original lines in the folder"
+    else:
+        note = ("the pull request is on GitHub: close it there to withdraw the change"
+                if cur.get("applied") else "nothing had been sent to GitHub")
+    out = _set(ws, rid, "rolled_back", actor, note)
+    codescan.set_applied(ws, cur["finding_ids"], False)
     return out

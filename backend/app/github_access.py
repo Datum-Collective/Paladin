@@ -572,6 +572,25 @@ async def open_job_pr(u: dict, jid: int) -> dict:
     return await asyncio.to_thread(harness.mark_pr_opened, u["id"], jid, out["pull_request"]["html_url"])
 
 
+async def open_fix_pr(u: dict, repo_full: str, title: str, body: str, commit_message: str, files: dict[str, str]) -> str:
+    """Send exactly `files` as a pull request through the fixes-branch flow and return its URL."""
+    _write_limit.hit(f"user:{u['user_id']}")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo_full or ""):
+        raise HTTPException(409, "Pull requests are only available for GitHub repositories.")
+    owner, repo = repo_full.split("/", 1)
+    if config.desktop_mode():
+        ctx = await _token_repo(u["user_id"], owner, repo)
+    else:
+        ctx = await resolve_repo(u["user_id"], owner, repo)
+        if ctx is None:
+            raise HTTPException(409, "Connect this repository through the GitHub App (Integrations) to open pull "
+                                     "requests, or download the patch instead.")
+    fix = FixRequest(title=title[:200], body=body[:10_000], commit_message=commit_message[:500],
+                     files=[FileChange(path=p, content=c) for p, c in files.items()])
+    out = await commit_fix(ctx, fix)
+    return out["pull_request"]["html_url"]
+
+
 async def clone_token(user_id: str, owner: str, repo: str) -> str | None:
     """Web: a read-only token for this one repo if it is in the user's own installation, else None (public clone).
     Desktop: None, and the scan uses the user's own token from the keychain."""

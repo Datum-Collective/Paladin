@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
+import { Skeleton } from './ui.jsx'
 
 const SRC_COLOR = { linux_auth: 'var(--info)', web_access: 'var(--text-2)', ids_alert: 'var(--warn)', json: 'var(--bg-3)' }
 const fmtTime = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(11, 16)
@@ -65,7 +66,7 @@ function CountBars({ rows, label }) {
 const tally = (items, key) => Object.entries(items.reduce((a, f) => ({ ...a, [f[key]]: (a[f[key]] || 0) + 1 }), {}))
   .sort((a, b) => b[1] - a[1]).slice(0, 8)
 
-function RiskLine({ series }) {
+function RiskLine({ series, unit = 'events ingested →' }) {
   const W = 640, H = 130, P = 30
   if (series.length < 2) return <p className="muted">Needs at least two checkpoints of events.</p>
   const max = Math.max(1, ...series.map((s) => s.risk))
@@ -75,11 +76,11 @@ function RiskLine({ series }) {
       <polyline fill="none" style={{ stroke: 'var(--bad)' }} strokeWidth="2" points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')} />
       {pts.map((p, i) => (
         <circle key={i} cx={p[0]} cy={p[1]} r="3" style={{ fill: 'var(--bad)' }}>
-          <title>{`${p[2].events} events: risk ${p[2].risk}, ${p[2].paths} paths`}</title></circle>
+          <title>{`${p[2].events ? `${p[2].events} events: ` : ''}risk ${p[2].risk}, ${p[2].paths} paths`}</title></circle>
       ))}
       <text x={4} y={14} fontSize="10" fill="currentColor">{max.toFixed(2)}</text>
       <text x={4} y={H - 18} fontSize="10" fill="currentColor">0</text>
-      <text x={W / 2} y={H - 2} fontSize="10" textAnchor="middle" fill="currentColor">events ingested →</text>
+      <text x={W / 2} y={H - 2} fontSize="10" textAnchor="middle" fill="currentColor">{unit}</text>
     </svg>
   )
 }
@@ -93,63 +94,110 @@ function Table({ cols, rows }) {
   )
 }
 
+const SEV_ORDER = ['critical', 'high', 'medium', 'low']
+
+/** What each remediation did to risk. Code remediations are the only source of a before/after for a repository. */
+function remediationSeries(rems) {
+  const done = rems.filter((r) => r.risk_before != null && ['verified', 'executed'].includes(r.state)).sort((x, y) => x.id - y.id)
+  if (!done.length) return []
+  return [{ events: 0, risk: done[0].risk_before, paths: done[0].paths_before }, ...done.map((r) => ({ events: 0, risk: r.risk_after, paths: r.paths_after }))]
+}
+
 export default function Insights({ rems }) {
   const [t, setT] = useState(null)
   const [m, setM] = useState(null)
   const [code, setCode] = useState(null)
-  useEffect(() => {
-    api.timeline().then(setT).catch(() => {})
-    api.metrics().then(setM).catch(() => {})
-    api.codeReport().then(setCode).catch(() => {})
-  }, [])
-  const findings = code && code.scanned ? code.findings : []
+  const [err, setErr] = useState('')
+  const load = () => {
+    setErr('')
+    Promise.all([api.timeline().then(setT), api.metrics().then(setM), api.codeReport().then(setCode)])
+      .catch((e) => setErr(e.message || 'Could not load insights.'))
+  }
+  useEffect(load, [rems.length, rems.map((r) => r.state).join()])    // eslint-disable-line react-hooks/exhaustive-deps
+  if (err) return <div className="insights"><div className="inline-error" role="alert"><span>{err}</span><button onClick={load}>Try Again</button></div></div>
+  if (!m || !t || !code) return <div className="insights"><Skeleton lines={5} /></div>
+  const findings = code.scanned ? code.findings : []
+  const open = findings.filter((f) => !f.fixed && f.exploitable !== false)
+  const hasEvents = m.compression.raw_events > 0
   const done = rems.filter((r) => r.risk_before != null)
+  const series = hasEvents && t.risk_series.length >= 2 ? t.risk_series : remediationSeries(rems)
+  const sev = SEV_ORDER.map((s) => [s[0].toUpperCase() + s.slice(1), open.filter((f) => (f.severity || 'medium') === s).length]).filter((x) => x[1] > 0)
+  const status = [['Confirmed', open.filter((f) => f.status === 'confirmed').length],
+    ['Potential', open.filter((f) => f.status !== 'confirmed').length],
+    ['Fixed', findings.filter((f) => f.fixed).length],
+    ['Judged not exploitable', findings.filter((f) => f.exploitable === false).length]].filter((x) => x[1] > 0)
+  const nothing = !hasEvents && !findings.length && !m.compression.ranked_paths
   return (
     <div className="insights">
       <section className="card">
-        <h3>From events to action</h3>
-        {m && (
-          <div className="stats">
-            <div><b>{m.compression.raw_events}</b><span>security events</span></div>
-            <div><b>{m.compression.confirmed_steps}</b><span>confirmed attack steps</span></div>
-            <div><b>{m.compression.ranked_paths}</b><span>ranked paths</span></div>
-            <div><b>{m.compression.critical_or_high}</b><span>critical / high</span></div>
-          </div>
-        )}
+        <h3>From {findings.length && !hasEvents ? 'findings' : 'events'} to action</h3>
+        <div className="stats">
+          {hasEvents ? (
+            <>
+              <div><b>{m.compression.raw_events}</b><span>security events</span></div>
+              <div><b>{m.compression.confirmed_steps}</b><span>confirmed attack steps</span></div>
+            </>
+          ) : (
+            <>
+              <div><b>{open.length}</b><span>open findings</span></div>
+              <div><b>{findings.filter((f) => f.fixed).length}</b><span>fixed</span></div>
+            </>
+          )}
+          <div><b>{m.compression.ranked_paths}</b><span>ranked paths</span></div>
+          <div><b>{m.compression.critical_or_high}</b><span>critical / high</span></div>
+        </div>
+        {nothing && <p className="muted">Nothing analysed yet. Paste a repository on Home, or import logs under Analysis, and the results appear here.</p>}
       </section>
+
       {findings.length > 0 && (
         <section className="card wide-card">
           <h3>Repository findings · {code.repo}</h3>
           <div className="stats">
             <div><b>{findings.length}</b><span>findings</span></div>
+            <div><b>{open.filter((f) => f.status === 'confirmed').length}</b><span>confirmed</span></div>
             <div><b>{findings.filter((f) => f.fixed).length}</b><span>fixed</span></div>
-            <div><b>{findings.filter((f) => f.exploitable === false).length}</b><span>judged not exploitable</span></div>
             <div><b>{code.files}</b><span>files scanned</span></div>
           </div>
           <div className="two-col">
-            <div><h4>By rule</h4><CountBars rows={tally(findings, 'title')} label="Findings by rule" /></div>
-            <div><h4>By file</h4><CountBars rows={tally(findings, 'file')} label="Findings by file" /></div>
+            <div><h4>By severity (open)</h4><CountBars rows={sev} label="Open findings by severity" /></div>
+            <div><h4>By status</h4><CountBars rows={status} label="Findings by status" /></div>
+            <div><h4>By rule</h4><CountBars rows={tally(open, 'title')} label="Open findings by rule" /></div>
+            <div><h4>By file</h4><CountBars rows={tally(open, 'file')} label="Open findings by file" /></div>
           </div>
         </section>
       )}
-      <section className="card">
-        <h3>Attack timeline</h3>
-        {t && <Timeline data={t} />}
-        <p className="muted">Bars: events by source over time. Red markers: when an attack step was first confirmed.</p>
-        {t && t.confirmed.length > 0 && (
-          <Table cols={[['first_seen', 'first seen'], ['technique', 'technique'], ['src', 'from'], ['dst', 'to'], ['p', 'p']]}
-                 rows={t.confirmed.map((c) => ({ ...c, first_seen: fmtTime(c.first_seen) }))} />
-        )}
-      </section>
+
+      {hasEvents ? (
+        <section className="card">
+          <h3>Attack timeline</h3>
+          <Timeline data={t} />
+          <p className="muted">Bars: events by source over time. Red markers: when an attack step was first confirmed.</p>
+          {t.confirmed.length > 0 && (
+            <Table cols={[['first_seen', 'first seen'], ['technique', 'technique'], ['src', 'from'], ['dst', 'to'], ['p', 'p']]}
+                   rows={t.confirmed.map((c) => ({ ...c, first_seen: fmtTime(c.first_seen) }))} />
+          )}
+        </section>
+      ) : findings.length > 0 && (
+        <section className="card">
+          <h3>Log data</h3>
+          <p className="muted">This workspace has no log events, so there is no attack timeline. Import logs under Analysis → Import to see when
+            attack steps were first observed.</p>
+        </section>
+      )}
+
       <section className="card">
         <h3>Risk over time</h3>
-        {t && <RiskLine series={t.risk_series} />}
+        {series.length >= 2 ? <RiskLine series={series} unit={hasEvents && t.risk_series.length >= 2 ? 'events ingested →' : 'after each verified fix →'} />
+          : <p className="muted">{hasEvents ? 'Needs at least two checkpoints of events.'
+            : 'Verify an applied fix and the risk before and after it is plotted here.'}</p>}
       </section>
+
       <section className="card">
         <h3>Before and after remediation</h3>
-        {done.length === 0 ? <p className="muted">Execute a remediation to compare risk and paths.</p> : (
+        {done.length === 0 ? <p className="muted">Apply a fix, then verify it: risk and dangerous paths before and after appear here.</p> : (
           <Table cols={[['id', '#'], ['title', 'fix'], ['risk_before', 'risk before'], ['risk_after', 'risk after'],
-                        ['paths_before', 'paths before'], ['paths_after', 'paths after'], ['state', 'state']]} rows={done} />
+                        ['paths_before', 'paths before'], ['paths_after', 'paths after'], ['state', 'state']]}
+                 rows={done.map((r) => ({ ...r, state: (r.state || '').replace('_', ' ') }))} />
         )}
       </section>
     </div>

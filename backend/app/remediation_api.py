@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from . import ai, auth, remediation as rem
+import asyncio
+
+from . import ai, auth, codefix, github_access, remediation as rem
 
 router = APIRouter(prefix="/api/remediations", tags=["remediation"])
 
@@ -45,6 +48,14 @@ def detail(rid: int, u: dict = Depends(auth.require_user)):
     return r
 
 
+@router.get("/{rid}/patch", response_class=PlainTextResponse)
+def patch(rid: int, u: dict = Depends(auth.require_user)):
+    r = _guard(rem.get, u["id"], rid)
+    if r["kind"] != "code" or not r["patch"]:
+        raise HTTPException(404, "this remediation has no patch")
+    return r["patch"]
+
+
 @router.post("/{rid}/approve")
 def approve(rid: int, u: dict = Depends(auth.require_user)):
     if not can_approve(u):
@@ -53,8 +64,29 @@ def approve(rid: int, u: dict = Depends(auth.require_user)):
 
 
 @router.post("/{rid}/execute")
-def execute(rid: int, u: dict = Depends(auth.require_user)):
-    return _guard(rem.execute, u["id"], rid, u["actor"])
+async def execute(rid: int, u: dict = Depends(auth.require_user)):
+    ws = u["id"]
+    cur = await asyncio.to_thread(_guard, rem.get, ws, rid)
+    if cur["kind"] != "code":
+        return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"])
+    if cur["state"] != "approved":
+        raise HTTPException(409, f"cannot go from {cur['state']} to executed")
+    try:
+        repo = await asyncio.to_thread(rem._job_repo, ws, cur)
+        kind, where = codefix.target(repo)
+        if kind == "local":
+            dirty = await asyncio.to_thread(codefix.uncommitted, where, [f["path"] for f in cur["files"]])
+            await asyncio.to_thread(codefix.apply_local, where, cur["patch"])      # check, then apply; all or nothing
+            applied = f"local folder {where.name}" + (f" ({len(dirty)} file(s) had your uncommitted edits, kept)" if dirty else "")
+        else:
+            final = await asyncio.to_thread(codefix.materialize, cur["job"], repo, cur["files"], cur["patch"])
+            url = await github_access.open_fix_pr(
+                u, repo, cur["title"] or "Security fixes", cur["runbook"],
+                f"Fix {len(cur['finding_ids'])} security finding(s) found by Paladin", final)
+            applied = url
+    except codefix.FixError as e:
+        raise HTTPException(409, str(e)) from None
+    return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"], applied)
 
 
 @router.post("/{rid}/verify")

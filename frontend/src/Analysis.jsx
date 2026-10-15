@@ -62,7 +62,7 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
         {inspect === 'path' && el && <ElementDetail el={el} graph={graph} onClear={() => setEl(null)} />}
         {inspect === 'path' && (empty ? <p className="muted">Nothing selected.</p> : <PathDetail path={sel} />)}
         {inspect === 'fixes' && (empty ? <p className="muted">Nothing to fix yet.</p> : <Fixes fixes={fixes} onPropose={propose} />)}
-        {inspect === 'rem' && <Remediations items={rems} onChange={refresh} />}
+        {inspect === 'rem' && <Remediations items={rems} onChange={refresh} desktop={desktop} />}
       </aside>
     </main>
   )

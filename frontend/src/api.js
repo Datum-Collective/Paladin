@@ -85,7 +85,26 @@ export const api = {
   renameConversation: (id, title) => req('PATCH', `/api/conversations/${id}`, { title }),
   deleteConversation: (id) => req('DELETE', `/api/conversations/${id}`),
   conversationMessages: (id) => req('GET', `/api/conversations/${id}/messages`),
+  remediationPatchUrl: (id) => `/api/remediations/${id}/patch`,
   testProvider: (pid, model) => req('POST', `/api/providers/${pid}/test`, { model }),
+}
+
+/** Save a text response from the engine as a file. An <a target=_blank> does nothing in the desktop window (every
+ *  non-https popup is denied), and a plain link would also drop the workspace header. */
+export async function downloadText(url, filename) {
+  const r = await fetch(url, { credentials: 'same-origin', headers: wsHeader() })
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}))
+    throw new Error(typeof d.detail === 'string' ? d.detail : 'Could not download the patch.')
+  }
+  const blob = new Blob([await r.text()], { type: 'text/x-diff' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  document.body.append(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
 }
 
 /** POST the conversation and call onEvent for each normalised event. Resolves when the stream ends; abort with the

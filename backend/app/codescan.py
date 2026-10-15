@@ -169,7 +169,7 @@ def to_model(findings: list[dict], mitigation_for, refs: dict | None = None) -> 
     edges: list[dict] = []
     entry_p: dict[str, float] = {}
     entry_routed: dict[str, bool] = {}
-    live = [f for f in findings if f["exploitable"] is not False]
+    live = [f for f in findings if f["exploitable"] is not False and not f.get("fixed_applied")]
     for f in live:
         comp = f"code:{f['file']}"
         nodes.setdefault(comp, {"id": comp, "kind": "component", "label": f["file"], "criticality": 3,
@@ -354,6 +354,7 @@ def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: in
         return m[0] if m else ""
 
     model = to_model(findings, mitigation_for, refs)
+    model["refs"] = refs or {}            # kept so the graph can be rebuilt when findings are fixed or restored
     supa.upsert("code_models", {"ws": ws, "user_id": supa.user_id(), "repo": repo[:120], "created": time.time(),
                                 "ai_used": bool(ai_used), "files": n_files, "model": model, "findings": findings}, "ws")
     return report(ws)
@@ -382,6 +383,30 @@ def report(ws: int) -> dict:
         f.pop("context", None)
     return {"scanned": True, "repo": r["repo"], "files": r["files"], "ai_used": bool(r["ai_used"]),
             "findings": fs}
+
+
+def set_applied(ws: int, ids: list[str], applied: bool) -> int:
+    """Mark findings as fixed (an applied, verified remediation) or open again, and rebuild the graph from them.
+    Returns how many findings changed. A fixed finding leaves the attack-path graph; rolling back restores it."""
+    from .narrate import technique
+    r = supa.first("code_models", {"ws": supa.eq(ws)})
+    if not r or not isinstance(r.get("findings"), list):
+        return 0
+    n = 0
+    for f in r["findings"]:
+        if isinstance(f, dict) and f.get("id") in ids and bool(f.get("fixed_applied")) != applied:
+            f["fixed_applied"] = applied
+            f["fixed"] = applied
+            n += 1
+    if n:
+        def mitigation_for(t: str) -> str:
+            m = technique(t).get("mitigations", [])
+            return m[0] if m else ""
+        refs = (r.get("model") or {}).get("refs") if isinstance(r.get("model"), dict) else None
+        model = to_model(r["findings"], mitigation_for, refs)
+        model["refs"] = refs or {}
+        supa.update("code_models", {"ws": supa.eq(ws)}, {"findings": r["findings"], "model": model}, returning=None)
+    return n
 
 
 def clear(ws: int) -> None:
