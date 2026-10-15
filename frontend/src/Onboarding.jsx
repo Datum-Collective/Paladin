@@ -1,35 +1,131 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from './Icons.jsx'
 import { api } from './api.js'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
-const STEPS = ['Welcome', 'GitHub', 'Model', 'Start']
 const PROVIDERS = [
-  { id: 'anthropic', name: 'Claude', field: 'anthropicApiKey', hint: 'Anthropic API key' },
-  { id: 'openai', name: 'OpenAI', field: 'openaiApiKey', hint: 'OpenAI API key' },
+  { id: 'anthropic', name: 'Claude', field: 'anthropicApiKey', hint: 'Anthropic API key', note: 'Best for the assistant and fix review' },
+  { id: 'openai', name: 'OpenAI', field: 'openaiApiKey', hint: 'OpenAI API key', note: 'GPT models for chat and review' },
 ]
+const FEATURES = [
+  { id: 'paths', icon: 'graph', title: 'Ranked attack paths',
+    text: 'Logs, scans and your asset map are joined into the routes an attacker could actually take, ordered by real risk.' },
+  { id: 'fix', icon: 'check', title: 'The cheapest fix',
+    text: 'One change, chosen to cut the most paths for the least effort, with the exact paths it removes shown up front.' },
+  { id: 'track', icon: 'repo', title: 'Tracked to a merged PR',
+    text: 'Propose, review, open the pull request and verify. Every step is recorded so nothing quietly goes stale.' },
+]
+// order matters for the dots and the sun: welcome, what it does, github, model, start, done
+const ORDER = ['welcome', 'features', 'github', 'model', 'start', 'done']
 
-/** First-run guide: what Paladin does, optional GitHub and model keys, then a way in. Every step can be skipped. */
+/** Attack graph that draws itself: an attacker's route lights up, then the cheapest cut severs it. */
+function HeroGraph() {
+  const N = { i: [46, 150], w: [170, 70], v: [170, 236], a: [320, 150], d: [468, 78], x: [468, 232], c: [596, 150] }
+  const E = [['i', 'w'], ['i', 'v'], ['w', 'a'], ['v', 'a'], ['a', 'd'], ['a', 'x'], ['d', 'c'], ['x', 'c']]
+  const path = ['i', 'w', 'a', 'd', 'c']
+  const pt = (k) => N[k].join(',')
+  const label = { i: 'Internet', w: 'Web', v: 'VPN', a: 'App', d: 'Database', x: 'Admin', c: 'Crown jewels' }
+  return (
+    <svg className="hero-graph" viewBox="0 0 660 300" role="img" aria-label="An attack path from the internet to the crown jewels being cut at one edge">
+      {E.map(([a, b]) => <line key={a + b} className="g-edge" x1={N[a][0]} y1={N[a][1]} x2={N[b][0]} y2={N[b][1]} />)}
+      <polyline className="g-path" points={path.map(pt).join(' ')} pathLength="1" />
+      <g transform={`translate(${(N.a[0] + N.d[0]) / 2} ${(N.a[1] + N.d[1]) / 2})`}>
+        <g className="g-cut"><circle r="15" /><path d="M-5 -5L5 5M5 -5L-5 5" /></g>
+      </g>
+      {Object.entries(N).map(([k, [x, y]], n) => (
+        <g key={k} transform={`translate(${x} ${y})`}>
+          <g className={`g-node${k === 'c' ? ' crown' : ''}${path.includes(k) ? ' on' : ''}`} style={{ '--n': n }}>
+            <circle r={k === 'c' ? 17 : 11} />
+            <text y={k === 'c' ? 36 : 28} textAnchor="middle">{label[k]}</text>
+          </g>
+        </g>
+      ))}
+    </svg>
+  )
+}
+
+function FeatureArt({ id }) {
+  if (id === 'paths') {
+    return (
+      <div className="art art-paths" aria-hidden="true">
+        {[['Internet → Web → App → Database', 92], ['Phishing → Laptop → AD → File server', 71], ['VPN → Admin panel → Backups', 48]].map(([t, r], i) => (
+          <div key={t} className="art-row" style={{ '--i': i }}><span>{t}</span><i style={{ '--w': `${r}%` }} /><b>{(r / 10).toFixed(1)}</b></div>
+        ))}
+      </div>
+    )
+  }
+  if (id === 'fix') {
+    return (
+      <div className="art art-fix" aria-hidden="true">
+        <div className="art-file">nginx/default.conf</div>
+        <div className="art-line del" style={{ '--i': 0 }}>- allow all;</div>
+        <div className="art-line add" style={{ '--i': 1 }}>+ allow 10.0.0.0/8;</div>
+        <div className="art-line add" style={{ '--i': 2 }}>+ deny all;</div>
+        <div className="art-chip">Cuts 6 of 9 paths</div>
+      </div>
+    )
+  }
+  return (
+    <div className="art art-track" aria-hidden="true">
+      {['Proposed', 'Approved', 'PR opened', 'Verified'].map((s, i) => (
+        <div key={s} className="art-step" style={{ '--i': i }}><span className="art-dot" /><span>{s}</span></div>
+      ))}
+    </div>
+  )
+}
+
+function Sun() { return <div className="ob-sun" aria-hidden="true" /> }
+
+/** First-run experience: welcome, what Paladin does, optional GitHub and model setup, a starting point, then a send-off. */
 export default function Onboarding({ config, user, canPlay, onFinish }) {
-  const [step, setStep] = useState(0)
+  const [i, setI] = useState(0)
+  const [dir, setDir] = useState('fwd')
+  const [feature, setFeature] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [provider, setProvider] = useState('anthropic')
   const [secret, setSecret] = useState('')
   const [saved, setSaved] = useState({})
+  const [choice, setChoice] = useState(canPlay ? 'sample' : 'repo')
+  const [leaving, setLeaving] = useState(false)
+  const root = useRef(null)
+  const step = ORDER[i]
   const providers = config.providers || {}
   const canStoreKeys = Boolean(config.desktop && bridge)
-  const first = (user && (user.name || user.login) || '').split(' ')[0]
+  const first = ((user && (user.name || user.login)) || '').split(' ')[0]
+  const modelReady = Boolean(providers.anthropic || providers.openai || saved.anthropicApiKey || saved.openaiApiKey)
+  const p = PROVIDERS.find((x) => x.id === provider)
 
-  useEffect(() => { setErr(''); setSecret('') }, [step, provider])
+  const go = useCallback((n) => {
+    setErr(''); setSecret('')
+    setI((cur) => { const t = Math.max(0, Math.min(ORDER.length - 1, typeof n === 'function' ? n(cur) : n)); setDir(t >= cur ? 'fwd' : 'back'); return t })
+  }, [])
+  const next = useCallback(() => go((c) => c + 1), [go])
+  const back = useCallback(() => go((c) => c - 1), [go])
+
+  const finish = useCallback((c) => {
+    if (leaving) return
+    setLeaving(true)
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    setTimeout(() => onFinish(c), reduce ? 0 : 620)
+  }, [leaving, onFinish])
+
+  useEffect(() => { if (root.current) root.current.focus() }, [])
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onFinish('skip') }
+    const onKey = (e) => {
+      const typing = /^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || '')
+      if (e.key === 'Escape') finish('skip')
+      else if (!typing && e.key === 'ArrowRight' && step !== 'done') next()
+      else if (!typing && e.key === 'ArrowLeft') back()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onFinish])
-
-  const next = () => setStep((n) => Math.min(STEPS.length - 1, n + 1))
-  const back = () => setStep((n) => Math.max(0, n - 1))
+  }, [finish, next, back, step])
+  useEffect(() => {      // the feature tour advances itself until the person takes over
+    if (step !== 'features') return undefined
+    const t = setInterval(() => setFeature((f) => (f + 1) % FEATURES.length), 5200)
+    return () => clearInterval(t)
+  }, [step, feature])
 
   const connectGithub = async () => {
     setBusy(true); setErr('')
@@ -48,120 +144,187 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
   }
 
   const ghMode = config.github_mode
-  const p = PROVIDERS.find((x) => x.id === provider)
-  const modelReady = providers.anthropic || providers.openai || saved.anthropicApiKey || saved.openaiApiKey
-
-  const lead = step === 0 ? (first ? `Hi ${first}.` : 'Hi there.') : step === 1 ? 'Bring your code.' : step === 2 ? 'Give it a brain.' : 'Pick a starting point.'
-  const sub = step === 0
-    ? 'Paladin turns your logs and repositories into ranked attack paths, then shows the cheapest fix. Let’s get you set up in a minute.'
-    : step === 1 ? 'Connect GitHub so Paladin can read the repositories you choose.'
-      : step === 2 ? 'Add a model key to unlock the assistant and AI review. Paladin works without one.'
-        : 'You can change all of this later in Settings.'
-  const primary = step === 0 ? 'Get started'
-    : step < 3 ? ((step === 1 ? saved.githubToken : modelReady) ? 'Continue' : 'Skip for now') : null
+  const startLabel = { sample: 'Replaying the sample scenario', repo: 'Opening the repository launcher', explore: 'Landing on Home' }[choice]
+  const primary = step === 'welcome' ? 'Get started'
+    : step === 'features' ? 'Continue'
+      : step === 'github' ? (saved.githubToken ? 'Continue' : 'Skip for now')
+        : step === 'model' ? (modelReady ? 'Continue' : 'Skip for now')
+          : step === 'start' ? 'Continue' : null
 
   return (
-    <div className="ob-screen" role="dialog" aria-modal="true" aria-labelledby="ob-t" tabIndex={-1}
-         ref={(el) => el && !el.contains(document.activeElement) && el.focus()}>
+    <div ref={root} className={`ob-screen${leaving ? ' out' : ''}`} role="dialog" aria-modal="true" aria-labelledby="ob-t" tabIndex={-1}
+         style={{ '--p': i / (ORDER.length - 1) }}>
+      <Sun />
       <header className="ob-top">
         <span className="brand"><span className="brand-mark" aria-hidden="true" />Paladin</span>
-        <button className="link ob-skip" onClick={() => onFinish('skip')}>Skip setup</button>
+        {step !== 'done' && <button className="link ob-skip" onClick={() => finish('skip')}>Skip setup</button>}
       </header>
 
-      <main className="ob-stage" key={step}>
-        <h1 id="ob-t" className="ob-lead">{lead}</h1>
-        <p className="ob-sub">{sub}</p>
+      <main className="ob-stage" key={step} data-dir={dir} data-step={step}>
+        {step === 'welcome' && (
+          <>
+            <div className="ob-copy">
+              <span className="ob-eyebrow">Attack path compiler</span>
+              <h1 id="ob-t" className="ob-lead">{first ? <>Hi {first}.<br />Let’s find the shortest way in.</> : <>Hi there.<br />Let’s find the shortest way in.</>}</h1>
+              <p className="ob-sub">Paladin reads your logs and repositories, works out how an attacker would get to what matters, and tells you the
+                cheapest change that closes the most doors.</p>
+            </div>
+            <HeroGraph />
+          </>
+        )}
 
-        <div className="ob-body">
-          {step === 0 && (
-            <ul className="ob-tiles">
-              <li><span className="ob-ico"><Icon name="graph" size={18} /></span><span><b>Ranked attack paths</b><small>From the signals you already have.</small></span></li>
-              <li><span className="ob-ico"><Icon name="check" size={18} /></span><span><b>The cheapest fix</b><small>And exactly which paths it removes.</small></span></li>
-              <li><span className="ob-ico"><Icon name="repo" size={18} /></span><span><b>Tracked to a merged PR</b><small>Remediation from finding to fix.</small></span></li>
-            </ul>
-          )}
+        {step === 'features' && (
+          <>
+            <div className="ob-copy">
+              <span className="ob-eyebrow">What you get</span>
+              <h1 id="ob-t" className="ob-lead">From noise to a short, ordered list.</h1>
+              <div className="ob-tabs" role="tablist">
+                {FEATURES.map((f, n) => (
+                  <button key={f.id} role="tab" aria-selected={feature === n} className={feature === n ? 'ob-tab on' : 'ob-tab'}
+                          onClick={() => setFeature(n)}>
+                    <span className="ob-ico"><Icon name={f.icon} size={18} /></span>
+                    <span><b>{f.title}</b>{feature === n && <small>{f.text}</small>}</span>
+                    {feature === n && <i className="ob-timer" key={`t${feature}`} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ob-visual" key={feature}><FeatureArt id={FEATURES[feature].id} /></div>
+          </>
+        )}
 
-          {step === 1 && (
-            <div className="ob-card">
-              {ghMode === 'app' && config.github ? (
-                <>
+        {step === 'github' && (
+          <>
+            <div className="ob-copy">
+              <span className="ob-eyebrow">Step 1 of 2 · optional</span>
+              <h1 id="ob-t" className="ob-lead">Bring your code.</h1>
+              <p className="ob-sub">Connect GitHub so Paladin can read the repositories you choose and open pull requests with fixes.</p>
+              <div className="ob-card">
+                {ghMode === 'app' && config.github ? (
                   <button className="ob-cta" disabled={busy} onClick={connectGithub}><Icon name="github" size={18} /> Connect GitHub</button>
-                  <p className="ob-note">You choose the repositories. Fixes only ever go to a separate <code>fixes</code> branch.</p>
-                </>
-              ) : ghMode === 'app' ? (
-                <p className="ob-note">Repository access isn’t configured on this server. Public repositories still work by pasting a link.</p>
-              ) : canStoreKeys ? (
-                <>
-                  <div className="ob-row">
-                    <input type="password" autoComplete="off" spellCheck={false} placeholder="GitHub personal access token" value={secret}
-                           disabled={busy} onChange={(e) => setSecret(e.target.value.trim())} />
-                    <button className="ob-pill" disabled={!secret || busy} onClick={() => saveSecret('githubToken')}>Save</button>
-                  </div>
-                  <p className="ob-note">{saved.githubToken ? 'Saved to your system keychain.' : 'Stored in your system keychain, never on a server.'}</p>
-                </>
-              ) : (
-                <p className="ob-note">Public repositories work with just a link. A token is configured on the server for private ones.</p>
-              )}
-              {err && <p className="ob-err" role="alert">{err}</p>}
+                ) : ghMode === 'app' ? (
+                  <p className="ob-note">Repository access isn’t configured on this server. Public repositories still work by pasting a link.</p>
+                ) : canStoreKeys ? (
+                  <>
+                    <div className="ob-row">
+                      <input type="password" autoComplete="off" spellCheck={false} placeholder="GitHub personal access token" value={secret}
+                             disabled={busy} onChange={(e) => setSecret(e.target.value.trim())} />
+                      <button className="ob-pill" disabled={!secret || busy} onClick={() => saveSecret('githubToken')}>Save</button>
+                    </div>
+                    <p className="ob-note">{saved.githubToken ? 'Saved to your system keychain.' : 'Stored in your system keychain, never on a server.'}</p>
+                  </>
+                ) : (
+                  <p className="ob-note">Public repositories work with just a link. A token is configured on the server for private ones.</p>
+                )}
+                {err && <p className="ob-err" role="alert">{err}</p>}
+              </div>
             </div>
-          )}
-
-          {step === 2 && (
-            <div className="ob-card">
-              {canStoreKeys ? (
-                <>
-                  <div className="ob-seg" role="radiogroup" aria-label="Provider">
-                    {PROVIDERS.map((x) => (
-                      <button key={x.id} role="radio" aria-checked={provider === x.id} className={provider === x.id ? 'on' : ''}
-                              onClick={() => setProvider(x.id)}>{x.name}</button>
-                    ))}
-                  </div>
-                  <div className="ob-row">
-                    <input type="password" autoComplete="off" spellCheck={false} placeholder={p.hint} value={secret}
-                           disabled={busy} onChange={(e) => setSecret(e.target.value.trim())} />
-                    <button className="ob-pill" disabled={!secret || busy} onClick={() => saveSecret(p.field)}>Save</button>
-                  </div>
-                  <p className="ob-note">{saved[p.field] ? `${p.name} key saved to your keychain.` : 'Stored in your system keychain, never on a server.'}</p>
-                </>
-              ) : (
-                <p className="ob-note">
-                  <span className={`ob-status ${modelReady ? 'on' : ''}`}>{modelReady ? 'Ready' : 'Not set'}</span>{' '}
-                  {modelReady ? 'This server already has a model key, so the assistant works.'
-                    : 'On the web, model keys are set by the server administrator. Store your own in the desktop app.'}
-                </p>
-              )}
-              {err && <p className="ob-err" role="alert">{err}</p>}
+            <div className="ob-visual">
+              <div className="art art-repos" aria-hidden="true">
+                <div className="art-head">You choose the repositories</div>
+                {['your-org/api', 'your-org/web', 'your-org/infra'].map((r, n) => (
+                  <div key={r} className="art-repo" style={{ '--i': n }}><Icon name="repo" size={15} /><span>{r}</span><i className={n === 2 ? '' : 'on'} /></div>
+                ))}
+                <div className="art-foot"><Icon name="lock" size={13} /> Fixes only go to a separate <code>fixes</code> branch</div>
+              </div>
             </div>
-          )}
+          </>
+        )}
 
-          {step === 3 && (
-            <div className="ob-choices">
-              {canPlay && (
-                <button className="ob-choice" onClick={() => onFinish('sample')}>
-                  <span className="ob-ico"><Icon name="play" size={18} /></span>
-                  <span><b>Try the sample scenario</b><small>Replay a realistic attack and watch the paths rank.</small></span>
+        {step === 'model' && (
+          <>
+            <div className="ob-copy">
+              <span className="ob-eyebrow">Step 2 of 2 · optional</span>
+              <h1 id="ob-t" className="ob-lead">Give it a brain.</h1>
+              <p className="ob-sub">A model key unlocks the assistant and AI review of findings. Paladin works fully without one.</p>
+              <div className="ob-card">
+                {canStoreKeys ? (
+                  <>
+                    <div className="ob-providers" role="radiogroup" aria-label="Provider">
+                      {PROVIDERS.map((x) => (
+                        <button key={x.id} role="radio" aria-checked={provider === x.id} className={provider === x.id ? 'ob-prov on' : 'ob-prov'}
+                                onClick={() => setProvider(x.id)}>
+                          <b>{x.name}</b><small>{x.note}</small>
+                          {saved[x.field] && <span className="ob-tick"><Icon name="check" size={13} /></span>}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="ob-row">
+                      <input type="password" autoComplete="off" spellCheck={false} placeholder={p.hint} value={secret}
+                             disabled={busy} onChange={(e) => setSecret(e.target.value.trim())} />
+                      <button className="ob-pill" disabled={!secret || busy} onClick={() => saveSecret(p.field)}>Save</button>
+                    </div>
+                    <p className="ob-note">{saved[p.field] ? `${p.name} key saved to your keychain.` : 'Stored in your system keychain, never on a server.'}</p>
+                  </>
+                ) : (
+                  <p className="ob-note">
+                    <span className={`ob-status${modelReady ? ' on' : ''}`}>{modelReady ? 'Ready' : 'Not set'}</span>{' '}
+                    {modelReady ? 'This server already has a model key, so the assistant works.'
+                      : 'On the web, model keys are set by the server administrator. Store your own in the desktop app.'}
+                  </p>
+                )}
+                {err && <p className="ob-err" role="alert">{err}</p>}
+              </div>
+            </div>
+            <div className="ob-visual">
+              <div className="art art-chat" aria-hidden="true">
+                <div className="bubble q" style={{ '--i': 0 }}>Which fix removes the most paths?</div>
+                <div className="bubble a" style={{ '--i': 1 }}>Restrict SSH to the VPN range. It cuts 6 of 9 paths and is a one-line change.</div>
+                <div className="bubble q" style={{ '--i': 2 }}>Open the pull request.</div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === 'start' && (
+          <>
+            <div className="ob-copy">
+              <span className="ob-eyebrow">Last thing</span>
+              <h1 id="ob-t" className="ob-lead">Where would you like to start?</h1>
+              <p className="ob-sub">Pick one. You can always do the others from Home.</p>
+            </div>
+            <div className="ob-choices" role="radiogroup" aria-label="Starting point">
+              {[
+                canPlay && ['sample', 'play', 'Try the sample scenario', 'Replay a realistic attack and watch the paths rank themselves.'],
+                ['repo', 'repo', 'Open a repository', `Paste a GitHub link${config.desktop ? ' or choose a local folder' : ''} and scan it.`],
+                ['explore', 'home', 'Look around first', 'Go straight to Home and explore at your own pace.'],
+              ].filter(Boolean).map(([id, icon, t, d]) => (
+                <button key={id} role="radio" aria-checked={choice === id} className={choice === id ? 'ob-choice on' : 'ob-choice'} onClick={() => setChoice(id)}>
+                  <span className="ob-ico"><Icon name={icon} size={18} /></span>
+                  <span><b>{t}</b><small>{d}</small></span>
+                  <span className="ob-radio" aria-hidden="true" />
                 </button>
-              )}
-              <button className="ob-choice" onClick={() => onFinish('repo')}>
-                <span className="ob-ico"><Icon name="repo" size={18} /></span>
-                <span><b>Open a repository</b><small>Paste a GitHub link{config.desktop ? ' or choose a local folder' : ''}.</small></span>
-              </button>
-              <button className="ob-choice" onClick={() => onFinish('explore')}>
-                <span className="ob-ico"><Icon name="home" size={18} /></span>
-                <span><b>Look around first</b><small>Go to Home and explore.</small></span>
-              </button>
+              ))}
             </div>
-          )}
-        </div>
+          </>
+        )}
+
+        {step === 'done' && (
+          <div className="ob-done">
+            <span className="ob-check" aria-hidden="true"><Icon name="check" size={30} /></span>
+            <h1 id="ob-t" className="ob-lead">You’re all set{first ? `, ${first}` : ''}.</h1>
+            <p className="ob-sub">{startLabel}. Everything below can be changed any time in Settings.</p>
+            <ul className="ob-summary">
+              <li className={saved.githubToken ? 'ok' : ''}><span>GitHub</span><em>{saved.githubToken ? 'Token saved' : ghMode === 'app' ? 'Connect from Integrations' : 'Public repositories by link'}</em></li>
+              <li className={modelReady ? 'ok' : ''}><span>Model</span><em>{modelReady ? 'Ready for the assistant' : 'Not set, add one in Settings'}</em></li>
+              <li className="ok"><span>Start</span><em>{{ sample: 'Sample scenario', repo: 'Open a repository', explore: 'Home' }[choice]}</em></li>
+            </ul>
+            <button className="ob-next big" onClick={() => finish(choice)} disabled={leaving}>Enter Paladin</button>
+          </div>
+        )}
       </main>
 
-      <footer className="ob-bottom">
-        <button className="ob-back" onClick={back} disabled={step === 0} aria-label="Back"><Icon name="chevron" size={18} /></button>
-        <div className="ob-dots" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
-          {STEPS.map((s, i) => <span key={s} className={i === step ? 'd on' : i < step ? 'd done' : 'd'} />)}
-        </div>
-        {primary ? <button className="ob-next" onClick={next}>{primary}</button> : <span className="ob-next ghost" aria-hidden="true" />}
-      </footer>
+      {step !== 'done' && (
+        <footer className="ob-bottom">
+          <button className="ob-back" onClick={back} disabled={i === 0} aria-label="Back"><Icon name="chevron" size={18} /></button>
+          <div className="ob-dots" aria-label={`Step ${i + 1} of ${ORDER.length}`}>
+            {ORDER.slice(0, -1).map((s, n) => (
+              <button key={s} className={n === i ? 'd on' : n < i ? 'd done' : 'd'} onClick={() => n < i && go(n)} aria-label={`Go to ${s}`} tabIndex={n < i ? 0 : -1} />
+            ))}
+          </div>
+          <button className="ob-next" onClick={next}>{primary}</button>
+        </footer>
+      )}
     </div>
   )
 }
