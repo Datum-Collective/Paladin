@@ -97,6 +97,9 @@ def config():
     """Public, non-secret capability flags the UI uses to pick its first screen."""
     desktop = auth.desktop_mode()
     return {"desktop": desktop, "auth": "github", "signin": settings.SUPABASE_ENABLED,
+            # names only, never values: lets the login screen tell a developer what to set
+            "signin_missing": [n for n, v in (("SUPABASE_URL", settings.SUPABASE_URL),
+                                              ("SUPABASE_ANON_KEY", settings.SUPABASE_ANON_KEY)) if not v],
             "ai": ai.enabled(),
             # web: our GitHub App (per-user installations); desktop: the user's own token from the keychain
             "github": keys.configured("github") if desktop else github_access.app_enabled(),

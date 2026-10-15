@@ -61,7 +61,14 @@ function Login({ onDone, config }) {
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
       <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
       {!config.signin ? (
-        <p className="err" role="alert">Sign-in is not configured on this server.</p>
+        <div className="err" role="alert">
+          <p>Sign-in is not set up on this server.</p>
+          {config.signin_missing && config.signin_missing.length > 0 && (
+            <p className="small">Missing: <code>{config.signin_missing.join(', ')}</code>. Copy <code>.env.example</code> to{' '}
+              <code>backend/.env</code>, fill them in, restart the server, then run{' '}
+              <code>python scripts/check_signin.py</code> to verify.</p>
+          )}
+        </div>
       ) : waiting ? (
         <>
           <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
