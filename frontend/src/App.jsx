@@ -351,7 +351,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
         {view === 'activity' && <ActivityView key={wsl.active} onRetry={retryScan} goSettings={goSettings} />}
         {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
         {view === 'insights' && <Insights key={ws.graph ? `${ws.graph.events}:${ws.graph.nodes.length}:${ws.graph.edges.length}` : 'empty'} graph={ws.graph} paths={ws.paths} fixes={ws.fixes} rems={ws.rems} />}
-        {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} />}
+        {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} goSettings={() => goSettings('github')} />}
         {view === 'assistant' && <AssistantPanel key={wsl.active} goSettings={() => goSettings('providers')} goRepo={() => setView('repo')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} workspaceId={wsl.active} />}
         {view === 'settings' && <Settings key={setupRuns} pane={pane} setPane={setPane} onSetup={() => setSetupOpen(true)} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (

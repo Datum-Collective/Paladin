@@ -104,7 +104,7 @@ function Findings({ items }) {
   )
 }
 
-export default function RepoView({ onDone, onViewPaths }) {
+export default function RepoView({ onDone, onViewPaths, goSettings }) {
   const [url, setUrl] = useState('')
   const [job, setJob] = useState(null)
   const [cfg, setCfg] = useState({ github_enabled: false, ai_enabled: false })
@@ -241,12 +241,22 @@ export default function RepoView({ onDone, onViewPaths }) {
                   Download Patch</button>
                 {job.state === 'ready' && (
                   <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}
-                          title={cfg.github_enabled ? undefined : 'Pull requests need a connected GitHub account. Download the patch instead.'}>
+                          title={cfg.github_enabled ? undefined : 'Pull requests need a GitHub token. Download the patch instead.'}>
                     {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}
               </div>
             </div>
+            {job.state === 'ready' && !cfg.github_enabled && (
+              <p className="notice" role="note">
+                <b>Why you can’t open a pull request:</b> Paladin has no GitHub token, so it cannot push the fixes branch to{' '}
+                <b>{job.repo_url}</b>. Add a token in Settings → GitHub (a fine-grained token for this repository with
+                Contents and Pull requests set to Read and write). Your account also needs write access to {job.repo_url};
+                if it isn’t your repository, ask the owner to add you as a collaborator. Until then, Download Patch gives
+                you the same changes.{' '}
+                {goSettings && <button className="link inline" onClick={goSettings}>Add a GitHub Token</button>}
+              </p>
+            )}
             <Verification v={job.report && job.report.verification} />
             {job.pr_url && (
               <p className="notice">Pull request opened: <a href={job.pr_url} target="_blank" rel="noreferrer">{job.pr_url}</a></p>
