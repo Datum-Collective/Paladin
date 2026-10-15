@@ -304,7 +304,8 @@ async function boot() {
   registerIpc()
   buildMenu()
   hardenSession()
-  updater = createUpdater({ app, send: (s) => send('update:status', s), log })
+  updater = createUpdater({ app, send: (s) => send('update:status', s), log,
+    releaseUrl: 'https://github.com/Manipal-Hackathon-2026/DATUM/releases/latest' })
   try {
     await backend.start()
   } catch (e) {
@@ -313,7 +314,7 @@ async function boot() {
   }
   pushKeys().catch((e) => log('could not push keys at startup', e.message)) // the app works without provider keys
   createWindow(backend.origin)
-  if (app.isPackaged) setTimeout(() => updater.check(), 5000)
+  updater.start()   // no-op outside a packaged build
 }
 
 app.whenReady().then(boot)
