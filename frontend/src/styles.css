@@ -763,3 +763,34 @@ kbd { border-radius: 6px; }
 .ob-choice > span { display: flex; flex-direction: column; gap: 2px; }
 .ob-choice .icon { color: var(--accent); }
 .ob-actions { display: flex; align-items: center; gap: 8px; }
+
+/* sunrise (light) and sunset (dark): one sky behind the splash and the sign-in page */
+:root {
+  --sky: linear-gradient(180deg, #cfe0ff 0%, #f1ecff 30%, #ffe6d2 62%, #ffcfa6 100%);
+  --sun: radial-gradient(circle at 50% 50%, #fff4d6 0%, #ffd9a0 38%, rgba(255, 190, 130, 0) 70%);
+  --sky-ink: #3a2a22;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sky: linear-gradient(180deg, #0c0f24 0%, #231a45 34%, #5a2a55 62%, #c4552d 100%);
+    --sun: radial-gradient(circle at 50% 50%, #ffb27a 0%, #ff7a45 36%, rgba(255, 106, 60, 0) 70%);
+    --sky-ink: #fbeee6;
+  }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+.splash, .login-page { position: relative; overflow: hidden; background: var(--sky); }
+.splash::before, .login-page::before { content: ""; position: absolute; left: 50%; bottom: -22vmin; width: 90vmin; height: 90vmin;
+  transform: translateX(-50%); background: var(--sun); pointer-events: none; }
+.splash { max-width: none; width: 100%; margin: 0; padding: 0; gap: 18px; color: var(--sky-ink); }
+.splash > * { position: relative; }
+.splash .brand { font-size: 26px; letter-spacing: -0.02em; }
+.splash .brand-mark { width: 26px; height: 26px; border-radius: 8px; animation: rise 2.4s var(--ease) infinite alternate; }
+.splash-bar { width: 96px; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--sky-ink) 18%, transparent); overflow: hidden; }
+.splash-bar::after { content: ""; display: block; height: 100%; width: 40%; border-radius: 2px; background: var(--sky-ink);
+  animation: sweep 1.3s var(--ease) infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@keyframes rise { from { transform: translateY(2px); opacity: 0.8; } to { transform: translateY(-2px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .splash .brand-mark, .splash-bar::after { animation: none; } }
+.login-page { background-image: var(--sky); }
+.login-page .login { position: relative; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
