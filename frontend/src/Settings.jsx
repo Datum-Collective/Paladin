@@ -78,7 +78,8 @@ function General({ config, onReset }) {
   const text = {
     disabled: 'Updates are off in development builds.', idle: 'Not checked yet.', checking: 'Checking for updates…',
     current: 'Paladin is up to date.', downloading: `Downloading version ${upd.version || ''} (${upd.percent || 0}%)…`,
-    ready: `Version ${upd.version} is ready to install.`, error: `Could not check for updates. ${upd.error || ''}`,
+    ready: `Version ${upd.version} is ready to install.`, installing: `Installing version ${upd.version} and restarting…`,
+    error: `Could not update automatically. ${upd.error || ''}`,
   }[upd.phase] || ''
   return (
     <>
@@ -100,8 +101,9 @@ function General({ config, onReset }) {
       {config.desktop && (
         <Group title="Software update">
           <Row label="Paladin" help={text}>
-            <button onClick={() => bridge.checkForUpdates()} disabled={upd.phase === 'disabled' || upd.phase === 'checking'}>Check for Updates</button>
-            {upd.phase === 'ready' && <button className="primary" onClick={() => bridge.installUpdate()}>Restart and Install</button>}
+            <button onClick={() => bridge.checkForUpdates()} disabled={upd.phase === 'disabled' || upd.phase === 'checking' || upd.phase === 'downloading' || upd.phase === 'installing'}>Check for Updates</button>
+            {(upd.phase === 'ready' || upd.phase === 'installing') && <button className="primary" onClick={() => bridge.installUpdate()}>Restart Now</button>}
+            {upd.phase === 'error' && upd.releaseUrl && <a className="btn" href={upd.releaseUrl} target="_blank" rel="noreferrer">Download Manually</a>}
           </Row>
         </Group>
       )}
