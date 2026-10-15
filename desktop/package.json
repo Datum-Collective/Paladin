@@ -1,7 +1,7 @@
 {
   "name": "paladin-desktop",
   "productName": "Paladin",
-  "version": "0.1.0",
+  "version": "1.3.0",
   "description": "Paladin: attack path analysis for macOS and Windows",
   "private": true,
   "main": "src/main.js",

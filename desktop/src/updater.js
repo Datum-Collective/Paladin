@@ -1,12 +1,19 @@
 'use strict'
 // Thin wrapper over electron-updater so the renderer sees one status shape.
 // Updates only run in a packaged build; macOS requires the app to be signed (Electron docs, autoUpdater).
-function createUpdater({ app, send, log = () => {} }) {
-  let state = { phase: app.isPackaged ? 'idle' : 'disabled', version: null, percent: 0, error: null }
+// A build without an update feed (electron-builder `publish: null`, e.g. while releases are private) has no
+// app-update.yml: updates are then off instead of failing in the background on every launch.
+function hasUpdateFeed(resourcesPath) {
+  try { return require('node:fs').existsSync(require('node:path').join(resourcesPath, 'app-update.yml')) } catch { return false }
+}
+
+function createUpdater({ app, send, log = () => {}, resourcesPath = process.resourcesPath }) {
+  const enabled = app.isPackaged && hasUpdateFeed(resourcesPath)
+  let state = { phase: enabled ? 'idle' : 'disabled', version: null, percent: 0, error: null }
   const set = (patch) => { state = { ...state, ...patch }; send(state) }
   let autoUpdater = null
 
-  if (app.isPackaged) {
+  if (enabled) {
     try {
       ;({ autoUpdater } = require('electron-updater'))
       autoUpdater.autoDownload = true
@@ -34,4 +41,4 @@ function createUpdater({ app, send, log = () => {} }) {
   }
 }
 
-module.exports = { createUpdater }
+module.exports = { createUpdater, hasUpdateFeed }
