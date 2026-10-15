@@ -290,10 +290,15 @@ def login(desktop: str | None = None):
 
 
 def _page(title: str, body: str) -> str:
+    # Shown in the system browser during desktop sign-in: the app's dark PALADIN look, no scripts or remote assets
     return (f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<title>{html.escape(title)}</title><body style='font:15px system-ui;max-width:28rem;margin:15vh auto;"
-            f"padding:0 16px;text-align:center'><h1 style='font-size:20px'>{html.escape(title)}</h1>"
-            f"<p>{html.escape(body)}</p></body>")
+            f"<meta name=color-scheme content=dark><title>{html.escape(title)} · PALADIN</title>"
+            f"<body style='margin:0;min-height:100vh;display:grid;place-items:center;background:#26262e;color:#ececf1;"
+            f"font:15px system-ui,\"Segoe UI\",sans-serif'><main style='max-width:24rem;margin:16px;padding:28px 30px;"
+            f"text-align:center;background:#2f2f39;border:1px solid rgba(255,255,255,.08);border-radius:12px'>"
+            f"<p style='margin:0 0 14px;font:600 20px/1 \"Times New Roman\",Georgia,serif;letter-spacing:.16em'>PALADIN</p>"
+            f"<h1 style='font-size:19px;margin:0 0 8px'>{html.escape(title)}</h1>"
+            f"<p style='margin:0;color:#a0a0ad'>{html.escape(body)}</p></main></body>")
 
 
 def _login_failed(reason: str, **details):

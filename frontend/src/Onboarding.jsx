@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from './Icons.jsx'
 import { api } from './api.js'
+import Brand from './Brand.jsx'
 import Setup from './Setup.jsx'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
@@ -152,7 +153,7 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
          style={{ '--p': i / (ORDER.length - 1) }}>
       <Sun />
       <header className="ob-top">
-        <span className="brand"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+        <Brand />
         {step !== 'done' && <button className="link ob-skip" onClick={() => finish('skip')}>Skip setup</button>}
       </header>
 

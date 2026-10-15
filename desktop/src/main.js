@@ -112,11 +112,13 @@ function createWindow(origin) {
     show: false,
     title: 'Paladin',
     // vibrancy needs a transparent window; the content column paints its own opaque background
-    backgroundColor: isMac ? '#00000000' : (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
-    icon: isMac ? undefined : path.join(__dirname, '..', 'build', 'icon-source.png'),   // macOS takes the icon from the app bundle
+    // Windows uses the dark PALADIN theme (frontend styles.css, data-platform=win32): paint the same slate before the page
+    backgroundColor: isMac ? '#00000000' : process.platform === 'win32' ? '#26262e' : (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
+    // macOS takes the icon from the app bundle; Windows has the PALADIN pixel-eye icon, Linux the shared source icon
+    icon: isMac ? undefined : path.join(__dirname, '..', 'build', process.platform === 'win32' ? 'icon-win.png' : 'icon-source.png'),
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     trafficLightPosition: isMac ? { x: 13, y: 12 } : undefined, // centres the controls in the 40pt titlebar row
-    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 36 },
+    titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: process.platform === 'win32' ? '#a0a0ad' : '#8e8e93', height: 36 },
     vibrancy: isMac ? 'sidebar' : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

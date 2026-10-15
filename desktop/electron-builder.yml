@@ -6,7 +6,8 @@ directories:
 files:
   - src/**/*
   - package.json
-  - build/icon-source.png      # window icon on Windows/Linux (macOS reads icon.icns from the bundle)
+  - build/icon-source.png      # window icon on Linux (macOS reads icon.icns from the bundle)
+  - build/icon-win.png         # Windows: the PALADIN pixel-eye icon (window and installer)
 extraResources:
   - from: build/backend/paladin-server
     to: backend
@@ -43,7 +44,7 @@ dmg:
     - { x: 180, y: 200, type: file }
     - { x: 480, y: 200, type: link, path: /Applications }
 win:
-  icon: build/icon-source.png
+  icon: build/icon-win.png
   target: [nsis]
 nsis:
   oneClick: false

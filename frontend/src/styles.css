@@ -1154,3 +1154,108 @@ kbd { background: var(--bg-3); border-radius: var(--r-s); box-shadow: none; font
   font-size: 12px; border-bottom: 1px solid var(--line); background: var(--info-bg); color: var(--text); }
 .scan-banner .small-btn { margin-left: auto; }
 .scan-banner.bad { background: var(--bad-bg); } .scan-banner.warn { background: var(--warn-bg); }
+
+/* ===================================================================================================================
+   PALADIN (Windows desktop app): dark, monochrome, pixel-edged, from the brand references (logo, sidebar, sign-in).
+   Scoped to html[data-platform="win32"] (colours: unless Settings > Theme is Light), which main.jsx sets from the desktop bridge before the first paint, so the
+   web app and the macOS build keep their current look. Static assets only (public/paladin-mark.svg): no fonts or
+   images from other origins, so the desktop Content-Security-Policy stays "self".
+   =================================================================================================================== */
+.wordmark, .win-only { display: none; }
+html[data-platform="win32"] .not-win { display: none; }
+html[data-platform="win32"] .win-only { display: block; }
+
+html[data-platform="win32"]:not([data-theme="light"]) {
+  color-scheme: dark;
+  --bg: #26262e; --bg-2: #2d2d36; --bg-3: #383843; --sidebar: #1c1c23;
+  --text: #ececf1; --text-2: #a0a0ad; --line: rgba(255, 255, 255, 0.08); --line-strong: rgba(255, 255, 255, 0.16);
+  --accent: #f1f1f4; --on-accent: #16161b; --accent-bg: rgba(255, 255, 255, 0.08);
+  --hover: rgba(255, 255, 255, 0.05); --select: rgba(255, 255, 255, 0.08);
+  --ok: #62cf8d; --warn: #e3b04b; --bad: #f07b70; --info: #a9bbdc;
+  --ok-bg: rgba(98, 207, 141, 0.14); --warn-bg: rgba(227, 176, 75, 0.15); --bad-bg: rgba(240, 123, 112, 0.15);
+  --info-bg: rgba(169, 187, 220, 0.14);
+  --add-bg: rgba(98, 207, 141, 0.14); --add-mark: rgba(98, 207, 141, 0.38);
+  --del-bg: rgba(240, 123, 112, 0.13); --del-mark: rgba(240, 123, 112, 0.36);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --radius: 10px; --radius-s: 6px; --radius-m: 8px; --radius-xl: 12px;
+  --sky: radial-gradient(120% 85% at 50% 0%, #34343f 0%, #25252d 55%, #1a1a20 100%);
+  --sun: none; --sky-ink: #ececf1;
+  --brand-serif: "Cinzel", "Trajan Pro", "Times New Roman", Georgia, serif;
+  --label: 600 10.5px/1.2 system-ui, "Segoe UI", sans-serif;
+}
+html[data-platform="win32"]:not([data-theme="light"]) body { background: var(--bg); color: var(--text); }
+
+/* brand: the pixel-art eye, tinted by the text colour; the PALADIN wordmark with the eye as its A */
+html[data-platform="win32"] .brand-mark,
+html[data-platform="win32"] .ob-top .brand-mark,
+html[data-platform="win32"] .splash .brand-mark {
+  width: 22px; height: 18px; border-radius: 0; box-shadow: none; animation: none;
+  background: currentColor; -webkit-mask: url("/paladin-mark.svg") center / contain no-repeat;
+  mask: url("/paladin-mark.svg") center / contain no-repeat;
+}
+html[data-platform="win32"] .brand .brand-mark { display: none; }
+html[data-platform="win32"] .brand .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+html[data-platform="win32"] .brand .wordmark { display: inline-flex; align-items: flex-end; gap: 0.02em;
+  font: 600 1em/1 var(--brand-serif); letter-spacing: 0.16em; color: var(--text); text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6); }
+html[data-platform="win32"] .wordmark-a { display: inline-block; width: 1.05em; height: 0.86em; margin: 0 0.12em 0.02em 0;
+  background: currentColor; -webkit-mask: url("/paladin-mark.svg") center bottom / contain no-repeat;
+  mask: url("/paladin-mark.svg") center bottom / contain no-repeat; }
+html[data-platform="win32"] .brand { font-size: 15px; }
+html[data-platform="win32"] .brand.big { font-size: 24px; }
+
+/* labels: small, spaced capitals ("CONTEXT", "ATTACK PATH INTELLIGENCE") */
+html[data-platform="win32"] .side-label, html[data-platform="win32"] .login-eyebrow, html[data-platform="win32"] .ob-eyebrow,
+html[data-platform="win32"] .art-head {
+  font: var(--label); letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-2); }
+
+/* sidebar: near-black rail, the active item outlined with a dotted line as in the reference */
+html[data-platform="win32"]:not([data-theme="light"]) .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); }
+html[data-platform="win32"]:not([data-theme="light"]) .nav-item.on { background: rgba(255, 255, 255, 0.05); color: var(--text);
+  outline: 1px dashed rgba(255, 255, 255, 0.32); outline-offset: -1px; }
+html[data-platform="win32"] .nav-item.on .icon { color: var(--text); }
+html[data-platform="win32"] .nav-item.on .badge { background: var(--text); color: var(--on-accent); }
+html[data-platform="win32"] .nav-item:hover:not(.on) { background: var(--hover); }
+
+/* controls: white primary buttons, a dashed focus ring */
+html[data-platform="win32"] button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+html[data-platform="win32"]:not([data-theme="light"]) button.primary:hover:not(:disabled) { background: #ffffff; filter: none; }
+html[data-platform="win32"]:not([data-theme="light"]) :focus-visible { outline: 1px dashed rgba(255, 255, 255, 0.6); outline-offset: 2px; }
+html[data-platform="win32"]:not([data-theme="light"]) ::selection { background: rgba(255, 255, 255, 0.22); }
+
+/* splash and sign-in: flat slate instead of the sunrise/sunset sky */
+html[data-platform="win32"]:not([data-theme="light"]) .splash::before, html[data-platform="win32"] .login-page::before, html[data-platform="win32"] .ob-sun { display: none; }
+html[data-platform="win32"]:not([data-theme="light"]) .splash { background: var(--sky); color: var(--sky-ink); }
+html[data-platform="win32"] .splash .brand { font-size: 30px; }
+html[data-platform="win32"] .splash-bar::after { background: var(--text); }
+html[data-platform="win32"]:not([data-theme="light"]) .login-page { background: var(--sky); }
+html[data-platform="win32"]:not([data-theme="light"]) .login-page .login { max-width: 380px; padding: 30px 30px 22px; gap: 12px; text-align: center; align-items: center;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-platform="win32"] .login-head { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+html[data-platform="win32"] .login-head .login-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+html[data-platform="win32"] .login-head p { margin: 0; }
+html[data-platform="win32"] .login .login-cta { width: 100%; justify-content: center; height: 36px; border-radius: 8px; }
+html[data-platform="win32"] .login .login-card { width: 100%; text-align: center; }
+html[data-platform="win32"] .login-fine { margin: 4px 0 0; }
+
+/* first-run onboarding: the same slate, monochrome cards and buttons; the attack path itself stays red */
+html[data-platform="win32"]:not([data-theme="light"]) .ob-screen {
+  --ob-card: rgba(255, 255, 255, 0.04); --ob-card-line: rgba(255, 255, 255, 0.1); --ob-ink: #ececf1; --ob-sub: #a0a0ad;
+  --ob-btn: #f1f1f4; --ob-btn-text: #16161b; --ob-ico-bg: rgba(255, 255, 255, 0.07); --ob-ico: #ececf1;
+  --ob-field: rgba(255, 255, 255, 0.06); --ob-hot: #f07b70; --ob-ok: #62cf8d; --ob-edge: rgba(255, 255, 255, 0.18);
+  --ob-node: #2d2d36; --ob-node-line: rgba(255, 255, 255, 0.45);
+  background: var(--sky); }
+html[data-platform="win32"] .ob-tab, html[data-platform="win32"] .ob-choice, html[data-platform="win32"] .ob-card,
+html[data-platform="win32"] .art, html[data-platform="win32"] .ob-summary, html[data-platform="win32"] .ob-prov { border-radius: 12px; }
+html[data-platform="win32"]:not([data-theme="light"]) .art { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35); }
+html[data-platform="win32"]:not([data-theme="light"]) .art-row i { background: linear-gradient(90deg, #8e8e9a, var(--ob-hot)); }
+html[data-platform="win32"]:not([data-theme="light"]) .ob-check { background: #f1f1f4; color: #16161b; box-shadow: 0 0 0 10px rgba(255, 255, 255, 0.08); }
+html[data-platform="win32"]:not([data-theme="light"]) .ob-check .icon { color: #16161b; }
+html[data-platform="win32"] .ob-cta, html[data-platform="win32"] .ob-pill, html[data-platform="win32"] .ob-next { border-radius: 8px; }
+html[data-platform="win32"] .ob-row input { border-radius: 8px; }
+
+@media (prefers-reduced-motion: reduce) { html[data-platform="win32"] .splash-bar::after { animation: none; } }
+html[data-platform="win32"] .side-brand { padding: 2px 10px 14px; }
+html[data-platform="win32"] .side-brand .brand { font-size: 17px; }
+html[data-platform="win32"] .bar input:focus-visible { outline: none; }   /* the bar draws its own focus ring */
