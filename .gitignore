@@ -15,3 +15,5 @@ desktop/build/pyi-work/
 *.pem
 desktop/build/supabase.json
 backend/data_dir/
+.vercel
+.env.local

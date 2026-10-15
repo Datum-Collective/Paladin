@@ -13,3 +13,7 @@ docs
 research_notes
 reports
 *.pem
+
+# the container build, compose and Fly use these; Vercel does not
+Dockerfile
+.dockerignore
