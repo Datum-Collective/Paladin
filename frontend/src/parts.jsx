@@ -20,7 +20,7 @@ export function Severity({ level }) {
   return <span className={`pill ${SEV_TONE[level]}`}><span aria-hidden="true">{SEV_GLYPH[level]} </span>{word}</span>
 }
 
-const BASIS = { finding: ['Backed by a finding in the code', 'ok'], assumed: ['Assumed, not verified', 'warn'],
+const BASIS = { finding: ['Backed by a finding in the code', 'ok'], reference: ['Import at a real line', 'ok'], assumed: ['Assumed, not verified', 'warn'],
   '': ['Prior only, no events yet', 'mute'] }
 
 /** Inspector body for a clicked node or edge: what it is, where it is in the code, and how well supported it is. */
@@ -41,12 +41,18 @@ export function ElementDetail({ el, graph, onClear }) {
             {node.meta && node.meta.file && <><dt>Location</dt><dd className="mono">{node.meta.file}{node.meta.line ? `:${node.meta.line}` : ''}</dd></>}
             {node.meta && node.meta.cwe && <><dt>Weakness</dt><dd>{node.meta.cwe} · {node.meta.rule}</dd></>}
             {node.meta && node.meta.confidence !== undefined && <><dt>Confidence</dt><dd>{Math.round(node.meta.confidence * 100)}%</dd></>}
-            {node.meta && node.meta.confirmed !== undefined && <><dt>Status</dt><dd>{node.meta.confirmed ? 'Judged exploitable by review' : 'Rule match, not yet confirmed'}</dd></>}
+            {node.meta && node.meta.severity && <><dt>Severity</dt><dd>{node.meta.severity}</dd></>}
+            {node.meta && node.meta.confirmed !== undefined && <><dt>Status</dt><dd>{node.meta.confirmed ? 'Confirmed: the quoted code shows input reaching it' : 'Potential: a match without a proven data flow'}</dd></>}
             {node.meta && node.meta.routed !== undefined && node.kind === 'component' && <><dt>Route handler</dt><dd>{node.meta.routed ? 'Found in this file' : 'None found'}</dd></>}
-            <dt>Impact</dt><dd>{node.criticality} of 10</dd>
+            <dt>Criticality</dt><dd>{node.criticality} of 10</dd>
           </dl>
           {node.meta && node.meta.snippet && <code className="snippet">{node.meta.snippet}</code>}
           {node.meta && node.meta.reason && <p className="muted">{node.meta.reason}</p>}
+          {node.meta && node.meta.impact && <p><b>Impact</b> {node.meta.impact}</p>}
+          {node.meta && node.meta.evidence && node.meta.evidence.length > 0 && (
+            <ul className="plain small">{node.meta.evidence.map((e, i) => <li key={i}><span className="mono">{e.file}:{e.line}</span> <code>{e.quote}</code></li>)}</ul>
+          )}
+          {node.meta && node.meta.advisories && node.meta.advisories.length > 0 && <p className="muted small">Advisories: {node.meta.advisories.join(', ')}</p>}
           {node.meta && node.meta.assumed && <p className="muted small">This target is assumed from the weakness category; it was not located in the code.</p>}
         </>
       )}
@@ -107,7 +113,7 @@ export function PathDetail({ path }) {
             <div><b>{name(h.src)}</b> <span className="muted">to</span> <b>{name(h.dst)}</b></div>
             <div className="muted">
               {h.technique} {h.technique_name} · p {h.p} · {h.observed ? 'confirmed by events'
-                : h.basis === 'finding' ? 'backed by a code finding' : h.basis === 'assumed' ? 'assumed, not verified' : 'possible, no events yet'}
+                : h.basis === 'finding' ? 'backed by a code finding' : h.basis === 'reference' ? 'import at a real line' : h.basis === 'assumed' ? 'assumed, not verified' : 'possible, no events yet'}
             </div>
             {h.note && <div className="muted small">{h.note}</div>}
             {h.events.map((e) => (

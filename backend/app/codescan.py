@@ -157,7 +157,7 @@ def triage(findings: list[dict], cancelled=lambda: False) -> bool:
 CODE_ENTRY = "code:internet"
 
 
-def to_model(findings: list[dict], mitigation_for) -> dict:
+def to_model(findings: list[dict], mitigation_for, refs: dict | None = None) -> dict:
     """Findings -> a graph that is only about the scanned code.
 
     Internet -> file -> weakness -> asset. Every finding gets its own node, so two weaknesses in one file are
@@ -184,7 +184,9 @@ def to_model(findings: list[dict], mitigation_for) -> dict:
                       "meta": {"file": f["file"], "line": f["line"], "cwe": f["cwe"], "rule": f["rule"],
                                "snippet": f.get("snippet", ""), "confidence": f["confidence"],
                                "reason": f.get("reason", ""), "triaged_by": f.get("triaged_by", ""),
-                               "confirmed": f.get("exploitable") is True}}
+                               "confirmed": f.get("status") == "confirmed" if "status" in f else f.get("exploitable") is True,
+                               "severity": f.get("severity", ""), "impact": f.get("impact", ""),
+                               "evidence": f.get("evidence", [])[:6], "advisories": f.get("advisories", [])[:10]}}
         edges.append({"id": f"code:{f['id']}", "src": comp, "dst": wid, "technique": f["technique"],
                       "p": round(max(0.05, min(0.95, 0.3 + 0.5 * f["confidence"])), 3), "cost": 3,
                       "mitigation": mitigation_for(f["technique"]), "basis": "finding",
@@ -202,6 +204,25 @@ def to_model(findings: list[dict], mitigation_for) -> dict:
                       "p": 0.9, "cost": None, "mitigation": "", "basis": "assumed",
                       "note": "Impact is inferred from the weakness category; the code was not executed, "
                               "so the data flow to this target is not verified."})
+    # cross-file reach: an entry-point file imports (directly or in a chain) the file that holds a weakness. Each hop
+    # is an import statement at a real line; whether the weak code actually runs on that route is not traced.
+    for comp in list(entry_p):
+        chain = (refs or {}).get(comp[5:]) or []
+        for hop in chain:
+            a, b = f"code:{hop['file']}", f"code:{hop['target']}"
+            if a not in nodes:
+                nodes[a] = {"id": a, "kind": "component", "label": hop["file"], "criticality": 3,
+                            "meta": {"file": hop["file"], "routed": hop is chain[0]}}
+            if a == f"code:{chain[0]['file']}":
+                nodes[a]["meta"]["routed"] = True
+                entry_routed[a] = True
+                entry_p[a] = max(entry_p.get(a, 0.0), 0.45)
+            eid = f"code:ref:{hop['file']}->{hop['target']}"
+            if not any(e["id"] == eid for e in edges):
+                edges.append({"id": eid, "src": a, "dst": b, "technique": "T1190", "p": 0.85, "cost": None,
+                              "mitigation": "", "basis": "reference",
+                              "note": (f"{hop['file']} imports {hop['target']} at line {hop['line']}; whether the weak "
+                                       "code runs on this route was not traced.")[:300]})
     for comp, p_in in entry_p.items():
         routed = entry_routed.get(comp, False)
         edges.append({"id": f"code:in:{comp[5:]}", "src": CODE_ENTRY, "dst": comp, "technique": "T1190",
@@ -325,14 +346,14 @@ def run(ws: int, repo: str, files: list[dict]) -> dict:
     return persist(ws, repo, findings, ai_used, n)
 
 
-def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: int) -> dict:
+def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: int, refs: dict | None = None) -> dict:
     from .narrate import technique
 
     def mitigation_for(t: str) -> str:
         m = technique(t).get("mitigations", [])
         return m[0] if m else ""
 
-    model = to_model(findings, mitigation_for)
+    model = to_model(findings, mitigation_for, refs)
     supa.upsert("code_models", {"ws": ws, "user_id": supa.user_id(), "repo": repo[:120], "created": time.time(),
                                 "ai_used": bool(ai_used), "files": n_files, "model": model, "findings": findings}, "ws")
     return report(ws)

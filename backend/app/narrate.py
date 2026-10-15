@@ -36,7 +36,7 @@ def narrate(path: dict, edges_by_id: dict, labels: dict) -> tuple[str, list[str]
             ev = ", ".join(e.evidence[:3]) + ("..." if len(e.evidence) > 3 else "")
             sentences.append(f"{src} reached {dst} via {how}, confirmed by events {ev}.")
         else:
-            why = {"finding": "static finding", "assumed": "assumed, not verified"}.get(e.basis, "no events yet, prior only")
+            why = {"finding": "static finding", "reference": "an import at a real line", "assumed": "assumed, not verified"}.get(e.basis, "no events yet, prior only")
             sentences.append(f"{src} could reach {dst} via {how} ({why}).")
         hops.append({"edge": eid, "src": e.src, "dst": e.dst, "technique": e.technique,
                      "technique_name": t["name"], "observed": e.observed, "p": round(e.p, 3),

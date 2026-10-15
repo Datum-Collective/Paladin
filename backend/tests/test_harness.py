@@ -157,14 +157,14 @@ def test_cancel_during_scan_stops_before_results_are_persisted(client, repo, mon
         shutil.copytree(repo, args[-1])
         return ""
 
-    def blocked_scan(files, cancelled):
+    def blocked_scan(files, cancelled, **_):
         scanning.set()
         while not cancelled():
             time.sleep(0.01)
         raise InterruptedError("scan cancelled")
 
     monkeypatch.setattr(harness, "_git", clone)
-    monkeypatch.setattr(harness.codescan, "scan_full", blocked_scan)
+    monkeypatch.setattr(harness.crawler, "analyze", blocked_scan)
     job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     assert scanning.wait(2)
 

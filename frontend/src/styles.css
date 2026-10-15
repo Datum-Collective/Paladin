@@ -1109,3 +1109,4 @@ kbd { background: var(--bg-3); border-radius: var(--r-s); box-shadow: none; font
 .chat-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; }
 .assistant-bar label.check { white-space: nowrap; }
 @media (max-width: 860px) { .assistant-shell { grid-template-columns: 1fr; } .chat-list { display: none; } }
+.pill-row { display: inline-flex; gap: 4px; flex: none; }

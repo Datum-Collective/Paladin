@@ -32,6 +32,22 @@ function ScanReport({ r }) {
       <details><summary>Files scanned</summary>
         <ul className="plain mono">{r.scanned_files.map((f) => <li key={f}>{f}</li>)}</ul>
       </details>
+      {r.map && (
+        <details open><summary>Repository map</summary>
+          <p className="muted small">{Object.entries(r.map.languages || {}).map(([k, v]) => `${k} ${v}`).join(' · ') || 'No source languages recognised'}
+            {r.map.dependencies ? ` · ${r.map.dependencies} pinned dependencies` : ''}</p>
+          {r.map.entries && r.map.entries.length > 0 ? (
+            <ul className="plain small">{r.map.entries.slice(0, 12).map((e) => (
+              <li key={e.file}><span className="mono">{e.file}</span> <span className="muted">{e.routes.length} route(s){e.auth ? ' · auth checks present' : ' · no auth checks found'}</span></li>
+            ))}</ul>
+          ) : <p className="muted small">No entry points (routes or handlers) were found.</p>}
+        </details>
+      )}
+      {r.crawler && r.crawler.partial && (
+        <p className="notice warn">Partial results: the AI review did not finish for every file
+          ({Object.entries(r.crawler.failed || {}).map(([k, v]) => `${v} ${k.replace('_', ' ')}`).join(', ') || 'stopped early'}). Rule hits and reviewed files are complete; scan again to finish.</p>
+      )}
+      {r.crawler && r.crawler.dependency_note && <p className="muted small">{r.crawler.dependency_note}</p>}
       <p className="muted">{r.limits}</p>
     </section>
   )
@@ -54,7 +70,8 @@ function Verification({ v }) {
 function Findings({ items }) {
   if (!items || !items.length) return null
   const verdict = (f) => (f.fixed ? ['fixed', 'ok'] : f.exploitable === false ? ['not exploitable', 'mute'] :
-    f.triaged_by === 'haiku-review' ? ['needs review', 'warn'] : ['needs manual fix', 'warn'])
+    f.status === 'confirmed' ? ['confirmed', 'bad'] : ['potential', 'warn'])
+  const SEV = { critical: 'bad', high: 'bad', medium: 'warn', low: 'mute' }
   return (
     <section className="block">
       <h3>Findings <span className="count">{items.length}</span></h3>
@@ -63,10 +80,22 @@ function Findings({ items }) {
           const [label, tone] = verdict(f)
           return (
             <li key={f.id}>
-              <div className="row-top"><b>{f.title}</b><span className={`pill ${tone}`}>{label}</span></div>
-              <div className="muted">{f.file}:{f.line} · {f.cwe} · {f.technique}</div>
+              <div className="row-top"><b>{f.title}</b>
+                <span className="pill-row">{f.severity && <span className={`pill ${SEV[f.severity] || 'mute'}`}>{f.severity}</span>}
+                  <span className={`pill ${tone}`}>{label}</span></span></div>
+              <div className="muted mono small">{f.file}:{f.line} · {f.cwe} · {f.technique}</div>
               {f.snippet && <code className="snippet">{f.snippet}</code>}
               {f.reason && <div className="muted">{f.reason}</div>}
+              {f.impact && <div className="small"><b>Impact</b> {f.impact}</div>}
+              {f.evidence && f.evidence.length > 0 && (
+                <details className="small"><summary>Evidence across files ({f.evidence.length})</summary>
+                  <ul className="plain">{f.evidence.map((e, i) => <li key={i}><span className="mono">{e.file}:{e.line}</span> <code>{e.quote}</code></li>)}</ul>
+                </details>
+              )}
+              {f.reached_via && f.reached_via.length > 0 && (
+                <div className="muted small">Reached from <span className="mono">{f.reached_via[0].file}</span>
+                  {f.reached_via.map((h) => ` → ${h.target}`).join('')} (imports, not a traced call)</div>
+              )}
             </li>
           )
         })}

@@ -39,7 +39,8 @@ class Edge(BaseModel):
     evidence: list[str] = []
     mitigation: str = ""
     match: dict | list[dict] = {}
-    # how the step is supported: 'finding' = a rule or review hit in code, 'assumed' = a stated assumption with no
+    # how the step is supported: 'finding' = a rule or review hit in code, 'reference' = an import at a real line,
+    # 'assumed' = a stated assumption with no
     # evidence behind it, '' = log-based (see `observed`/`evidence`). `note` says why, in one sentence.
-    basis: Literal['', 'finding', 'assumed'] = ''
+    basis: Literal['', 'finding', 'reference', 'assumed'] = ''
     note: str = Field(default='', max_length=300)
