@@ -1,5 +1,11 @@
 name: ci
 on: [push, pull_request]
+
+# Validation only reads repository contents; keep the automatic GitHub token
+# unable to write issues, pull requests, checks, packages, or deployments.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
