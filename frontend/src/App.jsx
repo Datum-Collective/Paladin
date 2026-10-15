@@ -25,6 +25,8 @@ import { ToastProvider, useToast } from './toast.jsx'
 import { useWorkspace } from './useWorkspace.js'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
+const INSIGHTS_DEMO = typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) &&
+  new URLSearchParams(location.search).has('demo')
 
 // What the backend sent us back with after a redirect (sign-in, GitHub App install); read once, then cleaned up
 const RETURN = new URLSearchParams(typeof location !== 'undefined' ? location.search : '')
@@ -347,7 +349,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
         )}
         {view === 'activity' && <ActivityView key={wsl.active} onRetry={retryScan} goSettings={goSettings} />}
         {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
-        {view === 'insights' && <Insights key={ws.graph ? ws.graph.events : 0} rems={ws.rems} />}
+        {view === 'insights' && <Insights key={ws.graph ? `${ws.graph.events}:${ws.graph.nodes.length}:${ws.graph.edges.length}` : 'empty'} graph={ws.graph} paths={ws.paths} fixes={ws.fixes} rems={ws.rems} />}
         {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} />}
         {view === 'assistant' && <Assistant key={wsl.active} goSettings={() => goSettings('providers')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} workspaceId={wsl.active} />}
         {view === 'settings' && <Settings key={setupRuns} pane={pane} setPane={setPane} onSetup={() => setSetupOpen(true)} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
@@ -423,6 +425,7 @@ export default function App() {
 
   if (error) return <Splash error={error} onRetry={boot} />
   if (!config || user === undefined) return <Splash />
+  if (INSIGHTS_DEMO) return <ToastProvider><PrefsProvider key="insights-demo"><Insights demo /></PrefsProvider></ToastProvider>
   return (
     <ToastProvider>
       <PrefsProvider key={user ? 'u' : 'anon'}>

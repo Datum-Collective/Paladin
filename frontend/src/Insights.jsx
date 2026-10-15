@@ -1,157 +1,182 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 
-const SRC_COLOR = { linux_auth: 'var(--info)', web_access: 'var(--text-2)', ids_alert: 'var(--warn)', json: 'var(--bg-3)' }
+const CATEGORY_COLORS = ['var(--accent)', 'var(--info)', 'var(--ok)', 'var(--text-2)', 'var(--line-strong)', 'var(--accent)']
+const CATEGORY_BY_RULE = {
+  'hardcoded-secret': 'Secrets exposure', 'code-exec': 'Unsafe execution', 'shell-injection': 'Unsafe execution',
+  'unsafe-deserialize': 'Unsafe execution', 'sql-concat': 'Input validation', 'xss-sink': 'Input validation',
+  'tls-off': 'Configuration', 'weak-hash': 'Configuration', 'permissive-cors': 'Configuration', 'debug-on': 'Configuration',
+  'blank-noopener': 'Client security', 'http-script-src': 'Client security',
+}
+const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 const fmtTime = (ts) => (ts || '').replace('T', ' ').replace('Z', '').slice(11, 16)
-
-function Timeline({ data }) {
-  const W = 640, H = 150, P = 28, NB = 24
-  const rows = data.buckets
-  if (!rows.length) return <p className="muted">No events yet.</p>
-  const max = Math.max(...rows.map((r) => r.total), 1)
-  const bw = (W - P * 2) / NB            // width of one time bucket, not of one non-empty bucket
-  const sources = [...new Set(rows.flatMap((r) => Object.keys(r.by_source)))]
-  const lo = Date.parse(data.range[0]), hi = Date.parse(data.range[1])
-  const xOf = (ts) => P + ((Date.parse(ts) - lo) / Math.max(1, hi - lo)) * (W - P * 2)
-  return (
-    <svg viewBox={`0 0 ${W} ${H + 40}`} className="chart" role="img" aria-label="Events over time">
-      {rows.map((r, i) => {
-        let y = H - 6
-        return Object.entries(r.by_source).map(([s, c]) => {
-          const h = (c / max) * (H - 30)
-          y -= h
-          return <rect key={`${i}${s}`} x={P + r.index * bw + 1} y={y} width={Math.max(1, bw - 2)} height={h} rx={Math.min(3, Math.max(1, bw - 2) / 2)}
-                       style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }}><title>{`${s}: ${c}`}</title></rect>
-        })
-      })}
-      {data.confirmed.map((c) => (
-        <g key={c.edge}>
-          <line x1={xOf(c.first_seen)} x2={xOf(c.first_seen)} y1={6} y2={H - 6} style={{ stroke: 'var(--bad)' }} strokeDasharray="3 3" />
-          <circle cx={xOf(c.first_seen)} cy={8} r={4} style={{ fill: 'var(--bad)' }}><title>{`${c.technique} ${c.src} → ${c.dst}`}</title></circle>
-        </g>
-      ))}
-      <line x1={P} x2={W - P} y1={H - 5} y2={H - 5} stroke="currentColor" opacity=".3" />
-      <text x={P} y={H + 14} fontSize="10" fill="currentColor">{fmtTime(data.range[0])}</text>
-      <text x={W - P} y={H + 14} fontSize="10" textAnchor="end" fill="currentColor">{fmtTime(data.range[1])}</text>
-      {sources.map((s, i) => (
-        <g key={s}><rect x={P + i * 120} y={H + 26} width="8" height="8" rx="2" style={{ fill: SRC_COLOR[s] || 'var(--text-2)' }} />
-          <text x={P + i * 120 + 12} y={H + 34} fontSize="10" fill="currentColor">{s}</text></g>
-      ))}
-    </svg>
-  )
+const DEMO = {
+  findings: [
+    { id: 'demo-1', rule: 'hardcoded-secret', file: 'src/config.ts', title: 'Hard-coded credential', technique: 'T1552.001', status: 'confirmed' },
+    { id: 'demo-2', rule: 'hardcoded-secret', file: 'src/config.ts', title: 'Hard-coded credential', technique: 'T1552.001', status: 'potential' },
+    { id: 'demo-3', rule: 'sql-concat', file: 'src/routes/users.ts', title: 'SQL built from strings', technique: 'T1190', status: 'confirmed' },
+    { id: 'demo-4', rule: 'sql-concat', file: 'src/routes/orders.ts', title: 'SQL built from strings', technique: 'T1190', status: 'potential' },
+    { id: 'demo-5', rule: 'permissive-cors', file: 'src/server.ts', title: 'CORS allows every origin', technique: 'T1190', status: 'potential' },
+    { id: 'demo-6', rule: 'xss-sink', file: 'src/ui/notice.tsx', title: 'Unescaped HTML sink', technique: 'T1189', status: 'potential' },
+    { id: 'demo-7', rule: 'weak-hash', file: 'src/auth/passwords.ts', title: 'Weak hash', technique: 'T1110', status: 'confirmed' },
+  ],
+  graph: { nodes: [
+    { id: 'code:config', kind: 'component', label: 'src/config.ts' }, { id: 'code:users', kind: 'component', label: 'src/routes/users.ts' },
+    { id: 'code:orders', kind: 'component', label: 'src/routes/orders.ts' }, { id: 'code:server', kind: 'component', label: 'src/server.ts' },
+  ] },
+  paths: [
+    { nodes: ['code:config'], risk: 0.84 }, { nodes: ['code:config'], risk: 0.62 }, { nodes: ['code:users'], risk: 0.59 },
+    { nodes: ['code:users'], risk: 0.43 }, { nodes: ['code:orders'], risk: 0.36 }, { nodes: ['code:server'], risk: 0.28 },
+  ],
+  rems: [
+    { state: 'verified', risk_before: 1.12, risk_after: 0.48 }, { state: 'verified', risk_before: 0.72, risk_after: 0.34 },
+    { state: 'executed', risk_before: 0.51, risk_after: 0.29 }, { state: 'approved' }, { state: 'proposed' },
+  ],
+  timeline: { risk_series: [
+    { ts: '2026-10-11T09:00:00Z', events: 12, risk: 0.38, paths: 2 }, { ts: '2026-10-12T09:00:00Z', events: 28, risk: 0.66, paths: 4 },
+    { ts: '2026-10-13T09:00:00Z', events: 47, risk: 0.91, paths: 5 }, { ts: '2026-10-14T09:00:00Z', events: 64, risk: 0.57, paths: 3 },
+  ] },
 }
 
-/** Horizontal bars of how often each label occurs. Labels are plain text so nothing depends on colour alone. */
-function CountBars({ rows, label }) {
-  if (!rows.length) return <p className="muted">Nothing to show.</p>
-  const W = 640, ROW = 26, L = 220, R = 40
-  const max = Math.max(...rows.map((r) => r[1]), 1)
-  return (
-    <svg viewBox={`0 0 ${W} ${rows.length * ROW + 6}`} className="chart" role="img" aria-label={label}>
-      {rows.map(([name, n], i) => {
-        const w = Math.max(4, (n / max) * (W - L - R))
-        return (
-          <g key={name} transform={`translate(0 ${i * ROW + 3})`}>
-            <text x={L - 10} y={ROW / 2 + 3} fontSize="12" textAnchor="end" fill="currentColor">{name.length > 30 ? `${name.slice(0, 29)}…` : name}</text>
-            <rect x={L} y={4} width={w} height={ROW - 10} rx={(ROW - 10) / 2} style={{ fill: 'var(--accent)' }} />
-            <text x={L + w + 8} y={ROW / 2 + 3} fontSize="12" fill="currentColor">{n}</text>
-          </g>
-        )
-      })}
-    </svg>
-  )
+/** Scanner rule ids are the source of category labels; unfamiliar rules remain visible as Other. */
+export function findingCategory(finding) {
+  if (CATEGORY_BY_RULE[finding.rule]) return CATEGORY_BY_RULE[finding.rule]
+  if (String(finding.rule || '').startsWith('ai-')) return titleCase(String(finding.rule).slice(3))
+  return 'Other'
 }
 
-const tally = (items, key) => Object.entries(items.reduce((a, f) => ({ ...a, [f[key]]: (a[f[key]] || 0) + 1 }), {}))
-  .sort((a, b) => b[1] - a[1]).slice(0, 8)
+export function categoryDistribution(findings = []) {
+  const groups = new Map()
+  findings.forEach((finding) => {
+    const category = findingCategory(finding)
+    const row = groups.get(category) || { category, count: 0, findings: [], files: new Set(), rules: new Set() }
+    row.count += 1; row.findings.push(finding)
+    if (finding.file) row.files.add(finding.file)
+    if (finding.title) row.rules.add(finding.title)
+    groups.set(category, row)
+  })
+  return [...groups.values()].sort((a, b) => b.count - a.count || a.category.localeCompare(b.category))
+}
 
-function RiskLine({ series }) {
+export function componentRisk(graph, paths = []) {
+  if (!graph) return []
+  const components = new Map(graph.nodes.filter((node) => node.kind === 'component').map((node) => [node.id, node]))
+  const scores = new Map()
+  paths.forEach((path) => {
+    new Set(path.nodes || []).forEach((id) => {
+      if (!components.has(id)) return
+      const row = scores.get(id) || { id, label: components.get(id).label, risk: 0, paths: 0 }
+      row.risk += Number(path.risk) || 0; row.paths += 1; scores.set(id, row)
+    })
+  })
+  return [...scores.values()].sort((a, b) => b.risk - a.risk || b.paths - a.paths).slice(0, 6)
+}
+
+export function mitreMappings(findings = []) {
+  const groups = new Map()
+  findings.forEach((finding) => {
+    if (!finding.technique) return
+    const technique = String(finding.technique)
+    const row = groups.get(technique) || { technique, count: 0, confirmed: 0, files: new Set() }
+    row.count += 1; if (finding.status === 'confirmed') row.confirmed += 1
+    if (finding.file) row.files.add(finding.file)
+    groups.set(technique, row)
+  })
+  return [...groups.values()].sort((a, b) => b.count - a.count || a.technique.localeCompare(b.technique))
+}
+
+export function remediationOutcome(rems = []) {
+  const states = ['verified', 'executed', 'approved', 'proposed', 'failed', 'rolled_back']
+  const rows = states.map((state) => ({ state, count: rems.filter((remediation) => remediation.state === state).length })).filter((row) => row.count)
+  const direct = rems.filter((remediation) => remediation.state === 'verified' && remediation.risk_before != null && remediation.risk_after != null)
+  return { rows, verified: direct.length, directRiskChange: direct.reduce((sum, remediation) => sum + (remediation.risk_before - remediation.risk_after), 0) }
+}
+
+function Donut({ rows, selected, onSelect, ariaLabel, totalLabel = 'findings' }) {
+  const total = rows.reduce((sum, row) => sum + row.count, 0)
+  if (!total) return <p className="muted">No data is available for this chart yet.</p>
+  const radius = 48, circumference = 2 * Math.PI * radius
+  let offset = 0
+  return <div className="analytics-donut-wrap"><svg className="analytics-donut" viewBox="0 0 140 140" role="img" aria-label={ariaLabel}>
+    <circle cx="70" cy="70" r={radius} fill="none" stroke="var(--bg-3)" strokeWidth="20" />
+    {rows.map((row, index) => {
+      const length = row.count / total * circumference
+      const element = <circle key={row.category || row.state} cx="70" cy="70" r={radius} fill="none" stroke={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} strokeWidth="20"
+        strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 70 70)" className={selected && selected !== (row.category || row.state) ? 'dim' : ''}
+        onClick={() => onSelect(selected === (row.category || row.state) ? null : (row.category || row.state))}><title>{`${row.category || titleCase(row.state)}: ${row.count}`}</title></circle>
+      offset += length
+      return element
+    })}
+    <text x="70" y="67" textAnchor="middle" className="donut-number">{total}</text><text x="70" y="82" textAnchor="middle" className="donut-label">{totalLabel}</text>
+  </svg><div className="analytics-legend">{rows.map((row, index) => <button type="button" key={row.category || row.state} className={selected === (row.category || row.state) ? 'active' : ''} onClick={() => onSelect(selected === (row.category || row.state) ? null : (row.category || row.state))}><i style={{ background: CATEGORY_COLORS[index % CATEGORY_COLORS.length] }} /><span>{row.category || titleCase(row.state)}</span><b>{row.count}</b></button>)}</div></div>
+}
+
+function HorizontalBars({ rows, selected, onSelect, label, value = (row) => row.count }) {
+  if (!rows.length) return <p className="muted">No data is available for this chart yet.</p>
+  const max = Math.max(...rows.map(value), 1)
+  return <div className="analytics-bars" aria-label={label}>{rows.map((row) => <button type="button" key={row.id || row.technique} className={selected === (row.id || row.technique) ? 'active' : ''} onClick={() => onSelect(selected === (row.id || row.technique) ? null : (row.id || row.technique))}>
+    <span className="analytics-bar-label">{row.label || row.technique}</span><span className="analytics-bar-track"><i style={{ width: `${value(row) / max * 100}%` }} /></span><b>{Number.isInteger(value(row)) ? value(row) : value(row).toFixed(2)}</b>
+  </button>)}</div>
+}
+
+function RiskLine({ series = [] }) {
   const W = 640, H = 130, P = 30
-  if (series.length < 2) return <p className="muted">Needs at least two checkpoints of events.</p>
-  const max = Math.max(1, ...series.map((s) => s.risk))
-  const pts = series.map((s, i) => [P + (i / (series.length - 1)) * (W - P * 2), H - 18 - (s.risk / max) * (H - 36), s])
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Risk over time">
-      <polyline fill="none" style={{ stroke: 'var(--bad)' }} strokeWidth="2" points={pts.map((p) => `${p[0]},${p[1]}`).join(' ')} />
-      {pts.map((p, i) => (
-        <circle key={i} cx={p[0]} cy={p[1]} r="3" style={{ fill: 'var(--bad)' }}>
-          <title>{`${p[2].events} events: risk ${p[2].risk}, ${p[2].paths} paths`}</title></circle>
-      ))}
-      <text x={4} y={14} fontSize="10" fill="currentColor">{max.toFixed(2)}</text>
-      <text x={4} y={H - 18} fontSize="10" fill="currentColor">0</text>
-      <text x={W / 2} y={H - 2} fontSize="10" textAnchor="middle" fill="currentColor">events ingested →</text>
-    </svg>
-  )
+  if (series.length < 2) return <p className="muted">More than one event checkpoint is needed to show exposure movement.</p>
+  const max = Math.max(1, ...series.map((point) => point.risk))
+  const points = series.map((point, index) => [P + index / (series.length - 1) * (W - P * 2), H - 18 - point.risk / max * (H - 36), point])
+  return <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Exposure across event checkpoints"><polyline fill="none" stroke="var(--accent)" strokeWidth="2" points={points.map((point) => `${point[0]},${point[1]}`).join(' ')} />
+    {points.map((point, index) => <circle key={index} cx={point[0]} cy={point[1]} r="3" fill="var(--accent)"><title>{`${point[2].events} events: risk ${point[2].risk}, ${point[2].paths} paths`}</title></circle>)}
+    <text x={P} y={H - 2} fontSize="10" fill="currentColor">{fmtTime(points[0][2].ts)}</text><text x={W - P} y={H - 2} fontSize="10" textAnchor="end" fill="currentColor">{fmtTime(points.at(-1)[2].ts)}</text>
+  </svg>
 }
 
-function Table({ cols, rows }) {
-  return (
-    <table className="tbl">
-      <thead><tr>{cols.map((c) => <th key={c[0]}>{c[1]}</th>)}</tr></thead>
-      <tbody>{rows.map((r, i) => <tr key={i}>{cols.map((c) => <td key={c[0]}>{r[c[0]] ?? '-'}</td>)}</tr>)}</tbody>
-    </table>
-  )
+function Insight({ title, explanation, action, children, wide = false }) {
+  return <section className={`card analytics-card${wide ? ' wide-card' : ''}`}><h3>{title}</h3><p className="muted">{explanation}</p>{children}<p className="analytics-action"><b>Next:</b> {action}</p></section>
 }
 
-export default function Insights({ rems }) {
-  const [t, setT] = useState(null)
-  const [m, setM] = useState(null)
+export default function Insights({ graph, paths = [], rems = [], demo = false }) {
+  const [timeline, setTimeline] = useState(null)
   const [code, setCode] = useState(null)
+  const [category, setCategory] = useState(null)
+  const [component, setComponent] = useState(null)
+  const [technique, setTechnique] = useState(null)
+  const [outcome, setOutcome] = useState(null)
   useEffect(() => {
-    api.timeline().then(setT).catch(() => {})
-    api.metrics().then(setM).catch(() => {})
-    api.codeReport().then(setCode).catch(() => {})
-  }, [])
-  const findings = code && code.scanned ? code.findings : []
-  const done = rems.filter((r) => r.risk_before != null)
-  return (
-    <div className="insights">
-      <section className="card">
-        <h3>From events to action</h3>
-        {m && (
-          <div className="stats">
-            <div><b>{m.compression.raw_events}</b><span>security events</span></div>
-            <div><b>{m.compression.confirmed_steps}</b><span>confirmed attack steps</span></div>
-            <div><b>{m.compression.ranked_paths}</b><span>ranked paths</span></div>
-            <div><b>{m.compression.critical_or_high}</b><span>critical / high</span></div>
-          </div>
-        )}
-      </section>
-      {findings.length > 0 && (
-        <section className="card wide-card">
-          <h3>Repository findings · {code.repo}</h3>
-          <div className="stats">
-            <div><b>{findings.length}</b><span>findings</span></div>
-            <div><b>{findings.filter((f) => f.fixed).length}</b><span>fixed</span></div>
-            <div><b>{findings.filter((f) => f.exploitable === false).length}</b><span>judged not exploitable</span></div>
-            <div><b>{code.files}</b><span>files scanned</span></div>
-          </div>
-          <div className="two-col">
-            <div><h4>By rule</h4><CountBars rows={tally(findings, 'title')} label="Findings by rule" /></div>
-            <div><h4>By file</h4><CountBars rows={tally(findings, 'file')} label="Findings by file" /></div>
-          </div>
-        </section>
-      )}
-      <section className="card">
-        <h3>Attack timeline</h3>
-        {t && <Timeline data={t} />}
-        <p className="muted">Bars: events by source over time. Red markers: when an attack step was first confirmed.</p>
-        {t && t.confirmed.length > 0 && (
-          <Table cols={[['first_seen', 'first seen'], ['technique', 'technique'], ['src', 'from'], ['dst', 'to'], ['p', 'p']]}
-                 rows={t.confirmed.map((c) => ({ ...c, first_seen: fmtTime(c.first_seen) }))} />
-        )}
-      </section>
-      <section className="card">
-        <h3>Risk over time</h3>
-        {t && <RiskLine series={t.risk_series} />}
-      </section>
-      <section className="card">
-        <h3>Before and after remediation</h3>
-        {done.length === 0 ? <p className="muted">Execute a remediation to compare risk and paths.</p> : (
-          <Table cols={[['id', '#'], ['title', 'fix'], ['risk_before', 'risk before'], ['risk_after', 'risk after'],
-                        ['paths_before', 'paths before'], ['paths_after', 'paths after'], ['state', 'state']]} rows={done} />
-        )}
-      </section>
-    </div>
-  )
+    if (demo) { setTimeline(DEMO.timeline); setCode({ scanned: true, findings: DEMO.findings }); return undefined }
+    let live = true; Promise.all([api.timeline(), api.codeReport()]).then(([nextTimeline, nextCode]) => { if (live) { setTimeline(nextTimeline); setCode(nextCode) } }).catch(() => {})
+    return () => { live = false }
+  }, [demo])
+  const findings = demo ? DEMO.findings : code && code.scanned ? code.findings : []
+  const activeGraph = demo ? DEMO.graph : graph
+  const activePaths = demo ? DEMO.paths : paths
+  const activeRems = demo ? DEMO.rems : rems
+  const categories = useMemo(() => categoryDistribution(findings), [findings])
+  const components = useMemo(() => componentRisk(activeGraph, activePaths), [activeGraph, activePaths])
+  const mappings = useMemo(() => mitreMappings(findings), [findings])
+  const outcomes = useMemo(() => remediationOutcome(activeRems), [activeRems])
+  const selectedCategory = categories.find((row) => row.category === category)
+  const selectedComponent = components.find((row) => row.id === component)
+  const selectedTechnique = mappings.find((row) => row.technique === technique)
+  const selectedOutcome = outcomes.rows.find((row) => row.state === outcome)
+  return <main className="insights analytics">
+    <header className="analytics-header wide-card"><div><p className="eyebrow">Analytics {demo && <span className="tag">Demo sample data</span>}</p><h1>Insights</h1><p>Understand where security risk originates, how exposure changes, and which improvements matter most.</p></div></header>
+    <Insight title="Finding categories" explanation={categories.length ? `${categories[0].category} accounts for the largest share of recorded findings.` : 'Categories appear after a repository scan records findings.'} action={selectedCategory ? `Review ${selectedCategory.category.toLowerCase()} controls across ${selectedCategory.files.size} affected component${selectedCategory.files.size === 1 ? '' : 's'}.` : 'Select a category to understand the underlying rules and affected components.'}>
+      <Donut rows={categories} selected={category} onSelect={setCategory} ariaLabel="Finding distribution by category" />
+      {selectedCategory && <p className="analytics-detail"><b>{selectedCategory.category}</b> appears in {selectedCategory.files.size} component{selectedCategory.files.size === 1 ? '' : 's'} through {selectedCategory.rules.size} scanner rule{selectedCategory.rules.size === 1 ? '' : 's'}: {[...selectedCategory.rules].slice(0, 3).join(', ')}.</p>}
+    </Insight>
+    <Insight title="Risk concentration" explanation={components.length ? `${components[0].label} contributes the largest share of current ranked-path risk.` : 'Risk concentration appears once code components occur in ranked paths.'} action={selectedComponent ? `Prioritize remediation work in ${selectedComponent.label}; it appears on ${selectedComponent.paths} ranked path${selectedComponent.paths === 1 ? '' : 's'}.` : 'Select a component to see how often it occurs in the current ranked paths.'}>
+      <HorizontalBars rows={components} selected={component} onSelect={setComponent} label="Risk concentration by component" value={(row) => row.risk} />
+    </Insight>
+    <Insight title="MITRE ATT&amp;CK distribution" explanation={mappings.length ? `${mappings[0].technique} is the most frequently mapped technique in current repository findings.` : 'Technique mappings appear after findings are available.'} action={selectedTechnique ? `Review controls related to ${selectedTechnique.technique} in ${selectedTechnique.files.size} affected component${selectedTechnique.files.size === 1 ? '' : 's'}.` : 'Select a technique to see its evidence footprint.'}>
+      <HorizontalBars rows={mappings.slice(0, 6)} selected={technique} onSelect={setTechnique} label="Mapped ATT&CK techniques" />
+      {selectedTechnique && <p className="analytics-detail"><b>{selectedTechnique.technique}</b> is mapped by {selectedTechnique.count} finding{selectedTechnique.count === 1 ? '' : 's'}; {selectedTechnique.confirmed} {selectedTechnique.confirmed === 1 ? 'is' : 'are'} confirmed. Other mappings remain findings, not confirmed attack observations.</p>}
+    </Insight>
+    <Insight title="Remediation effectiveness" explanation={outcomes.rows.length ? `${outcomes.verified} remediation action${outcomes.verified === 1 ? ' is' : 's are'} verified against the current workspace.` : 'Outcome analysis begins when remediation actions are proposed.'} action={selectedOutcome ? `Review ${titleCase(selectedOutcome.state)} remediation actions to keep the workflow moving.` : 'Select an outcome to focus the next remediation step.'}>
+      <Donut rows={outcomes.rows} selected={outcome} onSelect={setOutcome} ariaLabel="Remediation outcomes" totalLabel="actions" />
+      {outcomes.verified > 0 && <p className="analytics-detail">Verified actions have recorded a combined direct model-risk change of {outcomes.directRiskChange.toFixed(2)}. This is not extrapolated beyond those recorded actions.</p>}
+    </Insight>
+    <Insight wide title="Event exposure checkpoints" explanation="Exposure is recomputed as events arrive, showing how the current attack-path model developed over this event stream." action="Use this movement with the active path analysis; scan-to-scan new, resolved, and reopened finding trends appear only when comparable scan history is stored.">
+      {timeline && <RiskLine series={timeline.risk_series} />}
+    </Insight>
+  </main>
 }
