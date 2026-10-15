@@ -311,6 +311,8 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
     """Start a scan. `token` is the credential for cloning a private repo: on the web, a short-lived GitHub App
     token limited to this one repo (resolved by the caller from the user's own installation); on the desktop,
     None means the user's own token from the keychain."""
+    if settings.SERVERLESS:
+        raise RuntimeError(settings.SERVERLESS_SCAN_MESSAGE)
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
     busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")

@@ -1,0 +1,22 @@
+# Render Blueprint. Needs Render to be allowed to read the repository (for a private org repo, an owner must
+# authorise the Render GitHub app). The address https://<name>.onrender.com is exposed as RENDER_EXTERNAL_URL.
+# Free instances sleep when idle; use "starter" or above for a demo.
+services:
+  - type: web
+    name: paladin-datum
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
