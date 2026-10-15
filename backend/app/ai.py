@@ -12,13 +12,22 @@ import httpx
 from . import keys
 
 URL = "https://api.anthropic.com/v1/messages"
+_models: dict = {}
 SYSTEM = ("You write remediation runbooks for security engineers. Use ONLY the JSON facts provided. "
           "Do not invent hosts, accounts, commands or findings. Be concise: numbered steps, then a one-line "
           "verification step. Plain text, no markdown headings.")
 
 
+def provider() -> str | None:
+    if keys.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    if keys.get("OPENAI_API_KEY"):
+        return "openai"
+    return None
+
+
 def enabled() -> bool:
-    return bool(keys.get("ANTHROPIC_API_KEY"))
+    return provider() is not None
 
 
 def draft(facts: dict) -> str | None:
@@ -43,9 +52,21 @@ def draft(facts: dict) -> str | None:
 
 def complete(system: str, user: str, max_tokens: int = 1500) -> str | None:
     """Generic single-turn call. Returns None when disabled or on any failure."""
-    if not enabled():
+    selected = provider()
+    if not selected:
         return None
     try:
+        if selected == "openai":
+            key = keys.get("OPENAI_API_KEY") or ""
+            r = httpx.post("https://api.openai.com/v1/responses",
+                           headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
+                           json={"model": os.environ.get("AI_MODEL_OPENAI", "gpt-5-mini"), "instructions": system,
+                                 "input": user[:24000], "store": False, "max_output_tokens": max(max_tokens, 4000)},
+                           timeout=40)
+            r.raise_for_status()
+            return "".join(part.get("text", "") for item in r.json().get("output", [])
+                           if item.get("type") == "message" for part in item.get("content", [])
+                           if part.get("type") == "output_text") or None
         r = httpx.post(
             URL,
             headers={"x-api-key": keys.get("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01",

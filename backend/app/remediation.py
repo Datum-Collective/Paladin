@@ -182,7 +182,7 @@ def execute(ws: int, rid: int, actor: str, applied_to: str = "") -> dict:
     a = engine.snapshot(ws)
     return _set(ws, rid, "executed", actor,
                 f"connector={cur['connector']} risk {b['risk']:.3f}->{a['risk']:.3f} paths {live(b)}->{live(a)}",
-                mark=store.event_count(ws), risk_before=round(b["risk"], 4), risk_after=round(a["risk"], 4),
+                mark=len(store.get_events(ws)), risk_before=round(b["risk"], 4), risk_after=round(a["risk"], 4),
                 paths_before=live(b), paths_after=live(a))
 
 
@@ -197,7 +197,9 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     from .models import Edge
     inv = {e.id: e for e in engine.workspace_model(ws)[1]}
     later = store.get_events(ws)[cur["mark"]:]
-    still = [ev.id for ev in later for eid in cur["edges"] if matches(inv[eid], ev)]
+    # A re-scan can replace the model that supplied this remediation. A removed
+    # edge cannot match a later event and must not turn verification into a 404.
+    still = [ev.id for ev in later for eid in cur["edges"] if eid in inv and matches(inv[eid], ev)]
     closed = set(cur["edges"]) <= store.applied_fixes(ws)
     if closed and not still:
         return _set(ws, rid, "verified", actor, "no matching events since execution")

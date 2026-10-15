@@ -11,18 +11,24 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import assistant, auth, conversations, keys, supa
+from .ratelimit import RateLimit
 from .providers import ProviderError, all_providers, get_provider
 
 router = APIRouter()
 STATUS_FOR = {"auth": 401, "quota": 402, "permission": 403, "not_found": 404, "too_large": 413,
               "rate_limit": 429, "overloaded": 503, "server": 502, "network": 502, "invalid": 400}
 EFFORTS = ("low", "medium", "high")
+_key_limit = RateLimit(20, 60)
 
 
 class KeyPush(BaseModel):
     anthropic: str | None = Field(default=None, max_length=512)
     openai: str | None = Field(default=None, max_length=512)
     github: str | None = Field(default=None, max_length=512)
+
+
+class KeyBody(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
 
 
 class Msg(BaseModel):
@@ -77,6 +83,32 @@ def push_keys(body: KeyPush, request: Request):
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
     return keys.status()
+
+
+@router.put("/api/providers/{pid}/key")
+async def set_my_key(pid: str, body: KeyBody, u: dict = Depends(auth.require_user)):
+    """Validate a signed-in user's provider key before retaining it in memory."""
+    if pid not in keys.WEB_PROVIDERS:
+        raise HTTPException(404, "unknown provider")
+    _key_limit.hit(f"key:{u['user_id']}")
+    try:
+        previous = keys.set_user_key(u["user_id"], pid, body.key.strip())
+    except ValueError:
+        raise HTTPException(422, "That does not look like an API key.") from None
+    keys.bind(u["user_id"])
+    result = await _provider(pid).validate()
+    if not result["ok"]:
+        keys.set_user_key(u["user_id"], pid, previous)
+    return {**result, "providers": {name: keys.configured(name) for name in keys.WEB_PROVIDERS}}
+
+
+@router.delete("/api/providers/{pid}/key")
+def remove_my_key(pid: str, u: dict = Depends(auth.require_user)):
+    if pid not in keys.WEB_PROVIDERS:
+        raise HTTPException(404, "unknown provider")
+    keys.set_user_key(u["user_id"], pid, None)
+    keys.bind(u["user_id"])
+    return {"providers": {name: keys.configured(name) for name in keys.WEB_PROVIDERS}}
 
 
 @router.get("/api/providers/{pid}/models")
