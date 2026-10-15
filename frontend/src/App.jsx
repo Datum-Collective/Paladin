@@ -98,12 +98,13 @@ function Splash({ error, onRetry }) {
   return (
     <div className="splash">
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+      {!error && <span className="splash-bar" aria-hidden="true" />}
       {error ? (
         <>
           <p className="err" role="alert">{error}</p>
           <button onClick={onRetry}>Try Again</button>
         </>
-      ) : <p className="muted">Starting…</p>}
+      ) : <span className="sr-only" role="status">Loading</span>}
     </div>
   )
 }
