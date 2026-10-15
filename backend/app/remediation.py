@@ -141,7 +141,9 @@ def execute(ws: int, rid: int, actor: str) -> dict:
     a = engine.snapshot(ws)
     return _set(ws, rid, "executed", actor,
                 f"connector={cur['connector']} risk {b['risk']:.3f}->{a['risk']:.3f} paths {live(b)}->{live(a)}",
-                mark=store.event_count(ws), risk_before=round(b["risk"], 4), risk_after=round(a["risk"], 4),
+                # index into the loaded event list (verify slices it); a raw row count also counts rows the loader
+                # skips, and may be a second stale
+                mark=len(store.get_events(ws)), risk_before=round(b["risk"], 4), risk_after=round(a["risk"], 4),
                 paths_before=live(b), paths_after=live(a))
 
 
@@ -151,10 +153,10 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     cur = get(ws, rid)
     if cur["state"] != "executed":
         raise ValueError(f"cannot go from {cur['state']} to verified")
-    from .models import Edge
     inv = {e.id: e for e in engine.workspace_model(ws)[1]}
     later = store.get_events(ws)[cur["mark"]:]
-    still = [ev.id for ev in later for eid in cur["edges"] if matches(inv[eid], ev)]
+    # an edge that left the model (a re-scan replaced the code findings) has nothing left to match
+    still = [ev.id for ev in later for eid in cur["edges"] if eid in inv and matches(inv[eid], ev)]
     closed = set(cur["edges"]) <= store.applied_fixes(ws)
     if closed and not still:
         return _set(ws, rid, "verified", actor, "no matching events since execution")

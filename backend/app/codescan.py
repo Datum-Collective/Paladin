@@ -1,12 +1,18 @@
 """Code scan: static rules find candidate weaknesses, Claude Haiku triages them, findings become graph
 nodes/edges in the workspace. Uploaded files only (never server paths). Code is untrusted DATA."""
 import json
+import logging
 import re
 import time
 
 from . import ai, supa
 
+log = logging.getLogger("uvicorn.error")
+
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FINDINGS = 300, 200_000, 3_000_000, 60
+# Rules are matched against at most this much of a line (minified or generated code has lines of 100 KB+), and the
+# whole static pass stops after SCAN_BUDGET_S: the repository is attacker-controlled input.
+MAX_LINE_CHARS, SCAN_BUDGET_S = 4000, 30.0
 SKIP_DIRS = ("node_modules/", ".git/", ".venv/", "venv/", "__pycache__/", "dist/", "build/", "vendor/")
 SKIP_FILES = (".env", ".pem", ".key", "id_rsa", "package-lock.json", "yarn.lock", ".min.js")
 CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".java", ".go", ".rb", ".php", ".cs", ".sh",
@@ -16,15 +22,19 @@ ROUTE = re.compile(r"@(app|router|bp)\.(get|post|put|delete|route)|app\.(get|pos
 
 # id, regex, cwe, technique, sink, title
 RULES = [
+    # The name must START at an identifier boundary and the keyword is only checked with a lookahead, so each
+    # identifier is scanned a constant number of times. The earlier `\b[\w.]*(kw)[\w.]*` form was quadratic: one
+    # 20 KB line of "a.a.a." held a scan thread for 9 s.
     ("hardcoded-secret", re.compile(
-        r"""(?i)\b[\w.]*(api[_-]?key|secret|passw(or)?d|passwd|token|credential|private[_-]?key|auth|key)[\w.]*"""
-        r"""\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
+        r"""(?i)(?<![\w.])(?=[\w.]*?(?:api[_-]?key|secret|passw(?:or)?d|passwd|token|credential|private[_-]?key|"""
+        r"""auth|key))[\w.]+\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
      "CWE-798", "T1552.001", "secret", "Hard-coded credential"),
     ("code-exec", re.compile(r"\b(eval|exec)\s*\("), "CWE-95", "T1059", "host", "Dynamic code execution"),
     ("shell-injection", re.compile(r"shell\s*=\s*True|os\.system\(|child_process\.exec\("), "CWE-78", "T1059",
      "host", "Shell command execution"),
     ("sql-concat", re.compile(
-        r"""(?i)\b(execute|executemany|query|raw)\s*\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%]|[^)]*\.format\()"""),
+        r"""(?i)\b(execute|executemany|query|raw)\s*\(\s*(f["']|"[^"]{0,400}"\s*[+%]|'[^']{0,400}'\s*[+%]"""
+        r"""|[^)]{0,400}\.format\()"""),   # bounded: an unbounded [^)]* rescans the line from every "execute("
      "CWE-89", "T1190", "db", "SQL built from strings"),
     ("unsafe-deserialize", re.compile(r"pickle\.loads?\(|yaml\.load\((?!.*Loader)|marshal\.loads\("), "CWE-502",
      "T1190", "host", "Unsafe deserialization"),
@@ -37,9 +47,9 @@ RULES = [
     ("permissive-cors", re.compile(
         r"""allow_origins\s*=\s*\[\s*["']\*["']\s*\]|Access-Control-Allow-Origin['"]?\s*[:,]\s*['"]\*['"]"""
         r"""|\borigin\s*:\s*['"]\*['"]"""), "CWE-942", "T1190", "sessions", "CORS allows every origin"),
-    ("blank-noopener", re.compile(r"""target\s*=\s*["']_blank["'](?![^>]*\brel\s*=)"""), "CWE-1022", "T1189",
+    ("blank-noopener", re.compile(r"""target\s*=\s*["']_blank["'](?![^>]{0,400}\brel\s*=)"""), "CWE-1022", "T1189",
      "sessions", "target=_blank without rel=noopener"),
-    ("http-script-src", re.compile(r"""<script[^>]+src\s*=\s*["']http://""", re.I), "CWE-829", "T1189",
+    ("http-script-src", re.compile(r"""<script[^>]{1,400}src\s*=\s*["']http://""", re.I), "CWE-829", "T1189",
      "sessions", "Script loaded over plain HTTP"),
     ("debug-on", re.compile(r"debug\s*=\s*True"), "CWE-489", "T1190", "host", "Debug mode enabled"),
 ]
@@ -71,30 +81,53 @@ class _Redact:
 REDACT = _Redact()
 
 
+MAX_PATH = 300
+_SKIP_DIR_NAMES = frozenset(d.rstrip("/") for d in SKIP_DIRS)
+
+
+def in_skipped_dir(path: str) -> bool:
+    """True when a whole directory NAME on the path is one we skip ("build" yes, "rebuild" no)."""
+    return any(seg in _SKIP_DIR_NAMES for seg in path.lower().split("/")[:-1])
+
+
 def accept_files(files: list[dict]) -> list[dict]:
     out, total = [], 0
     for f in files:
         p, c = str(f.get("path", "")), f.get("content", "")
-        if not isinstance(c, str) or ".." in p or p.startswith("/"):
+        # a path component of ".." escapes the repo; "a..b" is just a name. An over-long path is dropped, never
+        # truncated: a cut-off path would name a file that does not exist
+        if (not isinstance(c, str) or p.startswith("/") or ".." in p.split("/") or len(p) > MAX_PATH
+                or "\\" in p):
             continue
         low = p.lower()
-        if any(d in low for d in SKIP_DIRS) or low.endswith(SKIP_FILES) or not low.endswith(CODE_EXT):
+        if in_skipped_dir(p) or low.endswith(SKIP_FILES) or not low.endswith(CODE_EXT):
             continue
         if len(c) > MAX_FILE_BYTES or total + len(c) > MAX_TOTAL_BYTES:
             continue
         total += len(c)
-        out.append({"path": p[:300], "content": c})
+        out.append({"path": p, "content": c})
         if len(out) >= MAX_FILES:
             break
     return out
 
 
-def static_scan(files: list[dict]) -> list[dict]:
+def split_lines(content: str) -> list[str]:
+    """Lines as git, editors and the fixers count them: only "\\n" ends a line. str.splitlines() also breaks on
+    form feed, vertical tab, U+0085 and U+2028, which made reported line numbers drift in such files."""
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in content.split("\n")]
+
+
+def static_scan(files: list[dict], budget_s: float = SCAN_BUDGET_S) -> list[dict]:
     findings = []
+    deadline = time.monotonic() + budget_s
     for f in files:
-        lines = f["content"].splitlines()
-        routed = bool(ROUTE.search(f["content"]))
-        for i, line in enumerate(lines, 1):
+        lines = split_lines(f["content"])
+        routed = bool(ROUTE.search(f["content"][:MAX_FILE_BYTES]))
+        for i, full in enumerate(lines, 1):
+            if time.monotonic() > deadline:
+                log.warning("static scan stopped after %.0fs; %d finding(s) so far", budget_s, len(findings))
+                return findings
+            line = full[:MAX_LINE_CHARS]
             for rid, rx, cwe, tech, sink, title in RULES:
                 if rx.search(line):
                     ctx = "\n".join(lines[max(0, i - 4):i + 3])
@@ -218,7 +251,7 @@ def _norm(x: str) -> str:
 def line_hash(line: str) -> str:
     """Stable id of a source line that is safe to store (no secret text)."""
     import hashlib
-    return hashlib.sha1(_norm(line).encode()).hexdigest()[:16]
+    return hashlib.sha1(_norm(line).encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict]:
@@ -232,7 +265,7 @@ def ai_review(files: list[dict], existing: list[dict]) -> tuple[list[dict], dict
                                           len(f["content"])))
     out: list[dict] = []
     for f in ranked[:REVIEW_MAX_FILES]:
-        lines = f["content"].splitlines()
+        lines = split_lines(f["content"])
         red = [REDACT.sub(r"\1***\1", ln) for ln in lines]      # secrets never leave the process
         full = "\n".join(f"{i}| {ln}" for i, ln in enumerate(red, 1))
         body = full[:REVIEW_MAX_CHARS]
@@ -285,7 +318,7 @@ def scan_full(files: list[dict]) -> tuple[list[dict], bool, int, dict]:
         findings.append(r)
     stats["findings"] = len(reviewed)
     stats["triage"] = triaged
-    stats["lines"] = sum(len(f["content"].splitlines()) for f in kept)
+    stats["lines"] = sum(len(split_lines(f["content"])) for f in kept)
     return findings, triaged or bool(reviewed), len(kept), stats
 
 

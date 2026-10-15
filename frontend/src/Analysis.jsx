@@ -4,6 +4,7 @@ import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
 import { Tabs } from './ui.jsx'
+import { pathKey } from './lib.js'
 import { Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
 export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
@@ -22,7 +23,10 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
   // never let the side panes take more than ~60% of the window, so the graph stays usable at the minimum size
   const leftW = Math.round(Math.min(left, width * 0.3))
   const rightW = inspectorOpen ? Math.round(Math.min(right, width * 0.34)) : 0
-  const sel = paths.find((p) => p.id === selected)
+  const sel = paths.find((p) => pathKey(p) === selected)
+  // open on the most dangerous path, and fall back to it if the selected one no longer exists
+  const top = paths.length ? pathKey(paths[0]) : null
+  useEffect(() => { if (top && !sel) setSelected(top) }, [top, sel, setSelected])
   const pending = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
 
   return (
@@ -33,9 +37,9 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
         {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
           <ul className="rows selectable" role="listbox" aria-label="Attack paths">
             {paths.map((p) => (
-              <li key={p.id} role="option" aria-selected={p.id === selected} tabIndex={0}
-                  className={p.id === selected ? 'on' : ''} onClick={() => setSelected(p.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
+              <li key={pathKey(p)} role="option" aria-selected={pathKey(p) === selected} tabIndex={0}
+                  className={pathKey(p) === selected ? 'on' : ''} onClick={() => { setSelected(pathKey(p)); setInspect('path') }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(pathKey(p)); setInspect('path') } }}>
                 <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
                 <div className="path-line">{p.nodes.join(' → ')}</div>
               </li>

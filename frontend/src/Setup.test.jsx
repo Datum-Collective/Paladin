@@ -118,3 +118,35 @@ describe('setup flow', () => {
     expect(onClose).toHaveBeenCalled()
   })
 })
+
+describe('setup flow on the web (no desktop app)', () => {
+  async function webKeyStep() {
+    await act(async () => { root.unmount() })
+    delete window.paladin
+    root = createRoot(host)
+    await act(async () => { root.render(<Setup config={{ desktop: false, providers: {} }} onClose={vi.fn()} onOpenAssistant={vi.fn()} />) })
+    await tick()
+    await toKeyStep()
+  }
+
+  it('lets the user paste a key, sends it to the server and moves on once it checks out', async () => {
+    mocks.api.setKey = vi.fn(async () => ({ ok: true, models: 3 }))
+    await webKeyStep()
+    expect(q('#setup-key')).toBeTruthy()
+    expect(host.textContent).not.toContain('Ask them to add it')
+    await typeKey('sk-ant-api03-' + 'w'.repeat(30))
+    await click(btn('Save and check key'))
+    expect(mocks.api.setKey).toHaveBeenCalledWith('anthropic', 'sk-ant-api03-' + 'w'.repeat(30))
+    expect(host.textContent).toContain('Pick a model')
+  })
+
+  it('shows the provider\'s reason and stays on the key step when the key is rejected', async () => {
+    mocks.api.setKey = vi.fn(async () => ({ ok: false, error: { kind: 'auth', message: 'invalid x-api-key', hint: 'Check the key.' } }))
+    await webKeyStep()
+    await typeKey('sk-ant-api03-' + 'v'.repeat(30))
+    await click(btn('Save and check key'))
+    expect(host.textContent).toContain('invalid x-api-key')
+    expect(host.textContent).not.toContain('Pick a model')
+  })
+})
+

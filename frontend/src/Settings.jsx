@@ -180,7 +180,7 @@ function Workspaces({ wsl, onCreate }) {
   )
 }
 
-function KeyRow({ spec, stored, serverConfigured, canEdit, busy, onSave, check, onCheck }) {
+function KeyRow({ spec, stored, serverConfigured, canEdit, busy, onSave, check, onCheck, webKey = false }) {
   const [v, setV] = useState('')
   const toast = useToast()
   const set = canEdit ? stored : serverConfigured
@@ -191,7 +191,7 @@ function KeyRow({ spec, stored, serverConfigured, canEdit, busy, onSave, check, 
         <label htmlFor={id}>{spec.label}</label>
         <div className="muted small">{spec.help}</div>
         <div className="small status-line">
-          <span className={`pill ${set ? 'ok' : 'mute'}`}>{set ? (canEdit ? 'Stored in keychain' : 'Set on server') : 'Not set'}</span>
+          <span className={`pill ${set ? 'ok' : 'mute'}`}>{set ? (canEdit ? (webKey ? 'Held in server memory' : 'Stored in keychain') : 'Set on server') : 'Not set'}</span>
           {check && check.state === 'checking' && <span className="muted">Checking…</span>}
           {check && check.state === 'ok' && <span className="ok-text">{check.text || 'Key accepted'}</span>}
           {check && check.state === 'bad' && <span className="err">{check.text}</span>}
@@ -219,7 +219,11 @@ function useKeys(config) {
   const [busy, setBusy] = useState(false)
   const [srv, setSrv] = useState(config.providers || {})
   useEffect(() => {
-    api.config().then((c) => setSrv(c.providers || {})).catch(noop)
+    // /api/config is the server-wide view; /api/providers also counts the keys this user pasted
+    api.config().then((c) => setSrv(c.providers || {}))
+      .then(() => api.providers())
+      .then((r) => setSrv(Object.fromEntries(r.providers.map((p) => [p.id, p.configured]))))
+      .catch(noop)
     if (bridge) bridge.getSettings().then(setStored).catch(noop)
   }, [])
   const save = async (patch) => {
@@ -235,7 +239,7 @@ function useKeys(config) {
       return false
     } finally { setBusy(false) }
   }
-  return { stored, srv, busy, save, canEdit: config.desktop && Boolean(stored) && stored.encryptionAvailable }
+  return { stored, srv, setSrv, busy, save, canEdit: config.desktop && Boolean(stored) && stored.encryptionAvailable }
 }
 
 function GitHub({ config }) {
@@ -280,7 +284,7 @@ function Providers({ config, onSetup }) {
   const [checks, setChecks] = useState({})
   const [models, setModels] = useState([])
   const provider = prefs['assistant.provider']
-  const configured = (id) => (k.canEdit ? Boolean(k.stored && k.stored[id === 'anthropic' ? 'anthropicApiKey' : 'openaiApiKey']) : Boolean(k.srv[id]))
+  const configured = (id) => (k.canEdit && config.desktop ? Boolean(k.stored && k.stored[id === 'anthropic' ? 'anthropicApiKey' : 'openaiApiKey']) : Boolean(k.srv[id]))
   const check = async (id) => {
     setChecks((c) => ({ ...c, [id]: { state: 'checking' } }))
     try {
@@ -299,16 +303,45 @@ function Providers({ config, onSetup }) {
     { id: 'anthropic', field: 'anthropicApiKey', label: 'Claude API key', help: 'Powers the assistant and AI review of scan findings.' },
     { id: 'openai', field: 'openaiApiKey', label: 'OpenAI API key', help: 'Powers the assistant with OpenAI models.' },
   ], [])
+  const web = !config.desktop
+  const [webBusy, setWebBusy] = useState(false)
+  // web: the server checks a pasted key with the provider and holds it in memory for this account only
+  const webSave = async (patch) => {
+    const [[field, value]] = Object.entries(patch)
+    const pid = specs.find((s) => s.field === field).id
+    setWebBusy(true)
+    try {
+      if (value === null) await api.removeKey(pid)
+      else {
+        const r = await api.setKey(pid, value)
+        if (!r.ok) {
+          setChecks((c) => ({ ...c, [pid]: { state: 'bad', text: `${r.error.message} ${r.error.hint || ''}` } }))
+          return false
+        }
+        setChecks((c) => ({ ...c, [pid]: { state: 'ok', text: `Key accepted · ${r.models} models` } }))
+      }
+      const c = await api.config()
+      k.setSrv(c.providers || {})
+      const pr = await api.providers().catch(() => null)
+      if (pr) k.setSrv(Object.fromEntries(pr.providers.map((p) => [p.id, p.configured])))
+      return true
+    } catch (e) {
+      setChecks((c) => ({ ...c, [pid]: { state: 'bad', text: e.message } }))
+      return false
+    } finally { setWebBusy(false) }
+  }
   return (
     <>
       {config.desktop && k.stored && !k.stored.encryptionAvailable && <p className="notice warn">Secure storage is unavailable on this system, so keys cannot be saved.</p>}
       <Group title="Guided setup" footer="Walks through provider, key, model and a live connection test.">
         <Row label="Set up the assistant"><button onClick={onSetup}>Run Setup…</button></Row>
       </Group>
-      <Group title="API keys" footer="Keys live in the system keychain and are used only by Paladin’s engine; the interface never receives them.">
+      <Group title="API keys" footer={web ? 'Pasted keys are checked with the provider, held in the server’s memory for your account only, and never shown again. They are cleared when the server restarts.' : 'Keys live in the system keychain and are used only by Paladin’s engine; the interface never receives them.'}>
         {specs.map((s) => (
-          <KeyRow key={s.id} spec={s} canEdit={k.canEdit} stored={Boolean(k.stored && k.stored[s.field])}
-                  serverConfigured={Boolean(k.srv[s.id])} busy={k.busy} onSave={k.save} check={checks[s.id]} onCheck={() => check(s.id)} />
+          <KeyRow key={s.id} spec={s} webKey={web} canEdit={web || k.canEdit}
+                  stored={web ? Boolean(k.srv[s.id]) : Boolean(k.stored && k.stored[s.field])}
+                  serverConfigured={Boolean(k.srv[s.id])} busy={web ? webBusy : k.busy} onSave={web ? webSave : k.save}
+                  check={checks[s.id]} onCheck={() => check(s.id)} />
         ))}
       </Group>
       <Group title="Assistant defaults">

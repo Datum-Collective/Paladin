@@ -23,8 +23,8 @@ DETERMINISTIC = {
         r"allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]",
         'allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")', l)
     if p.endswith(".py") and "allow_origins" in l else None,
-    "blank-noopener": lambda l, p: re.sub(r"""(target\s*=\s*["']_blank["'])""", r'\1 rel="noopener noreferrer"', l, 1),
-    "http-script-src": lambda l, p: re.sub(r"""(<script[^>]+src\s*=\s*["'])http://""", r"\1https://", l, 1, re.I),
+    "blank-noopener": lambda l, p: re.sub(r"""(target\s*=\s*["']_blank["'])""", r'\1 rel="noopener noreferrer"', l, count=1),
+    "http-script-src": lambda l, p: re.sub(r"""(<script[^>]+src\s*=\s*["'])http://""", r"\1https://", l, count=1, flags=re.I),
     "weak-hash": lambda l, p: re.sub(r"hashlib\.(md5|sha1)\(", "hashlib.sha256(", l)
     if "hashlib" in l else re.sub(r"createHash\((['\"])(md5|sha1)\1\)", r"createHash(\1sha256\1)", l),
     "tls-off": lambda l, p: re.sub(r"verify\s*=\s*False", "verify=True", re.sub(

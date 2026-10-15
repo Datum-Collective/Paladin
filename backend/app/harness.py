@@ -3,7 +3,6 @@
 Repo code is never executed. Git runs with hooks off and symlinks off. The GitHub token is server env only."""
 import base64
 import contextvars
-import difflib
 import json
 import logging
 import os
@@ -24,6 +23,7 @@ URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
 AUTHOR = ("Attack Path Compiler", "apc@users.noreply.github.com")
 _threads: dict[int, threading.Thread] = {}
+_start_lock = threading.Lock()   # "is a scan already running?" and "record this one" must be a single step
 
 
 def data_root() -> Path:
@@ -105,17 +105,20 @@ def _dir_size(p: Path) -> int:
 
 
 def load_files(root: Path) -> list[dict]:
+    """Text files the scan could look at. Directories the scan skips anyway (node_modules, .git, build output) are
+    not entered: a repo that commits its dependencies would otherwise be read into memory just to be thrown away."""
     out = []
-    for p in sorted(root.rglob("*")):
-        if ".git" in p.relative_to(root).parts or p.is_symlink() or not p.is_file():
-            continue
-        if p.stat().st_size > codescan.MAX_FILE_BYTES:
-            continue
-        try:
-            out.append({"path": p.relative_to(root).as_posix(), "content": p.read_text(encoding="utf-8")})
-        except (UnicodeDecodeError, OSError):
-            continue
-    return out
+    for dirpath, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d.lower() not in codescan._SKIP_DIR_NAMES)
+        for name in sorted(names):
+            p = Path(dirpath) / name
+            try:
+                if p.is_symlink() or not p.is_file() or p.stat().st_size > codescan.MAX_FILE_BYTES:
+                    continue
+                out.append({"path": p.relative_to(root).as_posix(), "content": p.read_text(encoding="utf-8")})
+            except (UnicodeDecodeError, OSError):
+                continue
+    return sorted(out, key=lambda f: f["path"])
 
 
 BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".pdf", ".zip", ".gz", ".tar", ".woff",
@@ -279,14 +282,15 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
     None means the user's own token from the keychain."""
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
-    busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")
-            if effective_state(r) in RUNNING]
-    if busy:
-        raise RuntimeError("a job is already running for this workspace")
-    now = time.time()
-    jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now, "updated": now,
-                               "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
-                      returning="id")[0]["id"]
+    with _start_lock:
+        busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)},
+                                       columns="id,state,updated") if effective_state(r) in RUNNING]
+        if busy:
+            raise RuntimeError("a job is already running for this workspace")
+        now = time.time()
+        jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now,
+                                   "updated": now, "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
+                          returning="id")[0]["id"]
     # the thread keeps this request's Supabase session (context copy), so its writes are still the user's own
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(_run, ws, jid, owner, repo, clone_url, token), daemon=True)
@@ -389,7 +393,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
 
 def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict]) -> list[dict]:
     contents = {f["path"]: f["content"] for f in files}
-    done, seen = [], set()
+    done = []
     # fix bottom-up per file so earlier line numbers stay valid
     order = sorted((f for f in findings if f["exploitable"] is not False),
                    key=lambda f: (f["file"], -f["line"]))
@@ -445,9 +449,8 @@ def patched_file(ws: int, jid: int, path: str) -> dict:
     if root not in target.parents or not target.is_file() or target.is_symlink():
         raise KeyError(path)
     text = target.read_text(encoding="utf-8")
-    import re as _re
     changed_lines: list[int] = []
-    for m in _re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", _file_diff(job["diff"], path), _re.M):
+    for m in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", _file_diff(job["diff"], path), re.M):
         start, n = int(m[1]), int(m[2] or 1)
         changed_lines += list(range(start, start + n))
     return {"path": path, "content": text[:400_000], "changed_lines": sorted(set(changed_lines))}

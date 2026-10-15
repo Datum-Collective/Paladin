@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './api.js'
+import { githubUrl } from './lib.js'
 import DiffView from './DiffView.jsx'
 import Icon from './Icons.jsx'
 
@@ -163,7 +164,7 @@ export default function RepoView({ onDone }) {
             </div>
             <Verification v={job.report && job.report.verification} />
             {job.pr_url && (
-              <p className="notice">Pull request opened: <a href={job.pr_url} target="_blank" rel="noreferrer">{job.pr_url}</a></p>
+              <p className="notice">Pull request opened: <a href={githubUrl(job.pr_url)} target="_blank" rel="noopener noreferrer">{job.pr_url}</a></p>
             )}
             <DiffView diff={job.diff} fixes={job.fixes} jobId={job.id} />
           </>

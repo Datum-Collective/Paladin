@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import assistant, auth, keys
+from .ratelimit import RateLimit
 from .providers import ProviderError, all_providers, get_provider
 
 router = APIRouter()
@@ -35,6 +36,13 @@ class ChatBody(BaseModel):
     messages: list[Msg] = Field(min_length=1, max_length=assistant.MAX_MESSAGES)
     effort: str | None = Field(default=None, max_length=16)
     include_context: bool = True
+
+
+_key_limit = RateLimit(20, 60)   # the check below is a call to the provider with whatever was pasted
+
+
+class KeyBody(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
 
 
 def _provider(pid: str):
@@ -65,6 +73,34 @@ def push_keys(body: KeyPush, request: Request):
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
     return keys.status()
+
+
+@router.put("/api/providers/{pid}/key")
+async def set_my_key(pid: str, b: KeyBody, u: dict = Depends(auth.require_user)):
+    """A signed-in user pastes their own provider key. It is held in server memory under their id only, checked with
+    a real call to the provider, and removed again if the provider rejects it. Never returned."""
+    if pid not in keys.WEB_PROVIDERS:
+        raise HTTPException(404, "unknown provider")
+    _key_limit.hit(f"key:{u['user_id']}")
+    value = b.key.strip()
+    try:
+        prev = keys.set_user_key(u["user_id"], pid, value)
+    except ValueError:
+        raise HTTPException(422, "That does not look like an API key.") from None
+    keys.bind(u["user_id"])
+    r = await _provider(pid).validate()
+    if not r["ok"]:
+        keys.set_user_key(u["user_id"], pid, prev)   # a rejected key is not kept; a good previous one stays
+    return {**r, "providers": {p: keys.configured(p) for p in keys.WEB_PROVIDERS}}
+
+
+@router.delete("/api/providers/{pid}/key")
+def remove_my_key(pid: str, u: dict = Depends(auth.require_user)):
+    if pid not in keys.WEB_PROVIDERS:
+        raise HTTPException(404, "unknown provider")
+    keys.set_user_key(u["user_id"], pid, None)
+    keys.bind(u["user_id"])
+    return {"providers": {p: keys.configured(p) for p in keys.WEB_PROVIDERS}}
 
 
 @router.get("/api/providers/{pid}/models")

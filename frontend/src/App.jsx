@@ -15,7 +15,7 @@ import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
 import Setup from './Setup.jsx'
-import { classifyInput, pushRecent } from './lib.js'
+import { classifyInput, pathKey, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
@@ -275,7 +275,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
     }
     for (const p of ws.paths.slice(0, 12)) {
       cmds.push({ id: `path-${p.id}`, group: 'Paths', title: p.nodes.join(' → '), icon: 'graph',
-        hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`, run: () => openPath(p.id) })
+        hint: `${p.severity.toLowerCase()} · ${p.risk.toFixed(2)}`, run: () => openPath(pathKey(p)) })
     }
     return cmds
   }, [ws.canPlay, ws.paths, fx, run, openPath, wsl.workspaces, wsl.active, openWs])

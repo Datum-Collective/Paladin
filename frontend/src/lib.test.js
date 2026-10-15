@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { keyProblem, setupAdvice, ago, classifyInput, clamp, errorText, githubUrl, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pathKey, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -124,6 +124,24 @@ describe('filter and sort workspaces', () => {
   })
 })
 
+describe('githubUrl', () => {
+  it('only passes https github.com links', () => {
+    expect(githubUrl('https://github.com/a/b/pull/1')).toBe('https://github.com/a/b/pull/1')
+    for (const bad of ['javascript:alert(1)', 'http://github.com/a/b', 'https://github.com.evil.io/a', 'data:text/html,x', null, undefined, 5]) {
+      expect(githubUrl(bad)).toBeUndefined()
+    }
+  })
+})
+
+describe('errorText', () => {
+  it('reads strings and FastAPI validation lists, else falls back', () => {
+    expect(errorText('nope')).toBe('nope')
+    expect(errorText([{ msg: 'ts must be an ISO-8601 timestamp' }, { msg: 'bad' }])).toBe('ts must be an ISO-8601 timestamp; bad')
+    expect(errorText([])).toBe('request failed')
+    expect(errorText({ a: 1 }, 'x')).toBe('x')
+  })
+})
+
 describe('keyProblem', () => {
   it('accepts well-formed keys for each provider', () => {
     expect(keyProblem('anthropic', 'sk-ant-api03-' + 'a'.repeat(30))).toBe('')
@@ -152,5 +170,19 @@ describe('setupAdvice', () => {
   it('falls back to a retry for unknown kinds', () => {
     expect(setupAdvice({ kind: 'weird' }).retry).toBe(true)
     expect(setupAdvice(null).retry).toBe(true)
+  })
+})
+
+describe('pathKey', () => {
+  it('stays the same when a path moves in the ranking', () => {
+    const hops = [{ edge: 'e1' }, { edge: 'e7' }]
+    expect(pathKey({ id: 'p1', hops })).toBe(pathKey({ id: 'p4', hops }))
+  })
+  it('differs between paths over different edges', () => {
+    expect(pathKey({ id: 'p1', hops: [{ edge: 'e1' }] })).not.toBe(pathKey({ id: 'p1', hops: [{ edge: 'e2' }] }))
+  })
+  it('falls back to the id when there are no hops', () => {
+    expect(pathKey({ id: 'p3', hops: [] })).toBe('p3')
+    expect(pathKey(undefined)).toBe(null)
   })
 })

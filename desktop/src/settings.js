@@ -40,7 +40,7 @@ class Settings {
     if (!patch || typeof patch !== 'object') throw new Error('invalid settings')
     const d = this._read()
     for (const [k, v] of Object.entries(patch)) {
-      if (!(k in FIELDS)) throw new Error(`unknown setting: ${k}`)
+      if (!Object.hasOwn(FIELDS, k)) throw new Error(`unknown setting: ${k}`)   // not `in`: it matches toString, constructor
       if (v === null || v === '') { delete d[k]; continue }
       if (typeof v !== 'string' || v.length > MAX_LEN || /\s/.test(v)) throw new Error(`invalid value for ${k}`)
       if (!this.crypto.isEncryptionAvailable()) throw new Error('secure storage is unavailable on this system')

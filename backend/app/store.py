@@ -14,6 +14,7 @@ from . import supa
 from .models import Event
 
 MAX_EVENTS = 50_000
+MAX_CACHED_WORKSPACES = 64   # each entry can hold up to MAX_EVENTS events: the cache must not grow with the user count
 CHUNK = 500
 COUNT_TTL = 1.0   # the live stream polls twice a second; one count per second per workspace is plenty
 
@@ -41,6 +42,14 @@ def reset_connection() -> None:
         _events.clear()
         _counts.clear()
         _fixes.clear()
+
+
+def _remember_events(k: tuple[str, int], entry: dict) -> None:
+    with _lock:
+        _events.pop(k, None)           # re-insert so the dict order is least- to most-recently written
+        _events[k] = entry
+        while len(_events) > MAX_CACHED_WORKSPACES:
+            _events.pop(next(iter(_events)))
 
 
 def lock() -> threading.RLock:
@@ -87,14 +96,13 @@ def get_events(ws: int) -> list[Event]:
         new = _fetch_after(ws, cached["max_seq"])
         if cached["count"] + len(new) == n:     # pure append since last read
             evs = cached["events"] + [e for e in map(_to_event, new) if e]
-            entry = {"count": n, "max_seq": new[-1]["seq"] if new else cached["max_seq"], "events": evs}
-            with _lock:
-                _events[k] = entry
+            _remember_events(k, {"count": n, "max_seq": new[-1]["seq"] if new else cached["max_seq"],
+                                 "events": evs})
             return evs
     rows = _fetch_after(ws, 0)                  # first read, or rows were deleted: reload
     evs = [e for e in map(_to_event, rows) if e]
+    _remember_events(k, {"count": len(rows), "max_seq": rows[-1]["seq"] if rows else 0, "events": evs})
     with _lock:
-        _events[k] = {"count": len(rows), "max_seq": rows[-1]["seq"] if rows else 0, "events": evs}
         _counts[k] = (time.monotonic(), len(rows))
     return evs
 

@@ -41,16 +41,16 @@ async def start(b: StartBody, u: dict = Depends(auth.require_user)):
     try:
         return await start_scan(u, b.repo_url)
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from None
     except RuntimeError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from None
 
 
 def _get(ws: int, jid: int) -> dict:
     try:
         return harness.get(ws, jid)
     except KeyError:
-        raise HTTPException(404, "job not found")
+        raise HTTPException(404, "job not found") from None
 
 
 @router.get("/jobs/{jid}")
@@ -69,7 +69,7 @@ def patched_file(jid: int, path: str, u: dict = Depends(auth.require_user)):
     try:
         return harness.patched_file(u["id"], jid, path)
     except (KeyError, OSError, UnicodeDecodeError):
-        raise HTTPException(404, "file not found among this job's changes")
+        raise HTTPException(404, "file not found among this job's changes") from None
 
 
 @router.post("/jobs/{jid}/pr")

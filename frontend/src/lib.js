@@ -155,3 +155,9 @@ export function setupAdvice(error) {
   if (kind === 'quota') return { goto: null, retry: false }
   return { goto: null, retry: true }
 }
+
+/** A path's identity across refreshes. The server's id is its rank (p1, p2…), which shifts whenever new events
+ *  re-order the list, so selection is kept by the edges the path crosses instead. */
+export function pathKey(p) {
+  return p && p.hops && p.hops.length ? p.hops.map((h) => h.edge).join('|') : p ? p.id : null
+}
