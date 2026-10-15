@@ -75,6 +75,23 @@ MAX_PATH = 300
 _SKIP_DIR_NAMES = frozenset(directory.rstrip("/") for directory in SKIP_DIRS)
 
 
+def _rule_may_match(rule_id: str, line: str) -> bool:
+    """Cheap necessary conditions before regexes see repository-controlled long lines.
+
+    The guarded rules require these literals, so rejecting a line here cannot suppress a
+    finding. It avoids pathological backtracking on minified or deliberately hostile text.
+    """
+    low = line.lower()
+    if rule_id == "hardcoded-secret":
+        return any(word in low for word in ("api", "secret", "passw", "token", "credential", "private", "auth", "key"))
+    if rule_id == "sql-concat":
+        return any(call in low for call in ("execute", "executemany", "query", "raw")) and (
+            ".format(" in low or "f\"" in low or "f'" in low or "+" in line or "%" in line)
+    if rule_id == "http-script-src":
+        return "<script" in low and "src" in low and "http://" in low
+    return True
+
+
 def in_skipped_dir(path: str) -> bool:
     """Match whole directory names, so e.g. ``rebuild`` remains scannable."""
     return any(segment in _SKIP_DIR_NAMES for segment in path.lower().split("/")[:-1])
@@ -99,16 +116,27 @@ def accept_files(files: list[dict]) -> list[dict]:
     return out
 
 
-def static_scan(files: list[dict], cancelled=lambda: False) -> list[dict]:
+def static_scan(files: list[dict], cancelled=lambda: False, budget_s: float = 8.0) -> list[dict]:
+    """Find deterministic candidates within a bounded CPU budget.
+
+    Returning the findings collected so far is safer than allowing one hostile
+    repository to monopolise a scan worker.
+    """
+    started = time.perf_counter()
     findings = []
     for f in files:
         if cancelled():
             raise InterruptedError("scan cancelled")
-        lines = f["content"].splitlines()
+        # Git, editors and the patcher count only LF as a line boundary.  Python's
+        # splitlines() also splits form-feed and Unicode separators, producing
+        # finding coordinates that cannot be applied back to the source file.
+        lines = f["content"].split("\n")
         routed = bool(ROUTE.search(f["content"]))
         for i, line in enumerate(lines, 1):
             for rid, rx, cwe, tech, sink, title in RULES:
-                if rx.search(line):
+                if time.perf_counter() - started > budget_s:
+                    return findings
+                if _rule_may_match(rid, line) and rx.search(line):
                     ctx = "\n".join(lines[max(0, i - 4):i + 3])
                     findings.append({
                         "id": f"f{len(findings) + 1}", "file": f["path"], "line": i, "rule": rid, "cwe": cwe,

@@ -53,6 +53,12 @@ def test_over_long_path_is_skipped_not_truncated():
     assert codescan.accept_files([{"path": p, "content": "x=1"}]) == []
 
 
+def test_over_large_file_is_skipped_before_scanning():
+    from app import codescan
+    big = "x" * (codescan.MAX_FILE_BYTES + 1)
+    assert codescan.accept_files([{"path": "src/too-large.py", "content": big}]) == []
+
+
 # ---- rate limiter memory ----
 def test_ratelimit_forgets_idle_keys(monkeypatch):
     from app import ratelimit
@@ -145,6 +151,13 @@ def test_scan_rules_are_not_quadratic_on_long_lines():
     for text in hostile:
         codescan.static_scan([{"path": "x.py", "content": text}])
     assert time.perf_counter() - t < 3.0
+
+
+def test_long_line_guards_keep_real_matches():
+    from app import codescan
+    src = "x" * 100_000 + '\nAPI_KEY = "sk_live_abcdefghijklmnop"\nexecute(f"select {user}")\n<script src="http://x"></script>'
+    rules = {f["rule"] for f in codescan.static_scan([{"path": "a.py", "content": src}])}
+    assert {"hardcoded-secret", "sql-concat", "http-script-src"} <= rules
 
 
 def test_secret_rule_still_finds_real_secrets():

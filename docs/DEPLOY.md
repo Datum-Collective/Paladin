@@ -76,6 +76,10 @@ Rules that cause real outages if broken: `APP_DOMAIN` must equal the host in `AP
 `ALLOWED_ORIGINS` and `DESKTOP_MODE` must be unset. Do not copy `backend/.env` (it is the dev file, with `http`
 URLs). `chmod 600 .env`, never commit it (`.dockerignore` already keeps it out of the image).
 
+Compose assigns Caddy the fixed private address `172.30.0.2`; the application trusts forwarded headers only from
+that proxy. Do not set `TRUSTED_PROXY_IPS=*`. The optional sandbox image is build-only: the request-serving app does
+not mount a Docker socket. Run repository execution through a separate hardened sandbox manager if it is enabled.
+
 ## 2. Supabase configuration for the production domain
 Supabase > Authentication > URL Configuration:
 - **Site URL:** `https://paladin.example.com`

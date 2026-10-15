@@ -23,9 +23,9 @@ Audited 15 October 2026 against the Round 2 requirements supplied to the team. T
 
 ## Verified technical risks
 
-1. **Scanner denial of service (P0):** `backend/tests/test_audit_regressions.py` reaches the hostile-long-line scan case and the backend test process does not terminate. Repository-controlled content can pin a scan worker. Bound per-line work or replace the expensive expression path, then add a terminating regression test.
-2. **Spoofable client identity (P1):** the Docker command trusts forwarded headers from every peer (`--forwarded-allow-ips='*'`). Direct callers can influence the client IP used by rate limiting. Restrict trusted proxy IPs or omit proxy-header trust when the app is not behind Caddy.
-3. **Docker daemon exposure in sandbox mode (P1):** `docker-compose.sandbox.yml` mounts the host Docker socket into the main application. This is a host-level capability if the application process is compromised. Deploy this profile only on a dedicated runner host, restrict the socket with a proxy, or use an external sandbox manager.
+1. **Scanner denial of service (P0, fixed locally):** guarded regex evaluation and a per-scan CPU budget now prevent hostile long lines from pinning a scan worker. The audit/scanner regression suite passes, including long lines, oversized files and source-coordinate tests.
+2. **Spoofable client identity (P1, fixed locally):** Compose pins Caddy to `172.30.0.2`, and Uvicorn trusts forwarded headers only from that address. Direct callers can no longer supply a trusted forwarded identity.
+3. **Docker daemon exposure in sandbox mode (P1, fixed locally):** `docker-compose.sandbox.yml` no longer mounts the host Docker socket into the request-serving application. Sandbox execution now requires a separate hardened manager.
 4. **Tracked workstation artifacts (P2):** `.DS_Store` and `docs/.DS_Store` are tracked. Remove them in the fixing phase and ignore them.
 
 ## Safe branch transition plan
@@ -38,4 +38,4 @@ Audited 15 October 2026 against the Round 2 requirements supplied to the team. T
 
 ## Validation record
 
-The last local consolidation validation recorded backend tests (393 passed before the diagnostics merge), frontend tests and production build (59 passed), desktop tests (38 passed), and a Docker build. After the diagnostics merge, frontend build and desktop tests passed. The full backend suite is currently blocked by the hostile-long-line scanner regression above; it must not be represented as passing.
+The last local consolidation validation recorded frontend tests and production build (59 passed), desktop tests (38 passed), Compose configuration validation, and a Docker build. The scanner/audit backend regression suite passes (29 tests). The full backend suite progresses past 50% but exceeds this environment's 30-second command window, so it remains incomplete rather than passing evidence.

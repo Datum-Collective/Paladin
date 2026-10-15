@@ -18,6 +18,9 @@ services:
     depends_on:
       apc-main:
         condition: service_healthy
+    networks:
+      paladin:
+        ipv4_address: 172.30.0.2
 
   apc-main:
     build: .
@@ -36,6 +39,10 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+    environment:
+      TRUSTED_PROXY_IPS: 172.30.0.2
+    networks:
+      - paladin
 
   apc-bounty:
     profiles: ["bounty"]
@@ -55,9 +62,19 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+    environment:
+      TRUSTED_PROXY_IPS: 172.30.0.2
+    networks:
+      - paladin
 
 volumes:
   caddy_data:
   caddy_config:
   apc_main_data:
   apc_bounty_data:
+
+networks:
+  paladin:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
