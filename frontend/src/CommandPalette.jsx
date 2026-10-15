@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { rankCommands } from './lib.js'
+import { groupCommands, rankCommands } from './lib.js'
 import Icon from './Icons.jsx'
 
 /** commands: [{ id, title, group, hint?, keywords?, icon?, run }] */
@@ -12,7 +12,7 @@ export default function CommandPalette({ open, onClose, commands, recents = [], 
     if (q.trim()) return rankCommands(commands, q)
     const byId = new Map(commands.map((c) => [c.id, c]))
     const rec = recents.map((id) => byId.get(id)).filter(Boolean).map((c) => ({ ...c, id: `recent-${c.id}`, group: 'Recent', _id: c.id }))
-    return [...rec, ...commands]
+    return [...rec, ...groupCommands(commands)]
   }, [commands, q, recents])
 
   useEffect(() => { if (open) { setQ(''); setI(0); setTimeout(() => input.current && input.current.focus(), 0) } }, [open])

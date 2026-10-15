@@ -8,8 +8,8 @@ import { Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from
 
 export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
   const { graph, paths, fixes, events, rems, empty, canPlay, play, refresh, propose } = state
-  const [left, setLeft] = useStored('w-left', 300)
-  const [right, setRight] = useStored('w-right', 400)
+  const [left, setLeft] = useStored('w-left', 280)
+  const [right, setRight] = useStored('w-right', 360)
   const [inspect, setInspect] = useStored('inspector', 'path')
   const { prefs } = usePrefs()
   const root = useRef(null)

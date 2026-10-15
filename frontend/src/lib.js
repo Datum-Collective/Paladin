@@ -29,6 +29,17 @@ export function rankCommands(commands, query) {
     .map((x) => x.c)
 }
 
+/** Palette rows with each group in one run (first-seen order), so a heading never appears twice. */
+export function groupCommands(commands) {
+  const order = []
+  const by = new Map()
+  for (const c of commands) {
+    if (!by.has(c.group)) { by.set(c.group, []); order.push(c.group) }
+    by.get(c.group).push(c)
+  }
+  return order.flatMap((g) => by.get(g))
+}
+
 export const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
 
 /** Relative "x ago" for a unix-seconds or ISO timestamp, in compact form. */

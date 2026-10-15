@@ -68,7 +68,7 @@ export default function Graph({ graph, highlight, onEdge, showLabels = true }) {
     ]
     cy.current.elements().remove()
     cy.current.add(els)
-    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 70, rankSep: 105, edgeSep: 30,
+    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 56, rankSep: 84, edgeSep: 30,
       ranker: 'longest-path', fit: true, padding: 40 }).run()
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -153,5 +153,19 @@ describe('setupAdvice', () => {
   it('falls back to a retry for unknown kinds', () => {
     expect(setupAdvice({ kind: 'weird' }).retry).toBe(true)
     expect(setupAdvice(null).retry).toBe(true)
+  })
+})
+
+describe('groupCommands', () => {
+  it('gathers each group into one contiguous run, keeping first-seen group order and item order', () => {
+    const out = groupCommands([
+      { id: 'a', group: 'Go to' }, { id: 'b', group: 'Workspaces' }, { id: 'c', group: 'Go to' },
+      { id: 'd', group: 'Actions' }, { id: 'e', group: 'Workspaces' },
+    ])
+    expect(out.map((c) => c.id)).toEqual(['a', 'c', 'b', 'e', 'd'])
+  })
+  it('is a no-op for an already grouped list', () => {
+    const list = [{ id: 'a', group: 'X' }, { id: 'b', group: 'Y' }]
+    expect(groupCommands(list)).toEqual(list)
   })
 })
