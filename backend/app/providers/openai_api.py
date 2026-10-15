@@ -2,6 +2,7 @@
 
 The Models API returns no capability flags, so the chat-capable filter below is an app-maintained heuristic over
 model ids and must be re-checked against OpenAI's live list when new families ship."""
+import logging
 import re
 
 from .. import keys
@@ -13,6 +14,19 @@ _NOT_CHAT = ("embedding", "tts", "whisper", "audio", "realtime", "image", "moder
              "instruct", "search-preview", "computer-use", "davinci", "babbage")
 _QUOTA = {"insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded",
           "billing_hard_limit_reached", "billing_not_active"}
+_LOG = logging.getLogger(__name__)
+
+# The Responses API emits lifecycle and content events in addition to text deltas. Paladin has no tool loop, so
+# those events are intentionally observed and ignored; terminal events and user-visible text are handled below.
+_PROGRESS_EVENTS = {
+    "response.created", "response.queued", "response.in_progress",
+    "response.output_item.added", "response.output_item.done",
+    "response.content_part.added", "response.content_part.done",
+    "response.output_text.done", "response.refusal.done",
+    "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+    "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
+    "response.function_call_arguments.delta", "response.function_call_arguments.done",
+}
 
 
 def classify(status: int, body, headers) -> ProviderError:
@@ -82,10 +96,13 @@ class OpenAI(Provider):
     async def _stream_events(self, resp):
         async for _name, d in sse_lines(resp):
             t = d.get("type", "")
+            _LOG.debug("OpenAI Responses stream event: %s", t or "<missing>")
             if t == "response.output_text.delta":
                 yield {"type": "text", "delta": d.get("delta", "")}
             elif t == "response.refusal.delta":
                 yield {"type": "text", "delta": d.get("delta", "")}
+            elif t in _PROGRESS_EVENTS:
+                continue
             elif t == "response.completed":
                 r = d.get("response") or {}
                 yield {"type": "done", "stop_reason": "end_turn", "usage": self._usage(r)}
