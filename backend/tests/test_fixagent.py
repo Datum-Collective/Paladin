@@ -302,3 +302,59 @@ def test_explain_endpoint_batches_and_never_guesses(client):
     assert set(r["codes"]) == {"CWE-78", "T1059", "CWE-99999"}
     assert r["codes"]["CWE-78"]["short"] == "OS Command Injection"
     assert r["codes"]["CWE-99999"]["unknown"] is True and r["source"]["cwe"]["version"]
+
+
+# ---- Windows spellings of .git and of test files ------------------------------------------------------------------------
+@pytest.mark.parametrize("path", [r".git\config", ".git./config", ".git /config", ".GIT/config", "./.git/config",
+                                  "a/../.git/config", "app.py::$DATA", "C:app.py", r"tests\test_x.py", "x/"])
+def test_windows_path_spellings_cannot_reach_git_or_tests(tmp_path, path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("[core]\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("assert True\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    s = fixagent.Session(root=tmp_path)
+    old = "[core]" if "git" in path.lower() else "True" if "test" in path else "x"   # text the target really holds
+    out, ok = s.call("edit_file", {"path": path, "old": old, "new": "y"})
+    assert not ok, out
+    assert (tmp_path / ".git" / "config").read_text() == "[core]\n"
+    assert (tmp_path / "tests" / "test_x.py").read_text() == "assert True\n"
+
+
+def test_an_edit_keeps_the_files_line_endings(tmp_path):
+    (tmp_path / "lf.py").write_bytes(b"a = 1\nb = 2\n")
+    (tmp_path / "crlf.py").write_bytes(b"a = 1\r\nb = 2\r\n")
+    s = fixagent.Session(root=tmp_path)
+    assert s.call("edit_file", {"path": "lf.py", "old": "b = 2", "new": "b = 3\nc = 4"})[1]
+    assert s.call("edit_file", {"path": "crlf.py", "old": "b = 2", "new": "b = 3\nc = 4"})[1]
+    assert (tmp_path / "lf.py").read_bytes() == b"a = 1\nb = 3\nc = 4\n"
+    assert (tmp_path / "crlf.py").read_bytes() == b"a = 1\r\nb = 3\r\nc = 4\r\n"
+
+
+def test_tests_that_cannot_start_are_not_run_rather_than_a_crash(tmp_path, monkeypatch):
+    monkeypatch.setenv("APC_ALLOW_LOCAL_TESTS", "1")
+    monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
+    monkeypatch.setattr(fixagent, "detect_tests", lambda root: "pytest")
+    monkeypatch.setattr(fixagent.shutil, "which", lambda name: str(tmp_path / "no-such-shell"))
+    r = fixagent.run_tests(tmp_path)
+    assert r.ran is False and "no shell" in r.reason
+
+
+def test_search_refuses_patterns_that_can_backtrack_for_hours(tmp_path):
+    (tmp_path / "a.py").write_text("a" * 40 + "!\nos.system(cmd)\n")
+    s = fixagent.Session(root=tmp_path)
+    for bad in ("(a+)+$", "(a|aa)*$", "(a*)*b", r"(\w+\s?)+$", "(x{1,9})+y", "(ab|a){2,}c"):
+        out, ok = s.call("search_code", {"pattern": bad})
+        assert not ok and "simpler pattern" in out, bad
+    for good in (r"os\.system\(", r"eval\s*\(", "(foo|bar)", r"def \w+\(", "[a-z]+_key", r"(\d+)"):
+        assert s.call("search_code", {"pattern": good})[1], good
+
+
+def test_stored_steps_and_claim_do_not_keep_secrets_from_the_repository(repo, monkeypatch):
+    (repo / "settings.py").write_text('API_KEY = "sk_live_0123456789abcdef"\n')
+    Claude(turn([("read_file", {"path": "settings.py"})]),
+           turn([("finish", {"summary": 'Found API_KEY = "sk_live_0123456789abcdef" in settings.py', "citations": []})])
+           ).install(monkeypatch)
+    r = fixagent.fix(repo, [target(repo)])
+    stored = json.dumps({"steps": r["steps"], "claim": r["agent_claim"]})
+    assert "sk_live_0123456789abcdef" not in stored and "***" in stored

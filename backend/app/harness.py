@@ -50,7 +50,10 @@ def parse_url(url: str) -> tuple[str, str, str]:
 def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60,
          allow_file: bool = False, cancel: threading.Event | None = None):
     base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never",
-            "-c", "credential.helper="]   # never ask a credential manager: the only credential is `token`
+            "-c", "credential.helper=",   # never ask a credential manager: the only credential is `token`
+            # settings that make git start another program; none of them is ever needed here, so a working copy whose
+            # .git/config was altered still cannot run anything
+            "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"]
     # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
     base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
     cmd = base + args
@@ -473,7 +476,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
         msg = f"Fix {len(fixes)} security finding(s) found by Attack Path Compiler"
         _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg],
              cwd=src, cancel=cancel_event)
-        diff = _git(["diff", "HEAD~1", "HEAD"], cwd=src, cancel=cancel_event)
+        diff = _git(["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"], cwd=src, cancel=cancel_event)
         _upd(jid, state="ready", branch=branch, diff=diff[:400_000],
              fixes=json.dumps([{k: v for k, v in x.items() if k != "content"} for x in fixes]))
         _log(jid, f"committed {len(fixes)} fix(es) on local branch {branch}; waiting for human approval to open PR")

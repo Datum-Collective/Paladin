@@ -66,7 +66,8 @@ def test_safe_arith_keeps_arithmetic_and_refuses_code():
     exec(fixers._SAFE_ARITH, ns)
     f = ns["_safe_arith"]
     assert f("2*3+1") == 7 and f("-(4 / 2)") == -2 and f("7 // 2 % 3") == 0
-    for bad in ("__import__('os').getcwd()", "open('/etc/passwd')", "().__class__", "9**999999", "x"):
+    for bad in ("__import__('os').getcwd()", "open('/etc/passwd')", "().__class__", "9**999999", "x",
+                "((9**99)**99)**99", "(2**64)**64"):
         try:
             f(bad)
         except (ValueError, SyntaxError):

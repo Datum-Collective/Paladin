@@ -167,6 +167,9 @@ def _safe_arith(expr):
             left, right = ev(n.left), ev(n.right)
             if isinstance(n.op, _ast.Pow) and abs(right) > 100:
                 raise ValueError("exponent too large")
+            # bound the result too: ((9**99)**99)**99 has small exponents but trillions of digits
+            if isinstance(n.op, _ast.Pow) and isinstance(left, int) and isinstance(right, int) and right > 0                     and abs(left).bit_length() * right > 4096:
+                raise ValueError("number too large")
             return ops[type(n.op)](left, right)
         if isinstance(n, _ast.UnaryOp) and type(n.op) in ops:
             return ops[type(n.op)](ev(n.operand))

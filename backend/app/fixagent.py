@@ -14,6 +14,7 @@ import difflib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -34,6 +35,7 @@ TEST_TIMEOUT = 300
 PROTECTED = re.compile(r"(^|/)(tests?|__tests__|spec|\.github|\.git)(/|$)|(^|/)test_[^/]*\.py$|_test\.(py|go)$|"
                        r"\.(test|spec)\.[jt]sx?$|(^|/)(conftest\.py|pytest\.ini|tox\.ini|setup\.cfg)$", re.I)
 CLIENT_FACTORY: Callable[[], anthropic.Anthropic] | None = None   # tests inject a client with a mock transport
+_NESTED_REPEAT = re.compile(r"\((?:[^()\\]|\\.)*(?:[*+}|]|\{\d)(?:[^()\\]|\\.)*\)\s*(?:[*+]|\{\d*,)")
 
 
 class AgentError(Exception):
@@ -92,6 +94,20 @@ def docker_ready() -> bool:
     return ok
 
 
+def _shell() -> str:
+    """A POSIX shell: `sh` on PATH, else (Windows) the one Git for Windows ships next to git.exe."""
+    sh = shutil.which("sh")
+    if sh:
+        return sh
+    git = shutil.which("git")
+    if git and os.name == "nt":
+        base = Path(git).resolve().parent.parent          # ...\Git\cmd\git.exe -> ...\Git
+        for c in (base / "bin" / "sh.exe", base / "usr" / "bin" / "sh.exe"):
+            if c.is_file():
+                return str(c)
+    return "/bin/sh"
+
+
 def run_tests(root: Path) -> TestRun:
     cmd = detect_tests(root)
     if not cmd:
@@ -107,14 +123,17 @@ def run_tests(root: Path) -> TestRun:
         except Exception as e:  # noqa: BLE001 - infrastructure trouble is "could not run", never "passed"
             return TestRun(False, command=cmd, runner="docker sandbox", reason=f"sandbox failed: {e}"[:300])
     if os.environ.get("APC_ALLOW_LOCAL_TESTS") == "1":
-        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR") if k in os.environ}
+        # SYSTEMROOT: Windows cannot start Python's networking without it
+        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR", "SYSTEMROOT") if k in os.environ}
         env.update(HOME=os.environ.get("TMPDIR", "/tmp"), PYTHONDONTWRITEBYTECODE="1", CI="1")
         try:
-            r = subprocess.run(["/bin/sh", "-c", cmd.replace(" --user", "")], cwd=root, env=env, capture_output=True,
-                               text=True, timeout=TEST_TIMEOUT)
+            r = subprocess.run([_shell(), "-c", cmd.replace(" --user", "")], cwd=root, env=env, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=TEST_TIMEOUT)
             return TestRun(True, r.returncode == 0, cmd, r.returncode, (r.stdout + r.stderr)[-8000:], "this machine")
         except subprocess.TimeoutExpired:
             return TestRun(True, False, cmd, 124, f"timed out after {TEST_TIMEOUT}s", "this machine")
+        except OSError as e:                     # no shell: "could not run", never "passed" and never a crash
+            return TestRun(False, command=cmd, runner="this machine", reason=f"no shell to run the tests ({e.strerror})")
     return TestRun(False, command=cmd, reason="the Docker sandbox is not available (start Docker and build the "
                    "sandbox image: docker build -f Dockerfile.sandbox -t datum-sandbox .)")
 
@@ -231,19 +250,28 @@ class Session:
     steps: list = field(default_factory=list)
 
     def _safe(self, rel: str) -> Path:
-        if not rel or "\x00" in rel or rel.startswith(("/", "\\")) or ".." in re.split(r"[\\/]", rel):
+        # Plain forward-slash paths only. Windows also accepts "\", "C:", "name::$DATA" streams, and drops a trailing
+        # dot or space, so ".git./config" or "tests\x.py" would otherwise get past the .git and read-only checks.
+        parts = [x for x in rel.split("/") if x not in ("", ".")] if isinstance(rel, str) else []
+        if (not parts or "\x00" in rel or "\\" in rel or ":" in rel or rel.startswith("/")
+                or any(x == ".." or x != x.rstrip(". ") for x in parts)):
             raise ValueError("path must be relative and inside the repository")
-        if rel.split("/")[0] == ".git":
-            raise ValueError("the .git directory is off limits")
         cur = self.root
-        for part in Path(rel).parts:
+        for part in parts:
             cur = cur / part
             if cur.is_symlink():
                 raise ValueError("symbolic links are not followed")
-        p = (self.root / rel).resolve()
-        if not p.is_relative_to(self.root.resolve()):
+        root = self.root.resolve()
+        p = root.joinpath(*parts).resolve()
+        if not p.is_relative_to(root):
             raise ValueError("path escapes the repository")
+        # check the name the file system resolved to as well (any case, 8.3 short names such as GIT~1)
+        if any(x.lower() == ".git" for x in (*parts, *p.relative_to(root).parts)):
+            raise ValueError("the .git directory is off limits")
         return p
+
+    def _rel(self, p: Path) -> str:
+        return p.relative_to(self.root.resolve()).as_posix()
 
     def list_files(self, a: _List) -> str:
         base = self._safe(a.dir) if a.dir else self.root
@@ -270,6 +298,11 @@ class Session:
         return body + (f"\n[lines {s}-{e} of {len(lines)}]" if s > 1 or e < len(lines) else "")
 
     def search_code(self, a: _Search) -> str:
+        # A repeated group that itself repeats or alternates, e.g. (a+)+ or (a|aa)*, can backtrack for hours on one
+        # line, and a running regex cannot be interrupted. The pattern comes from the model, which reads untrusted code.
+        if _NESTED_REPEAT.search(a.pattern):
+            raise ValueError("search patterns may not repeat a group that contains a repeat or an alternation; "
+                             "search for a simpler pattern")
         try:
             rx = re.compile(a.pattern)
         except re.error as e:
@@ -295,9 +328,14 @@ class Session:
         if self.edits >= MAX_EDITS:
             raise ValueError(f"edit limit ({MAX_EDITS}) reached")
         p = self._safe(a.path)
+        if PROTECTED.search(self._rel(p)):     # the resolved name too: another spelling of a test or CI file
+            raise ValueError("tests, CI and test configuration are read-only")
         if not p.is_file():
             raise ValueError("not a file (the agent edits existing files only)")
-        text = p.read_text(encoding="utf-8")
+        raw = p.read_bytes().decode("utf-8")
+        # keep the file's own line endings (a text-mode write turns every \n into \r\n on Windows)
+        crlf = raw.count("\r\n") == raw.count("\n") > 0
+        text = raw.replace("\r\n", "\n") if crlf else raw
         n = text.count(a.old)
         if n != 1:
             raise ValueError(f"`old` must occur exactly once; it occurs {n} times. Read the file and copy it exactly.")
@@ -310,7 +348,7 @@ class Session:
             except SyntaxError as e:
                 raise ValueError(f"rejected: the file would no longer parse ({e.msg}, line {e.lineno})") from None
         self.originals.setdefault(a.path, text)
-        p.write_text(updated, encoding="utf-8")
+        p.write_bytes((updated.replace("\n", "\r\n") if crlf else updated).encode("utf-8"))
         self.edits += 1
         self.tests_since_edit = False
         added, removed = a.new.count("\n") + 1, a.old.count("\n") + 1
@@ -433,7 +471,8 @@ def run_loop(sess: Session, task: str, model: str = DEFAULT_MODEL) -> None:
                        "input": {k: (v if len(str(v)) < 160 else str(v)[:160] + "…") for k, v in (b.input or {}).items()}
                        if isinstance(b.input, dict) else {}})
             out, ok = sess.call(b.name, b.input)
-            sess.steps.append({"tool": b.name, "ok": ok, "result": out[:300]})
+            # steps are stored with the scan (Supabase): mask string literals that may be secrets, as findings are
+            sess.steps.append({"tool": b.name, "ok": ok, "result": codescan.REDACT.sub(None, out[:300])})
             sess.emit({"type": "tool_result", "id": b.id, "name": b.name, "ok": ok, "summary": out[:600]})
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": out, "is_error": not ok})
         messages.append({"role": "user", "content": results})
@@ -509,7 +548,7 @@ def judge(sess: Session, targets: list[dict], baseline: TestRun) -> dict:
     return {"verdict": verdict, "reason": why, "changed_files": sorted(changed), "diff": diff[:300_000],
             "resolved": resolved, "unresolved": unresolved, "regressions": regressions, "grounding": grounding,
             "tests": {"before": baseline.public(), "after": tests.public() if tests else None},
-            "agent_claim": sess.summary, "steps": sess.steps}
+            "agent_claim": codescan.REDACT.sub(None, sess.summary), "steps": sess.steps}
 
 
 def _task(targets: list[dict], instruction: str, baseline: TestRun) -> str:

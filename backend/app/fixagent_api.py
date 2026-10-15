@@ -56,7 +56,7 @@ def _commit(ws: int, job: dict, targets: list[dict], result: dict) -> bool:
                          f"Paladin agent: {result.get('instruction', '')[:60]}") + f" ({result['verdict']})"], cwd=root)
     base = harness._git(["rev-list", "--max-parents=0", "HEAD"], cwd=root).split()[0]
     branch = harness._git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root).strip()
-    diff = harness._git(["diff", base, "HEAD"], cwd=root)
+    diff = harness._git(["diff", "--no-ext-diff", "--no-textconv", base, "HEAD"], cwd=root)
     tests = (result["tests"] or {}).get("after") or {}
     done = {r["id"] for r in result["resolved"]}
     fixes = [x for x in job.get("fixes", []) if isinstance(x, dict) and x.get("id") not in done]

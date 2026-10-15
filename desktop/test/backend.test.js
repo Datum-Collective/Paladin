@@ -174,3 +174,11 @@ test('a crash after ready is reported once', async () => {
   await b.start()
   assert.equal((await crash).code, 5)
 })
+
+test('buildEnv drops developer switches that would loosen the engine sandbox', () => {
+  const env = buildEnv({ base: { APC_ALLOW_LOCAL_TESTS: '1', APC_ALLOW_LOCAL: '1', PATH: '/bin' }, port: 1, token: 't',
+                         dataDir: '/d', staticDir: '/s', seedDir: '/e', version: 'v', extra: {} })
+  assert.equal(env.APC_ALLOW_LOCAL_TESTS, undefined)
+  assert.equal(env.APC_ALLOW_LOCAL, undefined)
+  assert.equal(env.DESKTOP_MODE, '1')
+})
