@@ -3,6 +3,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 import asyncio
+import re
 
 from . import ai, auth, codefix, github_access, remediation as rem
 
@@ -63,35 +64,67 @@ def approve(rid: int, u: dict = Depends(auth.require_user)):
     return _guard(rem.approve, u["id"], rid, u["actor"])
 
 
+_locks: dict[int, asyncio.Lock] = {}
+
+
+def _lock(rid: int) -> asyncio.Lock:
+    return _locks.setdefault(rid, asyncio.Lock())
+
+
 @router.post("/{rid}/execute")
 async def execute(rid: int, u: dict = Depends(auth.require_user)):
     ws = u["id"]
-    cur = await asyncio.to_thread(_guard, rem.get, ws, rid)
-    if cur["kind"] != "code":
-        return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"])
-    if cur["state"] != "approved":
-        raise HTTPException(409, f"cannot go from {cur['state']} to executed")
-    try:
-        repo = await asyncio.to_thread(rem._job_repo, ws, cur)
-        kind, where = codefix.target(repo)
-        if kind == "local":
-            dirty = await asyncio.to_thread(codefix.uncommitted, where, [f["path"] for f in cur["files"]])
-            await asyncio.to_thread(codefix.apply_local, where, cur["patch"])      # check, then apply; all or nothing
-            applied = f"local folder {where.name}" + (f" ({len(dirty)} file(s) had your uncommitted edits, kept)" if dirty else "")
-        else:
-            final = await asyncio.to_thread(codefix.materialize, cur["job"], repo, cur["files"], cur["patch"])
-            url = await github_access.open_fix_pr(
-                u, repo, cur["title"] or "Security fixes", cur["runbook"],
-                f"Fix {len(cur['finding_ids'])} security finding(s) found by Paladin", final)
-            applied = url
-    except codefix.FixError as e:
-        raise HTTPException(409, str(e)) from None
-    return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"], applied)
+    async with _lock(rid):            # a second click waits, then sees the state the first one left behind
+        cur = await asyncio.to_thread(_guard, rem.get, ws, rid)
+        if cur["kind"] != "code":
+            return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"])
+        if cur["state"] != "approved":
+            raise HTTPException(409, f"cannot go from {cur['state']} to executed")
+        local_applied = None
+        try:
+            repo = await asyncio.to_thread(rem._job_repo, ws, cur)
+            kind, where = codefix.target(repo)
+            if kind == "local":
+                dirty = await asyncio.to_thread(codefix.uncommitted, where, [f["path"] for f in cur["files"]])
+                await asyncio.to_thread(codefix.apply_local, where, cur["patch"])      # check, then apply; all or nothing
+                local_applied = where
+                applied = f"local folder {where.name}" + (
+                    f" ({len(dirty)} file(s) had your uncommitted edits, kept)" if dirty else "")
+            else:
+                paths = [f["path"] for f in cur["files"]]
+                current = await github_access.read_repo_files(u, repo, paths)
+                # applied to what the default branch holds NOW: upstream changes are kept, or the fix is refused
+                final = await asyncio.to_thread(codefix.apply_to_contents, current, cur["files"], cur["patch"])
+                applied = await github_access.open_fix_pr(
+                    u, repo, cur["title"] or "Security fixes", cur["runbook"],
+                    f"Fix {len(cur['finding_ids'])} security finding(s) found by Paladin", final)
+        except codefix.FixError as e:
+            raise HTTPException(409, str(e)) from None
+        try:
+            return await asyncio.to_thread(_guard, rem.execute, ws, rid, u["actor"], applied)
+        except HTTPException:
+            if local_applied is not None:   # the files changed but the record did not: undo, so state and disk agree
+                try:
+                    await asyncio.to_thread(codefix.apply_local, local_applied, cur["patch"], True)
+                except codefix.FixError:
+                    pass
+            raise
 
 
 @router.post("/{rid}/verify")
-def verify(rid: int, u: dict = Depends(auth.require_user)):
-    return _guard(rem.verify, u["id"], rid, u["actor"])
+async def verify(rid: int, u: dict = Depends(auth.require_user)):
+    ws = u["id"]
+    async with _lock(rid):
+        cur = await asyncio.to_thread(_guard, rem.get, ws, rid)
+        if cur["kind"] == "code" and cur["state"] == "executed" and re.match(r"^https://", cur.get("applied") or ""):
+            m = re.search(r"/pull/(\d+)$", cur["applied"])
+            repo = await asyncio.to_thread(rem._job_repo, ws, cur)
+            if not m or not await github_access.pull_merged(u, repo, int(m.group(1))):
+                raise HTTPException(409, "The pull request is not merged yet. Merge it on GitHub, then verify again. "
+                                         "Nothing is marked fixed until the change is in the repository.")
+            contents = await github_access.read_repo_files(u, repo, [f["path"] for f in cur["files"]])
+            return await asyncio.to_thread(_guard, rem.verify_remote, ws, rid, u["actor"], contents)
+        return await asyncio.to_thread(_guard, rem.verify, ws, rid, u["actor"])
 
 
 @router.post("/{rid}/rollback")

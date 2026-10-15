@@ -198,10 +198,11 @@ function RemediationCard({ r, open, onToggle, onChange, desktop }) {
     proposed: { action: 'approve', label: 'Approve', done: 'Approved. Nothing has changed yet.' },
     approved: { action: 'execute', label: code ? (remote ? 'Open Pull Request' : 'Apply to Folder') : 'Execute',
                 done: code ? (remote ? 'Pull request opened' : 'Applied to the folder') : 'Executed' },
-    executed: { action: 'verify', label: 'Verify', done: 'Checked' },
+    executed: { action: 'verify', label: remote ? 'Check After Merge' : 'Verify', done: 'Verified' },
   }[r.state]
   const what = !code ? 'This closes the steps in the analysed environment only; no real host or file is changed.'
     : r.state === 'proposed' ? 'Approving does not change any file. The next step applies exactly this diff.'
+      : r.state === 'executed' && remote ? 'Merge the pull request on GitHub, then check. Nothing is marked fixed until the change is in the repository.'
       : r.state === 'approved' ? (remote ? 'Opens a pull request on the fixes branch with only these files. Your default branch is not touched.'
         : 'Applies exactly this diff to your folder after checking that the files still match the scan.') : ''
   return (
@@ -223,6 +224,8 @@ function RemediationCard({ r, open, onToggle, onChange, desktop }) {
           {busy === primary.action ? 'Working…' : primary.label}</button>}
         {['executed', 'verified', 'failed'].includes(r.state) && (
           <button disabled={Boolean(busy)} onClick={() => run('rollback', 'Rolled back')}>{busy === 'rollback' ? 'Working…' : 'Roll Back'}</button>)}
+        {['proposed', 'approved'].includes(r.state) && (
+          <button disabled={Boolean(busy)} onClick={() => run('rollback', 'Discarded. No file was touched.')}>{busy === 'rollback' ? 'Working…' : 'Discard'}</button>)}
         {code && r.state === 'proposed' && <button onClick={onToggle}>{open ? 'Hide Diff' : 'Review Diff'}</button>}
         {code && <button onClick={save}>Download Patch</button>}
       </div>

@@ -346,7 +346,8 @@ def run(ws: int, repo: str, files: list[dict]) -> dict:
     return persist(ws, repo, findings, ai_used, n)
 
 
-def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: int, refs: dict | None = None) -> dict:
+def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: int, refs: dict | None = None,
+            job: int | None = None) -> dict:
     from .narrate import technique
 
     def mitigation_for(t: str) -> str:
@@ -355,6 +356,7 @@ def persist(ws: int, repo: str, findings: list[dict], ai_used: bool, n_files: in
 
     model = to_model(findings, mitigation_for, refs)
     model["refs"] = refs or {}            # kept so the graph can be rebuilt when findings are fixed or restored
+    model["job"] = job                    # finding ids are per scan: fixes are only applied to the scan they came from
     supa.upsert("code_models", {"ws": ws, "user_id": supa.user_id(), "repo": repo[:120], "created": time.time(),
                                 "ai_used": bool(ai_used), "files": n_files, "model": model, "findings": findings}, "ws")
     return report(ws)
@@ -385,13 +387,16 @@ def report(ws: int) -> dict:
             "findings": fs}
 
 
-def set_applied(ws: int, ids: list[str], applied: bool) -> int:
+def set_applied(ws: int, ids: list[str], applied: bool, job: int | None = None) -> int:
     """Mark findings as fixed (an applied, verified remediation) or open again, and rebuild the graph from them.
     Returns how many findings changed. A fixed finding leaves the attack-path graph; rolling back restores it."""
     from .narrate import technique
     r = supa.first("code_models", {"ws": supa.eq(ws)})
     if not r or not isinstance(r.get("findings"), list):
         return 0
+    stored = (r.get("model") or {}).get("job") if isinstance(r.get("model"), dict) else None
+    if job is not None and stored is not None and stored != job:
+        return 0          # a newer scan replaced this one; its finding ids mean something else
     n = 0
     for f in r["findings"]:
         if isinstance(f, dict) and f.get("id") in ids and bool(f.get("fixed_applied")) != applied:
@@ -405,6 +410,7 @@ def set_applied(ws: int, ids: list[str], applied: bool) -> int:
         refs = (r.get("model") or {}).get("refs") if isinstance(r.get("model"), dict) else None
         model = to_model(r["findings"], mitigation_for, refs)
         model["refs"] = refs or {}
+        model["job"] = stored
         supa.update("code_models", {"ws": supa.eq(ws)}, {"findings": r["findings"], "model": model}, returning=None)
     return n
 

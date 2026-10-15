@@ -133,25 +133,158 @@ def test_exposure_edges_and_mixed_selections_are_refused_with_a_reason(scanned):
     assert mixed.status_code == 422
 
 
-def test_remote_repositories_open_a_pull_request_with_only_the_selected_files(scanned, monkeypatch):
-    client, repo = scanned
+def _remote(monkeypatch, upstream, merged=False):
+    """GitHub stubbed at the module's seams: what the default branch holds, the PR it opens, whether it is merged."""
     from app import github_access
-    seen = {}
+    import app.remediation as remmod
+    sent = {}
 
-    async def fake_pr(u, repo_full, title, body, commit_message, files):
-        seen.update(repo=repo_full, files=files)
+    async def read(u, repo_full, paths):
+        return {p: upstream.get(p) for p in paths}
+
+    async def open_pr(u, repo_full, title, body, commit_message, files):
+        sent.update(repo=repo_full, files=files)
         return "https://github.com/alice-gh/demo/pull/7"
 
-    monkeypatch.setattr(github_access, "open_fix_pr", fake_pr)
-    rid = propose(client).json()["id"]
-    from app import supa  # point the stored job at a GitHub name; the working copy is still the scanned one
-    import app.remediation as remmod
+    async def pull_merged(u, repo_full, number):
+        sent["checked_pr"] = number
+        return merged
+
+    monkeypatch.setattr(github_access, "read_repo_files", read)
+    monkeypatch.setattr(github_access, "open_fix_pr", open_pr)
+    monkeypatch.setattr(github_access, "pull_merged", pull_merged)
     monkeypatch.setattr(remmod, "_job_repo", lambda ws, cur: "alice-gh/demo")
+    return sent
+
+
+def test_remote_pull_request_is_built_on_the_current_default_branch_and_verifies_only_once_merged(scanned, monkeypatch):
+    client, repo = scanned
+    upstream = {"server.py": (repo / "server.py").read_text() + "\n# added upstream after the scan\n"}
+    sent = _remote(monkeypatch, upstream)
+    rid = propose(client).json()["id"]
     client.post(f"/api/remediations/{rid}/approve")
     r = client.post(f"/api/remediations/{rid}/execute")
     assert r.status_code == 200, r.text
     assert r.json()["applied"] == "https://github.com/alice-gh/demo/pull/7"
-    assert list(seen["files"]) == ["server.py"] and "sha256" in seen["files"]["server.py"]
+    body = sent["files"]["server.py"]
+    assert "sha256" in body and "# added upstream after the scan" in body            # upstream work is kept, not reverted
     assert "sha256" not in (repo / "server.py").read_text()                          # the local folder is untouched
+    # not merged: nothing is verified and nothing leaves the graph
+    v = client.post(f"/api/remediations/{rid}/verify")
+    assert v.status_code == 409 and "not merged" in v.json()["detail"]
+    assert client.get(f"/api/remediations/{rid}").json()["state"] == "executed"
+    assert len(client.get("/api/paths").json()["paths"]) >= 1
+    assert sent["checked_pr"] == 7
+
+
+def test_remote_verify_checks_the_merged_files_not_the_scanned_copy(scanned, monkeypatch):
+    client, repo = scanned
+    fixed = (repo / "server.py").read_text().replace("hashlib.md5(", "hashlib.sha256(")
+    sent = _remote(monkeypatch, {"server.py": (repo / "server.py").read_text()}, merged=True)
+    rid = propose(client).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    client.post(f"/api/remediations/{rid}/execute")
+    # merged, but the default branch still holds the vulnerable code (e.g. the PR was edited): must fail
     v = client.post(f"/api/remediations/{rid}/verify").json()
-    assert v["state"] == "verified" and "not merged" in v["detail"] if "detail" in v else v["state"] == "verified"
+    assert v["state"] == "failed" and "still matches" in v["note"]
+    assert not any(f.get("fixed") for f in client.get("/api/codescan").json()["findings"])
+
+
+def test_remote_refuses_when_upstream_changed_the_flagged_lines(scanned, monkeypatch):
+    client, repo = scanned
+    edited = (repo / "server.py").read_text().replace("hashlib.md5(", "hashlib.md5( ")
+    sent = _remote(monkeypatch, {"server.py": edited})
+    rid = propose(client).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    r = client.post(f"/api/remediations/{rid}/execute")
+    assert r.status_code == 409 and "changed since the scan" in r.json()["detail"] and "files" not in sent
+    assert client.get(f"/api/remediations/{rid}").json()["state"] == "approved"
+
+
+def test_a_double_click_applies_once(scanned):
+    import concurrent.futures as cf
+    client, repo = scanned
+    rid = propose(client).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    with cf.ThreadPoolExecutor(2) as ex:
+        codes = sorted(ex.map(lambda _: client.post(f"/api/remediations/{rid}/execute").status_code, range(2)))
+    assert codes == [200, 409]
+    assert (repo / "server.py").read_text().count("hashlib.sha256(") == 1
+
+
+def test_an_unapplied_proposal_can_be_discarded_without_touching_files(scanned):
+    client, repo = scanned
+    before = (repo / "server.py").read_text()
+    rid = propose(client).json()["id"]
+    r = client.post(f"/api/remediations/{rid}/rollback")
+    assert r.status_code == 200 and r.json()["state"] == "rolled_back"
+    assert (repo / "server.py").read_text() == before
+    assert not any(f.get("fixed") for f in client.get("/api/codescan").json()["findings"])
+
+
+def test_rollback_keeps_findings_another_applied_fix_still_covers(scanned):
+    client, repo = scanned
+    first = propose(client, client.get("/api/fixes").json()["best_single"]["edges"]).json()
+    client.post(f"/api/remediations/{first['id']}/approve")
+    client.post(f"/api/remediations/{first['id']}/execute")
+    client.post(f"/api/remediations/{first['id']}/verify")
+    # a second proposal for the same finding from the (now stale) fixes list is refused or has nothing left to patch
+    again = propose(client, ["code:" + first["finding_ids"][0]])
+    assert again.status_code in (200, 422)
+    fixed_before = {f["id"] for f in client.get("/api/codescan").json()["findings"] if f.get("fixed")}
+    assert fixed_before == set(first["finding_ids"])
+
+
+def test_findings_from_a_replaced_scan_are_not_flipped_by_an_old_remediation(scanned):
+    client, repo = scanned
+    rid = propose(client).json()["id"]
+    client.post(f"/api/remediations/{rid}/approve")
+    client.post(f"/api/remediations/{rid}/execute")
+    # the user adds a new weakness and rescans: finding ids restart at f1 and mean something else now
+    (repo / "extra.py").write_text('import hashlib\nh = hashlib.md5(b"y")\n')
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "more")
+    rescan = _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()["id"])
+    assert rescan["findings"], "the rescan must have findings for this test to mean anything"
+    # verifying the OLD remediation must not mark any of the NEW scan's findings fixed
+    client.post(f"/api/remediations/{rid}/verify")
+    assert not any(f.get("fixed") for f in client.get("/api/codescan").json()["findings"])
+
+
+def test_paths_that_leave_the_repository_are_refused():
+    for bad in ["../x.py", "/etc/passwd", "a/../../b", "C:\\x", "a\\b", ""]:
+        with pytest.raises(codefix.FixError):
+            codefix.safe_rel(bad)
+    assert codefix.safe_rel("docs/My File.py") == "docs/My File.py"
+
+
+def test_a_folder_symlink_cannot_redirect_a_write_or_read(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("x = 1\n")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(codefix.FixError):
+        codefix.safe_join(root, "link/secret.py")
+
+
+def test_repository_gitconfig_is_never_read(scanned, tmp_path):
+    client, repo = scanned
+    marker = tmp_path / "ran"
+    (repo / ".gitconfig").write_text(f"[core]\n\tfsmonitor = touch {marker}\n")
+    env = codefix._env()
+    assert env["HOME"] != str(repo) and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    codefix.uncommitted(repo, ["server.py"])
+    assert not marker.exists()
+
+
+def test_paths_with_spaces_make_a_valid_patch(tmp_path):
+    p = codefix._diff("docs/My File.py", "a = 1\n", "a = 2\n")
+    assert p.startswith("diff --git a/docs/My File.py b/docs/My File.py")
+    repo = tmp_path / "r"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "My File.py").write_text("a = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    codefix.apply_local(repo, p)
+    assert (repo / "docs" / "My File.py").read_text() == "a = 2\n"

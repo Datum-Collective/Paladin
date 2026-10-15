@@ -12,7 +12,7 @@ from .correlate import matches
 from .narrate import mitigation_name, technique
 
 STATES = ("proposed", "approved", "executed", "verified", "failed", "rolled_back")
-NEXT = {"proposed": {"approved"}, "approved": {"executed"}, "executed": {"verified", "failed", "rolled_back"},
+NEXT = {"proposed": {"approved", "rolled_back"}, "approved": {"executed", "rolled_back"}, "executed": {"verified", "failed", "rolled_back"},
         "verified": {"rolled_back"}, "failed": {"rolled_back"}, "rolled_back": set()}
 
 STEPS = {
@@ -203,28 +203,45 @@ def verify(ws: int, rid: int, actor: str) -> dict:
     return _set(ws, rid, "failed", actor, why, note=why)
 
 
-def _verify_code(ws: int, rid: int, actor: str, cur: dict) -> dict:
-    """Read the files as they are now (the folder, or the patch re-applied to the scanned copy for a pull
-    request), then update findings and the graph only when the check passed."""
-    kind, where = codefix.target(_job_repo(ws, cur))
+def verify_remote(ws: int, rid: int, actor: str, contents: dict) -> dict:
+    """GitHub repositories: `contents` is what the default branch holds NOW, fetched by the caller after it saw the
+    pull request merged. Verification never passes on anything but the real repository."""
+    cur = get(ws, rid)
+    if cur["state"] != "executed":
+        raise ValueError(f"cannot go from {cur['state']} to verified")
+    return _verify_code(ws, rid, actor, cur, contents)
+
+
+def _verify_code(ws: int, rid: int, actor: str, cur: dict, remote_contents: dict | None = None) -> dict:
+    """Read the files as they are now: from the folder, or from the default branch once the pull request is merged.
+    Findings and the graph change only when the check passed."""
     try:
+        kind, where = codefix.target(_job_repo(ws, cur))
         if kind == "local":
             def read(path):
-                p = where / path
-                return p.read_text(encoding="utf-8") if p.is_file() and not p.is_symlink() else None
+                try:
+                    p = codefix.safe_join(where, path)
+                except codefix.FixError:
+                    return None
+                try:
+                    return p.read_text(encoding="utf-8") if p.is_file() and not p.is_symlink() else None
+                except (OSError, UnicodeDecodeError):
+                    return None
             res = codefix.verify_files(read, cur["files"])
             scope = "the files on disk"
         else:
-            final = codefix.materialize(cur["job"], _job_repo(ws, cur), cur["files"], cur["patch"])
-            res = codefix.verify_files(final.get, cur["files"])
-            scope = "the patched files (the pull request is not merged yet)"
+            if remote_contents is None:
+                raise ValueError("The pull request has to be merged before this can be verified. Merge it on GitHub, "
+                                 "then verify again.")
+            res = codefix.verify_files(remote_contents.get, cur["files"])
+            scope = "the merged files on the default branch"
     except codefix.FixError as e:
         raise ValueError(str(e)) from None
     if res["ok"]:
         def live(snap):
             return sum(1 for p in snap["paths"] if p["severity"] in ("CRITICAL", "HIGH", "MEDIUM"))
         b = engine.snapshot(ws)
-        codescan.set_applied(ws, cur["finding_ids"], True)
+        codescan.set_applied(ws, cur["finding_ids"], True, cur.get("job"))
         a = engine.snapshot(ws)
         detail = f"checked {scope}: parses, targeted rules no longer match. Tests were not run."
         if res["notes"]:
@@ -258,6 +275,8 @@ def rollback(ws: int, rid: int, actor: str) -> dict:
 def _rollback_code(ws: int, rid: int, actor: str, cur: dict) -> dict:
     if "rolled_back" not in NEXT[cur["state"]]:
         raise ValueError(f"cannot go from {cur['state']} to rolled_back")
+    if cur["state"] in ("proposed", "approved"):
+        return _set(ws, rid, "rolled_back", actor, "discarded before anything was applied")   # no file is touched
     kind, where = codefix.target(_job_repo(ws, cur))
     note = ""
     if kind == "local":
@@ -270,5 +289,11 @@ def _rollback_code(ws: int, rid: int, actor: str, cur: dict) -> dict:
         note = ("the pull request is on GitHub: close it there to withdraw the change"
                 if cur.get("applied") else "nothing had been sent to GitHub")
     out = _set(ws, rid, "rolled_back", actor, note)
-    codescan.set_applied(ws, cur["finding_ids"], False)
+    # a finding another applied remediation still fixes stays fixed
+    held: set[str] = set()
+    for other in list_(ws):
+        if other["id"] != rid and other["kind"] == "code" and other["state"] in ("executed", "verified") \
+                and other.get("job") == cur.get("job"):
+            held |= set(other["finding_ids"])
+    codescan.set_applied(ws, [i for i in cur["finding_ids"] if i not in held], False, cur.get("job"))
     return out

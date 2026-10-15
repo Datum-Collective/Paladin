@@ -31,6 +31,34 @@ class FixError(Exception):
     """A problem the user can act on; the message is safe to show."""
 
 
+def _env() -> dict:
+    """Git environment that cannot be steered by the repository: no repo-supplied or user-global config, no
+    fsmonitor or hooks, and a scratch HOME so a .gitconfig inside the folder is never read."""
+    return {"PATH": os.environ.get("PATH", ""), "HOME": tempfile.gettempdir(), "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+
+
+_GIT = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"]
+
+
+def safe_rel(path: str) -> str:
+    """A repository-relative path with nothing that could leave the folder."""
+    if (not isinstance(path, str) or not path or path.startswith(("/", "~")) or "\\" in path or "\x00" in path
+            or re.match(r"^[A-Za-z]:", path) or ".." in Path(path).parts):
+        raise FixError("A finding points outside the repository, so it was not patched.")
+    return path
+
+
+def safe_join(root: Path, rel: str) -> Path:
+    """root / rel, refusing anything whose real location (through symlinks) is outside root."""
+    p = root / safe_rel(rel)
+    real_root = root.resolve()
+    real = Path(os.path.realpath(p))
+    if real != real_root and real_root not in real.parents:
+        raise FixError("A path in this fix resolves outside the folder (a symbolic link), so nothing was touched.")
+    return p
+
+
 def is_code_edge(edge_id: str) -> bool:
     return isinstance(edge_id, str) and edge_id.startswith("code:")
 
@@ -63,8 +91,11 @@ def _source(job: dict) -> Path:
 
 
 def _original(job: dict, src: Path, path: str) -> str:
-    ref = "HEAD~1" if job["state"] in ("ready", "pr_opened") and job.get("branch") else "HEAD"
+    safe_rel(path)
     try:
+        # the scanned commit is the clone's root (depth 1); the fixes commit, if any, sits on top of it
+        roots = harness._git(["rev-list", "--max-parents=0", "HEAD"], cwd=src).split()
+        ref = roots[-1] if roots else "HEAD"
         return harness._git(["show", f"{ref}:{path}"], cwd=src)
     except RuntimeError:
         raise FixError(f"Could not read {path} from the scanned copy.") from None
@@ -74,17 +105,15 @@ def _diff(path: str, before: str, after: str) -> str:
     """A git-format patch for one file, made by git itself (so the missing-newline cases come out right)."""
     with tempfile.TemporaryDirectory() as d:
         for side, text in (("a", before), ("b", after)):
-            p = Path(d, side, path)
+            p = safe_join(Path(d, side), path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(text, encoding="utf-8", newline="")
-        r = subprocess.run(["git", "diff", "--no-index", "--no-color", "--no-ext-diff", f"a/{path}", f"b/{path}"],
-                           cwd=d, capture_output=True, text=True, env={"PATH": os.environ.get("PATH", ""), "HOME": d})
+        # empty prefixes: the scratch layout (a/<path>, b/<path>) already is a normal git patch's a/ and b/
+        r = subprocess.run(_GIT + ["diff", "--no-index", "--no-color", "--no-ext-diff", "--src-prefix=", "--dst-prefix=",
+                                   f"a/{path}", f"b/{path}"], cwd=d, capture_output=True, text=True, env=_env())
     out = r.stdout
     if r.returncode not in (0, 1) or not out.strip():
         raise FixError(f"Could not build a patch for {path}.")
-    # the scratch layout (a/<path>, b/<path>) doubled the prefixes; a normal git patch has a/<path> and b/<path>
-    out = re.sub(r"^(diff --git |--- |\+\+\+ )(?:a/)?a/", r"\1a/", out, flags=re.M)
-    out = re.sub(r"^(diff --git a/\S+ |\+\+\+ )b/b/", r"\1b/", out, flags=re.M)
     return out
 
 
@@ -115,6 +144,7 @@ def plan(ws: int, edge_ids: list[str]) -> dict:
         before = _original(job, src, path)
         content = before
         # bottom-up, so earlier line numbers stay valid after each edit
+        safe_rel(path)
         for f in sorted((x for x in chosen if x["file"] == path), key=lambda x: -x["line"]):
             res = fixers.try_fix(content, f)
             if not res:
@@ -157,9 +187,8 @@ def target(job_repo: str) -> tuple[str, Path | str]:
 
 
 def _git_apply(folder: Path, patch: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(folder), "-c", "core.hooksPath=/dev/null", "apply", "--whitespace=nowarn", "-C1", *args, "-"],
-                          input=patch, capture_output=True, text=True, timeout=60,
-                          env={"PATH": os.environ.get("PATH", ""), "HOME": str(folder)})
+    return subprocess.run(_GIT + ["-C", str(folder), "apply", "--whitespace=nowarn", "-C1", *args, "-"],
+                          input=patch, capture_output=True, text=True, timeout=60, env=_env())
 
 
 def _why(stderr: str, folder: Path) -> str:
@@ -180,28 +209,30 @@ def apply_local(folder: Path, patch: str, reverse: bool = False) -> None:
 
 
 def uncommitted(folder: Path, paths: list[str]) -> list[str]:
-    r = subprocess.run(["git", "-C", str(folder), "status", "--porcelain", "--", *paths], capture_output=True,
-                       text=True, timeout=30, env={"PATH": os.environ.get("PATH", ""), "HOME": str(folder)})
+    r = subprocess.run(_GIT + ["-C", str(folder), "status", "--porcelain", "--", *[safe_rel(p) for p in paths]],
+                       capture_output=True, text=True, timeout=30, env=_env())
     return [ln[3:] for ln in r.stdout.splitlines() if ln.strip()]
 
 
-def materialize(job_id: int, job_repo: str, files: list[dict], patch: str) -> dict[str, str]:
-    """Final content of each patched file: the scanned original with the stored patch applied in a scratch folder."""
-    job = supa.first("jobs", {"id": supa.eq(job_id)})
-    if not job:
-        raise FixError("The scan this fix came from no longer exists.")
-    src = _source(job)
+def apply_to_contents(current: dict[str, str | None], files: list[dict], patch: str) -> dict[str, str]:
+    """The patch applied to the CURRENT content of each file (a scratch folder), so a change made upstream since the
+    scan is kept, or the apply is refused. `current[path]` is None when the file no longer exists."""
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+        subprocess.run(_GIT + ["init", "-q"], cwd=root, check=True, capture_output=True, env=_env())
         for f in files:
-            p = root / f["path"]
+            text = current.get(f["path"])
+            if text is None:
+                raise FixError(f"{f['path']} no longer exists in the repository, so this fix cannot be applied. "
+                               "Scan again to refresh it.")
+            p = safe_join(root, f["path"])
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(_original(job, src, f["path"]), encoding="utf-8", newline="")
+            p.write_text(text, encoding="utf-8", newline="")
         r = _git_apply(root, patch)
         if r.returncode != 0:
-            raise FixError("The stored patch no longer applies to the scanned files: " + _why(r.stderr, root))
-        return {f["path"]: (root / f["path"]).read_text(encoding="utf-8") for f in files}
+            raise FixError("The repository changed since the scan, so the fix no longer applies: " + _why(r.stderr, root)
+                           + ". Nothing was sent; scan again to refresh the fix.")
+        return {f["path"]: safe_join(root, f["path"]).read_text(encoding="utf-8") for f in files}
 
 
 def verify_files(read, files: list[dict]) -> dict:

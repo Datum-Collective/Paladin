@@ -416,7 +416,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
                   f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
                   f"{rep['judged_not_exploitable']} judged not exploitable")
         _stage(jid, cancel_event, "fixing")
-        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n, refs=repo_map["reach"])
+        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n, refs=repo_map["reach"], job=jid)
         _upd(jid, ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings, cancel_event.is_set)
         for f in findings:

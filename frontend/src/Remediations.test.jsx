@@ -40,6 +40,8 @@ describe('code remediation card', () => {
     await render([rem('approved', { applied: '' })])
     await render([rem('executed', { applied: 'local folder demo' })])
     expect(btn('Verify')).toBeTruthy() && expect(btn('Roll Back')).toBeTruthy()
+    await render([rem('executed', { applied: 'https://github.com/a/b/pull/7' })])
+    expect(btn('Check After Merge')).toBeTruthy() && expect(host.textContent).toContain('Nothing is marked fixed until')
   })
 
   it('shows the reason next to the button when applying is refused, and does not pretend it worked', async () => {
@@ -68,6 +70,14 @@ describe('code remediation card', () => {
     expect(host.textContent).toContain('x = sha256()')
     await act(async () => { btn('Download Patch').click() })
     expect(mocks.downloadText).toHaveBeenCalledWith('/api/remediations/4/patch', 'paladin-fix-4.patch')
+  })
+
+  it('an unapplied proposal can be discarded, and says no file was touched', async () => {
+    const onChange = await render([rem('proposed')])
+    await act(async () => { btn('Discard').click() })
+    await tick()
+    expect(mocks.api.rstep).toHaveBeenCalledWith(4, 'rollback')
+    expect(onChange).toHaveBeenCalled()
   })
 
   it('a failed verification keeps its explanation and offers roll back', async () => {
