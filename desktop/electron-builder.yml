@@ -54,6 +54,9 @@ publish:
   repo: DATUM
 # Hardening: turn off the Electron features this app never uses (Electron fuses guide).
 electronFuses:
+  # Session cookies (including the long-lived refresh token) are encrypted on disk with the OS key store (DPAPI on
+  # Windows). Without this fuse Electron writes them in plain text under %APPDATA%\Paladin\Network\Cookies.
+  enableCookieEncryption: true
   runAsNode: false
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
