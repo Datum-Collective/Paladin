@@ -66,5 +66,7 @@ def test_vercel_entrypoint_exposes_the_asgi_app():
     code = ("import api.index as m; paths={r.path for r in m.app.routes}; "
             "assert '/health' in paths and '/api/config' in paths and '/api/auth/login' in paths, paths; print('ok')")
     r = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
-                       env={"PATH": __import__("os").environ["PATH"], "PYTHONPATH": str(root), "APC_SKIP_DOTENV": "1"})
+                       env={"PATH": __import__("os").environ["PATH"], "PYTHONPATH": str(root), "APC_SKIP_DOTENV": "1",
+                            # Windows cannot start Python's networking (asyncio) without SYSTEMROOT
+                            **{k: v for k, v in __import__("os").environ.items() if k.upper() == "SYSTEMROOT"}})
     assert r.returncode == 0 and "ok" in r.stdout, r.stderr[-400:]

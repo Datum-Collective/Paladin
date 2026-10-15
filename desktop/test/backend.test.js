@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
-const { Backend, freePort, waitHealthy, resolveCommand, buildEnv, readSupabaseConfig } = require('../src/backend')
+const { Backend, freePort, waitHealthy, resolveCommand, buildEnv, readSupabaseConfig, openLog } = require('../src/backend')
 
 test('freePort returns a bindable loopback port', async () => {
   const p = await freePort()
@@ -102,6 +102,30 @@ test('Backend starts a real child, becomes healthy, and stops it', async () => {
   const pid = b.proc.pid
   await b.stop()
   assert.throws(() => process.kill(pid, 0))
+})
+
+test('the engine output is kept in engine.log in the data folder', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paladin-log-'))
+  const script = path.join(dir, 'srv.js')
+  fs.writeFileSync(script, `console.error('WARNING sign-in failed: example'); require('http').createServer((q,r)=>{r.end('ok')})
+    .listen(Number(process.env.PORT),'127.0.0.1')`)
+  const b = new Backend({ command: { cmd: process.execPath, args: [script], cwd: dir, staticDir: dir, seedDir: dir },
+                          dataDir: dir, version: 't' })
+  await b.start()
+  await b.stop()
+  await new Promise((r) => setTimeout(r, 100))
+  assert.match(fs.readFileSync(path.join(dir, 'engine.log'), 'utf8'), /sign-in failed: example/)
+})
+
+test('engine.log is capped and rotated', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paladin-log-'))
+  const file = path.join(dir, 'engine.log')
+  fs.writeFileSync(file, 'x'.repeat(1024 * 1024 + 10))
+  const log = openLog(file)
+  log.write(Buffer.from('fresh line\n'))
+  log.end()
+  assert.ok(fs.existsSync(`${file}.1`), 'the oversized log is kept as engine.log.1')
+  assert.ok(fs.statSync(`${file}.1`).size > 1024 * 1024)
 })
 
 test('freePort reuses a preferred port when it is free and falls back when busy', async () => {
