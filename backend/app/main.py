@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import time
-from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,10 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import ai, analyze, auth, config as settings, keys, workspaces, codescan, engine, inventory, metrics, store, supa
 from . import github_access
 from .models import Event
+from .ratelimit import RateLimit
 from .parsers.registry import PARSERS, parse_lines
 from . import harness
 from .harness_api import router as harness_router
@@ -27,7 +28,8 @@ from .workspaces_api import router as workspaces_router
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
 INGEST_RATE = (120, 60)  # requests per window seconds
-_hits: dict[str, deque] = defaultdict(deque)
+_ingest_limit = RateLimit(*INGEST_RATE)
+_hits = _ingest_limit.hits
 log = logging.getLogger("uvicorn.error")
 
 
@@ -58,6 +60,41 @@ async def data_error(_: Request, e: supa.DataError):
     return JSONResponse({"detail": e.message}, status_code=e.status)
 
 
+class BodyLimit:
+    """Refuse request bodies over MAX_BODY as they stream in. A Content-Length check alone is bypassed by a chunked
+    upload (no length header), which would let one request buffer an unbounded body in memory."""
+
+    def __init__(self, app, max_bytes: int):
+        self.app, self.max_bytes = app, max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        seen, refused = 0, False
+
+        async def limited_receive():
+            nonlocal seen, refused
+            if refused:
+                return {"type": "http.disconnect"}
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > self.max_bytes:
+                    refused = True
+                    body = b'{"detail":"request too large"}'
+                    await send({"type": "http.response.start", "status": 413, "headers": [
+                        (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+                    await send({"type": "http.response.body", "body": body})
+                    return {"type": "http.disconnect"}
+            return msg
+
+        async def guarded_send(msg):
+            if not refused:     # the handler we cut off may still try to answer; the 413 already went out
+                await send(msg)
+
+        await self.app(scope, limited_receive, guarded_send)
+
+
 # Registered before `guard`, so it runs inside it: guard still catches anything it raises
 app.middleware("http")(auth.session_middleware)
 
@@ -77,6 +114,9 @@ async def guard(request: Request, call_next):
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     return resp
+
+
+app.add_middleware(BodyLimit, max_bytes=MAX_BODY)   # added last = outermost: nothing reads a body before it
 
 
 class IngestBody(BaseModel):
@@ -130,12 +170,8 @@ def ingest_events(ws: int, events: list[Event]) -> int:
 
 
 def _rate(key: str) -> None:
-    now, d = time.time(), _hits[key]
-    while d and d[0] < now - INGEST_RATE[1]:
-        d.popleft()
-    if len(d) >= INGEST_RATE[0]:
-        raise HTTPException(429, "rate limit")
-    d.append(now)
+    _ingest_limit.limit, _ingest_limit.window_s = INGEST_RATE   # read per call: tests and operators may retune it
+    _ingest_limit.hit(key)
 
 
 @app.post("/api/ingest")
@@ -342,7 +378,11 @@ if os.environ.get("STATIC_DIR") and _static.is_dir():
         async def get_response(self, path, scope):
             try:
                 return await super().get_response(path, scope)
-            except Exception:
+            except StarletteHTTPException as e:
+                # client-side routes get the app shell; a missing API route or file stays a real 404, and any
+                # other failure is not hidden behind a 200 page
+                if e.status_code != 404 or path == "api" or path.startswith("api/"):
+                    raise
                 return await super().get_response("index.html", scope)
 
     app.mount("/", SPA(directory=str(_static), html=True), name="ui")

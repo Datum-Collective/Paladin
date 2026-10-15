@@ -24,9 +24,9 @@ def _guard(fn, *a):
     try:
         return fn(*a)
     except KeyError:
-        raise HTTPException(404, "remediation not found")
+        raise HTTPException(404, "remediation not found") from None
     except ValueError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from None
 
 
 @router.get("")
@@ -39,7 +39,7 @@ def propose(b: Propose, u: dict = Depends(auth.require_user)):
     try:
         return rem.propose(u["id"], u["actor"], b.edges, b.title)
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from None
 
 
 @router.get("/{rid}")

@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import config, supa, workspaces
+from . import config, keys, supa, workspaces
 from .http import client
 from .ratelimit import RateLimit
 
@@ -225,6 +225,7 @@ async def current_claims(request: Request) -> dict:
         log.warning("Rejected access token: %s: %s", type(e).__name__, e)
         raise HTTPException(401, "authentication required") from None
     supa.set_user(token, claims["sub"])
+    keys.bind(claims["sub"])   # this user's pasted model keys apply to everything this request does
     return claims
 
 

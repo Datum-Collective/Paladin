@@ -61,7 +61,7 @@ function ProviderStep({ value, onChange, keyState }) {
   )
 }
 
-function KeyStep({ provider, env, onVerified, back }) {
+function KeyStep({ provider, env, onVerified }) {
   const p = PROVIDERS.find((x) => x.id === provider)
   const [v, setV] = useState('')
   const [show, setShow] = useState(false)
@@ -69,7 +69,7 @@ function KeyStep({ provider, env, onVerified, back }) {
   const [err, setErr] = useState(null)
   const [local, setLocal] = useState('')
   const hasKey = env.desktop ? env.stored && env.stored[p.field] : env.server[provider]
-  const canEdit = env.desktop && env.stored && env.stored.encryptionAvailable
+  const canEdit = env.desktop ? Boolean(env.stored && env.stored.encryptionAvailable) : true
   const problem = keyProblem(provider, v)
 
   const verify = useCallback(async () => {
@@ -83,6 +83,13 @@ function KeyStep({ provider, env, onVerified, back }) {
 
   const save = async () => {
     setBusy(true); setErr(null); setLocal('')
+    if (!env.desktop) {
+      // web: the server checks the key with a real call to the provider and keeps it in memory for this account only
+      const r = await api.setKey(provider, v).catch((e) => ({ ok: false, error: { kind: 'network', message: e.message, hint: '' } }))
+      setBusy(false)
+      if (r.ok) { setV(''); await env.refresh(); onVerified() } else setErr(r.error)
+      return
+    }
     try {
       const b = getBridge()
       if (!b || !b.setSettings) throw new Error('Saving keys needs the desktop app.')
@@ -123,19 +130,14 @@ function KeyStep({ provider, env, onVerified, back }) {
             </button>
           </div>
           <p id="setup-key-help" className={problem ? 'err small' : 'muted small'}>
-            {problem || `Create one at ${p.where}. It is stored in your system keychain and never shown again.`}
+            {problem || (env.desktop
+              ? `Create one at ${p.where}. It is stored in your system keychain and never shown again.`
+              : `Create one at ${p.where}. It is checked with ${p.name}, kept in the server's memory for your account only, and never shown again. You will paste it again after the server restarts.`)}
           </p>
           <button className="primary" disabled={!v || Boolean(problem) || busy} onClick={save}>
             {busy ? <><Loader2 size={14} className="spin" aria-hidden="true" /> Checking…</> : 'Save and check key'}
           </button>
         </>
-      )}
-      {!env.desktop && !hasKey && (
-        <div className="notice">
-          <b>This server has no {p.name} key.</b> Keys on the web version are set by whoever runs the server, as
-          <code> {p.env}</code>. Ask them to add it, then check again, or choose the other provider.
-          <div className="actions"><button onClick={env.refresh}>Check again</button><button onClick={back}>Choose another provider</button></div>
-        </div>
       )}
       {local && <p className="err" role="alert">{local}</p>}
       <ErrorBox error={err} />
@@ -294,7 +296,7 @@ export default function Setup({ config, onClose, onOpenAssistant, embedded = fal
   const advice = setupAdvice(test.result && test.result.error)
   const stepBody = {
     provider: <ProviderStep value={provider} onChange={(p) => { setProvider(p); setModel('') }} keyState={keyState} />,
-    key: <KeyStep provider={provider} env={{ ...env, refresh }} onVerified={() => { setKeyOk(true); setStep('model') }} back={() => go('provider')} />,
+    key: <KeyStep provider={provider} env={{ ...env, refresh }} onVerified={() => { setKeyOk(true); setStep('model') }} />,
     model: <ModelStep provider={provider} model={model} onPick={setModel} />,
     test: <TestStep result={test.result} running={test.running} run={runTest} advice={advice} goto={go} />,
     done: <Done provider={provider} model={model} openAssistant={() => { finish(); onOpenAssistant() }} finish={finish} />,

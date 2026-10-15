@@ -97,12 +97,15 @@ def timeline(ws: int, buckets: int = 24) -> dict:
     edges = correlate(base, events)
     if not events:
         return {"buckets": [], "confirmed": [], "events": 0}
-    ordered = sorted(events, key=lambda e: e.ts)
-    lo, hi = ordered[0].ts, ordered[-1].ts
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     def t(x):
-        return datetime.fromisoformat(x.replace("Z", "+00:00")).timestamp()
+        d = datetime.fromisoformat(x.replace("Z", "+00:00"))
+        return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()   # naive means UTC, not local time
+
+    # by instant: "...13:05+02:00" is earlier than "...12:00Z" although it sorts after it as text
+    ordered = sorted(events, key=lambda e: t(e.ts))
+    lo, hi = ordered[0].ts, ordered[-1].ts
 
     span = max(1.0, t(hi) - t(lo))
     rows: dict[int, dict] = {}
@@ -115,7 +118,10 @@ def timeline(ws: int, buckets: int = 24) -> dict:
     confirmed = []
     for ed in edges:
         if ed.observed and ed.evidence:
-            first = min((by_id[i] for i in ed.evidence if i in by_id), key=lambda x: x.ts)
+            seen = [by_id[i] for i in ed.evidence if i in by_id]
+            if not seen:
+                continue
+            first = min(seen, key=lambda x: t(x.ts))
             confirmed.append({"edge": ed.id, "src": ed.src, "dst": ed.dst, "technique": ed.technique,
                               "first_seen": first.ts, "evidence": ed.evidence[:5], "p": round(ed.p, 3)})
     confirmed.sort(key=lambda c: c["first_seen"])

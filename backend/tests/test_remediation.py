@@ -115,3 +115,35 @@ def test_accounts_are_separate_and_paths_before_after(client):
     sign_in(client)         # the first account's own work is still there (no shared demo account to wipe)
     assert client.get("/api/events").json()["total"] >= 1
     assert len(client.get("/api/remediations").json()["remediations"]) == 1
+
+
+def test_verify_window_is_by_loaded_events_not_by_row_count(client, monkeypatch):
+    """`mark` indexes the list of loaded events. A raw row count that includes skipped (invalid) rows would put the
+    mark past an attack that continued after the fix, and the fix would be 'verified' by mistake."""
+    from app import store
+    c = client
+    sign_in(c)
+    c.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})
+    monkeypatch.setattr(store, "event_count", lambda ws: 7)      # six rows the loader skips
+    rid = c.post("/api/remediations", json={"edges": ["scan-web"]}).json()["id"]
+    c.post(f"/api/remediations/{rid}/approve")
+    assert c.post(f"/api/remediations/{rid}/execute").json()["mark"] == 1
+    c.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})        # attacker still active
+    r = c.post(f"/api/remediations/{rid}/verify").json()
+    assert r["state"] == "failed" and "still observed" in r["note"]
+
+
+def test_verify_survives_a_remediated_edge_that_no_longer_exists(client):
+    c = client
+    sign_in(c)
+    src = 'import hashlib\nh = hashlib.md5(b"x")\n'
+    rep = c.post("/api/codescan", json={"repo": "r", "files": [{"path": "a.py", "content": src}]}).json()
+    edge = next(e["id"] for e in c.get("/api/graph").json()["edges"] if e["id"].startswith("code:f"))
+    assert rep["findings"]
+    rid = c.post("/api/remediations", json={"edges": [edge]}).json()["id"]
+    c.post(f"/api/remediations/{rid}/approve")
+    assert c.post(f"/api/remediations/{rid}/execute").status_code == 200
+    c.delete("/api/codescan")                                     # a re-scan replaced the code model
+    c.post("/api/ingest", json={"format": "web_access", "lines": [SCAN]})   # a later event to check against
+    r = c.post(f"/api/remediations/{rid}/verify")
+    assert r.status_code == 200, r.text

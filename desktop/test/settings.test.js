@@ -49,6 +49,14 @@ test('rejects unknown fields, whitespace and oversize values', () => {
   assert.throws(() => s.set(null), /invalid/)
 })
 
+test('inherited object property names are not settings', () => {
+  const s = new Settings(tmp(), fakeCrypto())
+  for (const k of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+    assert.throws(() => s.set(JSON.parse(`{"${k}": "abcdefgh"}`)), /unknown/, k)
+  }
+  assert.equal(fs.existsSync(s.file), false)   // a rejected patch writes nothing
+})
+
 test('a corrupt settings file reads as empty', () => {
   const dir = tmp()
   fs.writeFileSync(path.join(dir, 'settings.json'), '{not json')

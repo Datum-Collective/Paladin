@@ -17,7 +17,8 @@ let settings = null
 let updater = null
 const crashTimes = []
 
-if (!app.requestSingleInstanceLock()) {
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
@@ -322,7 +323,8 @@ async function boot() {
   updater.start()   // no-op outside a packaged build
 }
 
-app.whenReady().then(boot)
+// a second launch only quits; booting here too would start a second engine on the same data directory
+if (gotLock) app.whenReady().then(boot)
 app.on('window-all-closed', () => { if (!isMac) app.quit() })
 app.on('activate', () => { if (!win && backend && backend.proc) createWindow(backend.origin) })
 let quitting = false
