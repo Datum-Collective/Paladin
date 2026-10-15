@@ -41,6 +41,24 @@ cd frontend && npm ci && npm run dev    # proxies /api to :8000; open http://loc
 ```
 Benchmarks: `python scripts/benchmark.py`.
 
+## The fixing agent (Assistant → Fix)
+A Claude tool-use loop (Anthropic SDK, Claude Opus 5.5 by default) works inside a scan's working copy
+(`<data>/jobs/<job>/repo`; desktop: `~/Library/Application Support/Paladin/data`). Its tools: list, read and search
+files, exact-match edits, MITRE lookup, re-scan, run tests. Tests, CI files and `.git` are read-only to it; paths
+cannot leave the working copy; symlinks are not followed.
+
+**Grounding.** `data/mitre.json` is built offline from MITRE's own downloads (ATT&CK Enterprise STIX, CWE, CAPEC) by
+`scripts/build_mitre_pack.py`. Each finding reaches the agent with MITRE's entry for its CWE, the CAPEC patterns MITRE
+links to it, and those patterns' ATT&CK techniques. MITRE links few CWEs to ATT&CK (none for SQL or OS command
+injection), so an ATT&CK technique Paladin shows without a MITRE link is labelled as Paladin's own mapping.
+
+**Verdict (computed by Paladin, never by the model).** `verified` requires all of: the re-scan of every changed file
+no longer reports the finding and reports nothing new; the repository's tests pass (Docker sandbox; on your own machine
+only with `APC_ALLOW_LOCAL_TESTS=1`); every cited MITRE id exists in the pack. Otherwise the result says exactly what
+is missing (`fixed_untested`, `ungrounded`, `failed_tests`, `not_fixed`, `regressed`, `no_changes`, `incomplete`).
+The agent's own summary is shown separately as a claim. Evidence-backed results are committed to the scan's local
+branch; nothing reaches GitHub until you open the pull request.
+
 ## Sign-in, accounts and data (Supabase)
 Sign-in is GitHub only, through Supabase Auth. The backend runs the OAuth flow itself (PKCE) and keeps the session
 in httpOnly cookies (`sb_access`, `sb_refresh`); the browser JS never sees a token, and GitHub always shows its

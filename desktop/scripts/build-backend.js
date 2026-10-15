@@ -24,7 +24,7 @@ run('uv', ['pip', 'install', '--python', py, 'pyinstaller==6.11.1'])
 fs.rmSync(out, { recursive: true, force: true })
 run(py, ['-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--name', 'paladin-server',
          '--distpath', out, '--workpath', path.join(out, '..', 'pyi-work'), '--specpath', path.join(out, '..', 'pyi-work'),
-         '--collect-submodules', 'app', '--collect-submodules', 'uvicorn', '--collect-submodules', 'jwt',
+         '--collect-submodules', 'app', '--collect-submodules', 'uvicorn', '--collect-submodules', 'jwt', '--collect-submodules', 'anthropic',
          path.join(backend, 'desktop_server.py')])
 // Public Supabase settings ship with the app (resources/supabase.json). Only the URL and the publishable anon key:
 // the data is protected by row-level security, and the service key never leaves the web server.

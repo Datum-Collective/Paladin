@@ -24,6 +24,7 @@ from .harness_api import router as harness_router
 from .remediation_api import router as remediation_router
 from .providers_api import router as providers_router
 from .workspaces_api import router as workspaces_router
+from .fixagent_api import router as fixagent_router
 
 MAX_BODY = 2_000_000
 MAX_LINES = 2000
@@ -49,6 +50,7 @@ app.include_router(remediation_router)
 app.include_router(harness_router)
 app.include_router(providers_router)
 app.include_router(workspaces_router)
+app.include_router(fixagent_router)
 origins = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 if origins:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
