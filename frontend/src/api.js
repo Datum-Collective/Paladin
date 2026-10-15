@@ -80,6 +80,11 @@ export const api = {
   providers: () => req('GET', '/api/providers'),
   models: (pid) => req('GET', `/api/providers/${pid}/models`),
   validate: (pid) => req('POST', `/api/providers/${pid}/validate`),
+  conversations: () => req('GET', '/api/conversations'),
+  createConversation: (title = '') => req('POST', '/api/conversations', { title }),
+  renameConversation: (id, title) => req('PATCH', `/api/conversations/${id}`, { title }),
+  deleteConversation: (id) => req('DELETE', `/api/conversations/${id}`),
+  conversationMessages: (id) => req('GET', `/api/conversations/${id}/messages`),
   testProvider: (pid, model) => req('POST', `/api/providers/${pid}/test`, { model }),
 }
 

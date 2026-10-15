@@ -189,3 +189,12 @@ export function scanStages(state, failedAt = '') {
     return { id, label, status }
   })
 }
+
+/** A stored message -> what the thread renders: failures, stops and cut-off replies keep their text and say so. */
+export function fromStored(m) {
+  const meta = m.meta || {}
+  return { id: m.id, role: m.role, content: m.content, created: m.created,
+    error: m.status === 'error' ? (meta.error || { message: 'The reply failed.' }) : undefined,
+    stopped: m.status === 'stopped', interrupted: m.status === 'interrupted' || m.status === 'streaming',
+    stop: meta.stop_reason, usage: meta.usage }
+}

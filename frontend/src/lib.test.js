@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -190,5 +190,15 @@ describe('scanStages', () => {
   })
   it('marks the stage that was running when a scan failed', () => {
     expect(scanStages('failed', 'scanning').map((x) => x.status)).toEqual(['done', 'failed', 'pending', 'pending'])
+  })
+})
+
+describe('fromStored', () => {
+  it('keeps the text of failed, stopped and cut-off replies and labels them', () => {
+    expect(fromStored({ id: 1, role: 'assistant', content: 'partial', status: 'interrupted', meta: {} }).interrupted).toBe(true)
+    expect(fromStored({ id: 2, role: 'assistant', content: '', status: 'error', meta: { error: { kind: 'auth', message: 'bad key' } } }).error.kind).toBe('auth')
+    const ok = fromStored({ id: 3, role: 'assistant', content: 'hi', status: 'complete', meta: { stop_reason: 'end_turn', usage: { input: 1, output: 2 } } })
+    expect(ok).toMatchObject({ content: 'hi', stop: 'end_turn', usage: { output: 2 }, stopped: false, interrupted: false })
+    expect(ok.error).toBeUndefined()
   })
 })
