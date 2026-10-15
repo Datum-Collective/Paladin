@@ -64,6 +64,8 @@ app.middleware("http")(auth.session_middleware)
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
+    if not auth.allowed_host(request):   # desktop: only the engine's own 127.0.0.1:<port> (DNS rebinding)
+        return JSONResponse({"detail": "unknown host"}, status_code=421)
     cl = request.headers.get("content-length")
     if cl and cl.isdigit() and int(cl) > MAX_BODY:
         return JSONResponse({"detail": "request too large"}, status_code=413)

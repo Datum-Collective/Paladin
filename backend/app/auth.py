@@ -59,6 +59,16 @@ def desktop_mode() -> bool:
     return config.desktop_mode()
 
 
+def allowed_host(request: Request) -> bool:
+    """Desktop: the engine answers only to its own address. A web page can point its own domain at 127.0.0.1
+    ("DNS rebinding") and then talk to the engine as a same-origin page; such requests carry that domain in Host.
+    Electron, the system-browser sign-in and the main process all use 127.0.0.1:<port>."""
+    if not desktop_mode():
+        return True
+    port = os.environ.get("PORT", "8000")
+    return request.headers.get("host", "").lower() in (f"127.0.0.1:{port}", f"localhost:{port}")
+
+
 # ---------- cookies ----------
 def _cookie(resp: Response, name: str, value: str, max_age: int, path: str = "/"):
     resp.set_cookie(name, value, max_age=max_age, httponly=True, secure=config.secure_cookies(),
@@ -106,7 +116,13 @@ def _expires_soon(token: str) -> bool:
     return exp - time.time() < REFRESH_MARGIN_S
 
 
-async def _refresh(refresh_token: str) -> dict | None:
+OFFLINE = ("Paladin can't reach its account service (Supabase) right now. Check your internet connection and try "
+           "again; you are still signed in.")
+UNREACHABLE = object()   # _refresh result: Supabase could not be reached (not a rejection: keep the session)
+
+
+async def _refresh(refresh_token: str):
+    """The new session, None if Supabase rejected the refresh token, or UNREACHABLE when offline."""
     key = hashlib.sha256(refresh_token.encode()).hexdigest()
     lock = _refresh_locks.setdefault(key, asyncio.Lock())
     async with lock:
@@ -118,7 +134,10 @@ async def _refresh(refresh_token: str) -> dict | None:
                                   headers={"apikey": config.SUPABASE_ANON_KEY}, json={"refresh_token": refresh_token})
         except httpx.HTTPError as e:
             log.warning("Session refresh failed: could not reach Supabase: %r", e)
-            return None
+            return UNREACHABLE   # not cached: the next request tries again
+        if r.status_code >= 500:
+            log.warning("Session refresh failed: Supabase returned %s", r.status_code)
+            return UNREACHABLE
         session = r.json() if r.status_code == 200 else None
         if session is None:
             log.warning("Session refresh rejected: status=%s", r.status_code)
@@ -146,8 +165,12 @@ async def session_middleware(request: Request, call_next):
     session, rejected = None, False
     if (path.startswith("/api/") and not path.startswith("/api/auth/") and refresh and config.SUPABASE_ENABLED
             and (not access or _expires_soon(access))):
-        session = await _refresh(refresh)
-        if session:
+        result = await _refresh(refresh)
+        if result is UNREACHABLE:
+            # offline (a laptop waking up, wifi off): keep the cookies, never sign the user out for this
+            request.state.offline = True
+        elif result:
+            session = result
             _replace_cookie(request, ACCESS_COOKIE, session["access_token"])
         else:
             rejected = True
@@ -192,7 +215,12 @@ async def current_claims(request: Request) -> dict:
     try:
         claims = verify(token)
     except jwt.ExpiredSignatureError:
+        if getattr(request.state, "offline", False):
+            raise HTTPException(503, OFFLINE) from None   # expired only because it could not be renewed offline
         raise HTTPException(401, "session expired") from None
+    except jwt.PyJWKClientConnectionError as e:
+        log.warning("Could not fetch Supabase signing keys: %s", e)
+        raise HTTPException(503, OFFLINE) from None
     except (jwt.InvalidTokenError, jwt.PyJWKClientError) as e:
         log.warning("Rejected access token: %s: %s", type(e).__name__, e)
         raise HTTPException(401, "authentication required") from None

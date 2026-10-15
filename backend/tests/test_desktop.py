@@ -26,7 +26,6 @@ def test_desktop_sign_in_is_disabled_outside_desktop_mode(client, path):
 def desktop(client, monkeypatch):
     monkeypatch.setenv("DESKTOP_MODE", "1")
     monkeypatch.setenv("APC_DESKTOP_TOKEN", TOKEN)
-    monkeypatch.setenv("PORT", "8765")
     return client
 
 
@@ -34,7 +33,7 @@ def start(app_window) -> str:
     r = app_window.post("/api/auth/desktop/start", headers={"X-Desktop-Token": TOKEN})
     assert r.status_code == 200
     url = urlparse(r.json()["url"])
-    assert url.scheme == "http" and url.netloc == "127.0.0.1:8765" and url.path == "/api/auth/login"
+    assert url.scheme == "http" and url.netloc == "127.0.0.1:5173" and url.path == "/api/auth/login"
     return f"{url.path}?{url.query}"
 
 
@@ -44,7 +43,7 @@ def browser_signs_in(login_path: str, uid: str):
     r = browser.get(login_path, follow_redirects=False)
     assert r.status_code == 302
     q = parse_qs(urlparse(r.headers["location"]).query)
-    assert q["redirect_to"] == ["http://127.0.0.1:8765/api/auth/callback"] and q["prompt"] == ["select_account"]
+    assert q["redirect_to"] == ["http://127.0.0.1:5173/api/auth/callback"] and q["prompt"] == ["select_account"]
     r = browser.get(f"/api/auth/callback?code={uid}", follow_redirects=False)
     return browser, r
 
@@ -142,3 +141,57 @@ def test_config_names_missing_signin_settings_without_values(client, monkeypatch
     monkeypatch.setattr(settings, "SUPABASE_ANON_KEY", "secret-looking-value")
     c = client.get("/api/config").json()
     assert c["signin_missing"] == [] and "secret-looking-value" not in str(c)
+
+
+# ---- the engine answers only to its own address ----
+@pytest.mark.parametrize("host", ["evil.example:5173", "attacker.test", "127.0.0.1:9999", "localhost", "0.0.0.0:5173",
+                                  "127.0.0.1.nip.io:5173"])
+def test_desktop_engine_rejects_other_hosts(desktop, host):
+    """DNS rebinding: a web page points its own domain at 127.0.0.1 and talks to the engine as a same-origin page.
+    Its requests carry that domain in Host, so the engine refuses them before any route runs."""
+    sign_in_desktop(desktop)
+    for method, path in [("GET", "/api/me"), ("GET", "/api/workspaces"), ("POST", "/api/auth/desktop/claim"),
+                         ("GET", "/api/config"), ("GET", "/health")]:
+        r = desktop.request(method, path, headers={"Host": host, "X-Desktop-Token": TOKEN})
+        assert r.status_code == 421, (host, path, r.status_code)
+
+
+def test_desktop_engine_accepts_its_own_address(desktop):
+    sign_in_desktop(desktop)
+    for host in ("127.0.0.1:5173", "localhost:5173", "LOCALHOST:5173"):
+        assert desktop.get("/api/me", headers={"Host": host}).status_code == 200, host
+
+
+def test_web_server_is_not_restricted_by_host(client):
+    assert client.get("/api/config", headers={"Host": "paladin.example.com"}).status_code == 200
+
+
+# ---- offline: never signed out because the network is down ----
+def test_offline_refresh_keeps_the_session_and_says_so(desktop, world, monkeypatch):
+    import httpx
+    from fakes import access_token
+    sign_in_desktop(desktop)
+    desktop.cookies.set("sb_access", access_token(DEMO, exp_in=-600))   # expired while the laptop slept
+    original = world.db.handle
+
+    def offline(req):
+        raise httpx.ConnectError("no internet")
+    monkeypatch.setattr(world.db, "handle", offline)
+    r = desktop.get("/api/workspaces")
+    assert r.status_code == 503 and "internet" in r.json()["detail"].lower()
+    assert not [h for h in r.headers.get_list("set-cookie") if h.startswith(("sb_access", "sb_refresh"))], \
+        "an offline refresh must not clear the session"
+    monkeypatch.setattr(world.db, "handle", original)                   # back online: the same session continues
+    assert desktop.get("/api/me").status_code == 200
+
+
+def test_signing_keys_unreachable_is_an_offline_error_not_a_sign_out(desktop, monkeypatch):
+    import jwt
+    from app import auth
+    sign_in_desktop(desktop)
+
+    def no_network(token):
+        raise jwt.PyJWKClientConnectionError("Fail to fetch data from the url")
+    monkeypatch.setattr(auth, "verify", no_network)
+    r = desktop.get("/api/me")
+    assert r.status_code == 503 and "internet" in r.json()["detail"].lower()

@@ -303,3 +303,23 @@ def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, 
         harness._git(["clone", "https://github.com/a/b.git", "dest"], token="ghs_t")
     msg = str(e.value)
     assert expect in msg and "data_dir" not in msg and "jobs" not in msg and "ghs_t" not in msg
+
+
+def test_clone_token_is_not_left_in_the_working_copy(tmp_path, monkeypatch):
+    """The token travels as an environment-only header: nothing in the clone's .git may contain it."""
+    import os
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("x = 1\n")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "PATH": os.environ["PATH"], "HOME": str(tmp_path), **{k: v for k, v in os.environ.items() if k.upper() == "SYSTEMROOT"}}
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *cmd], cwd=src, env=env, check=True)
+    dest = tmp_path / "clone"
+    harness._git(["clone", "--depth", "1", src.resolve().as_uri(), str(dest)], token="ghs_must_not_persist",
+                 allow_file=True)
+    for f in (dest / ".git").rglob("*"):
+        if f.is_file():
+            data = f.read_bytes()
+            assert b"ghs_must_not_persist" not in data and b"AUTHORIZATION" not in data.upper(), f
