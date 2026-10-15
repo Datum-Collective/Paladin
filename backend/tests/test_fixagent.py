@@ -1,7 +1,6 @@
 """The fixing agent. A scripted Claude speaks the real Messages streaming wire format through the official SDK (mock
 transport); the repository's tests really run (pytest in a subprocess); the verdict never comes from the model."""
 import json
-import shlex
 import subprocess
 import sys
 import threading
@@ -73,7 +72,7 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setenv("APC_OSV", "0")
     monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
     monkeypatch.setattr(fixagent, "detect_tests",
-                        lambda root: f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider")
+                        lambda root: f'"{sys.executable}" -m pytest -x -q -p no:cacheprovider')
     return tmp_path
 
 
@@ -164,7 +163,10 @@ def test_without_a_sandbox_a_good_fix_is_never_called_verified(repo, monkeypatch
 
 def test_the_agent_cannot_weaken_checks_or_leave_the_repository(repo, monkeypatch):
     (repo.parent / "outside.txt").write_text("secret")
-    (repo / "link").symlink_to(repo.parent)
+    try:
+        (repo / "link").symlink_to(repo.parent)
+    except OSError:          # Windows without Developer Mode cannot create symlinks; the other checks still run
+        (repo / "link").mkdir()
     calls = [("edit_file", {"path": "test_app.py", "old": "assert", "new": "pass  #"}),
              ("read_file", {"path": "../outside.txt"}), ("read_file", {"path": "/etc/passwd"}),
              ("read_file", {"path": "link/outside.txt"}), ("read_file", {"path": ".git/config"}),
@@ -239,7 +241,7 @@ def test_endpoint_streams_the_run_and_commits_only_a_verified_fix(client, tmp_pa
     monkeypatch.setenv("APC_OSV", "0")
     monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
     monkeypatch.setattr(fixagent, "detect_tests",
-                        lambda root: f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider")
+                        lambda root: f'"{sys.executable}" -m pytest -x -q -p no:cacheprovider')
     r = tmp_path / "victim"
     r.mkdir()
     (r / "app.py").write_text(EXEC_APP)
@@ -358,3 +360,13 @@ def test_stored_steps_and_claim_do_not_keep_secrets_from_the_repository(repo, mo
     r = fixagent.fix(repo, [target(repo)])
     stored = json.dumps({"steps": r["steps"], "claim": r["agent_claim"]})
     assert "sk_live_0123456789abcdef" not in stored and "***" in stored
+
+
+def test_the_shell_syntax_that_detect_tests_produces_really_runs(tmp_path, monkeypatch):
+    # detect_tests builds sh commands ("; ", ">/dev/null 2>&1"); cmd.exe would not run them as written
+    monkeypatch.setenv("APC_ALLOW_LOCAL_TESTS", "1")
+    monkeypatch.setattr(fixagent, "docker_ready", lambda: False)
+    monkeypatch.setattr(fixagent, "detect_tests",
+                        lambda root: f'true >/dev/null 2>&1; "{sys.executable}" -c "print(41 + 1)"')
+    r = fixagent.run_tests(tmp_path)
+    assert r.ran and r.passed and "42" in r.output, r

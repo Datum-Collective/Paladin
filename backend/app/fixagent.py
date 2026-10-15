@@ -123,9 +123,12 @@ def run_tests(root: Path) -> TestRun:
         except Exception as e:  # noqa: BLE001 - infrastructure trouble is "could not run", never "passed"
             return TestRun(False, command=cmd, runner="docker sandbox", reason=f"sandbox failed: {e}"[:300])
     if os.environ.get("APC_ALLOW_LOCAL_TESTS") == "1":
-        # SYSTEMROOT: Windows cannot start Python's networking without it
-        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR", "SYSTEMROOT") if k in os.environ}
-        env.update(HOME=os.environ.get("TMPDIR", "/tmp"), PYTHONDONTWRITEBYTECODE="1", CI="1")
+        # Windows needs SYSTEMROOT (Python networking) and a temp HOME/USERPROFILE. The shell is POSIX sh even there: the
+        # commands from detect_tests are sh syntax ("; ", ">/dev/null"), which cmd.exe would not run as written
+        env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+               if k in os.environ}
+        tmp = os.environ.get("TMPDIR") or os.environ.get("TEMP") or "/tmp"
+        env.update(HOME=tmp, USERPROFILE=tmp, PYTHONDONTWRITEBYTECODE="1", CI="1")
         try:
             r = subprocess.run([_shell(), "-c", cmd.replace(" --user", "")], cwd=root, env=env, capture_output=True,
                                text=True, encoding="utf-8", errors="replace", timeout=TEST_TIMEOUT)
