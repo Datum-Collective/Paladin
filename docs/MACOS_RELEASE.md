@@ -15,9 +15,9 @@ electron-builder and writes `Paladin-<version>-<arch>.dmg` plus the `.zip` that 
 | File | Purpose |
 |---|---|
 | `desktop/build/icon-source.png` | Master app icon, 1024x1024 on Apple's icon grid (824 body, soft shadow). Replace it, then `npm run icons`. |
-| `desktop/build/icon.icns`, `icon.png` | Generated: Dock, Finder, Launchpad, window icon. |
+| `desktop/build/icon.icns` | Generated from the master: Dock, Finder, Launchpad. The master PNG is also the Windows/Linux window icon. |
 | `desktop/build/dmg-background.svg` / `.tiff` | Installer window art (660x400, retina TIFF generated). |
-| `frontend/public/{favicon,mark,glyph}.svg` | Web favicon, in-app brand mark, single-colour glyph. |
+| `frontend/public/{favicon,mark,glyph}.svg` | Web favicon, in-app brand mark, single-colour glyph. Static assets traced from the original artwork (a black tile with the white glyph, and the bare glyph used as a CSS mask); there is no generator in the repo, so edit them by hand or re-trace the artwork. |
 
 ## What needs credentials
 
@@ -48,3 +48,5 @@ For this to work in practice, all of the following must hold:
    signing credentials are set the update downloads but cannot install, and the manual download link is shown.
 3. **Every release needs** the `.zip`, the `.dmg`, `latest-mac.yml` and the `.blockmap` files from `desktop/dist`,
    and `desktop/package.json` `version` must equal the release tag (without the `v`) and be higher than the one before.
+
+The master icon is a raster. For a sharper icon, replace `desktop/build/icon-source.png` with a native 1024x1024 export of the same art (the script rejects any other size) and run `npm run icons`.
