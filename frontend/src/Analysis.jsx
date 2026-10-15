@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Graph from './Graph.jsx'
+import GraphBoundary from './GraphBoundary.jsx'
 import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
@@ -75,9 +76,9 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
       <Resizer side="left" value={leftW} min={200} max={480} onChange={setLeft} label="Resize paths column" />
 
       <section className="canvas" aria-label="Attack graph">
-        {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={sel} selected={el} showLabels={prefs['appearance.graph_labels']}
+        {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <GraphBoundary resetKey={graph}><Graph graph={graph} highlight={sel} selected={el} showLabels={prefs['appearance.graph_labels']}
                                     onNode={(id) => { setEl({ type: 'node', id }); setInspect('path') }}
-                                    onEdge={(id) => { setEl({ type: 'edge', id }); setInspect('path') }} onClear={() => setEl(null)} />}
+                                    onEdge={(id) => { setEl({ type: 'edge', id }); setInspect('path') }} onClear={() => setEl(null)} /></GraphBoundary>}
       </section>
 
       {inspectorOpen && <Resizer side="right" value={rightW} min={260} max={560} onChange={setRight} label="Resize inspector" />}

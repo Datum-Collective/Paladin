@@ -142,6 +142,13 @@ def main() -> int:
             say(BAD, f"table '{table}' missing: run supabase/migrations/0001..0005 in the SQL editor, in order")
         else:
             say(WARN, f"table '{table}': HTTP {t.status_code} (RLS may be hiding it from an anonymous caller; fine)")
+    # columns added to existing tables: a table check alone reports a deploy that skipped 0005 as ready
+    for table, cols, mig in (("remediations", "kind,job,patch,files,applied,finding_ids", "0005_code_remediation.sql"),):
+        t = httpx.get(f"{url}/rest/v1/{table}?select={cols}&limit=0", headers=headers, timeout=10)
+        if t.status_code in (200, 206):
+            say(OK, f"'{table}' has the {mig[:4]} columns")
+        elif "42703" in t.text or "PGRST204" in t.text or "does not exist" in t.text:
+            say(BAD, f"'{table}' is missing columns from {mig}: run supabase/migrations/{mig} in the SQL editor")
 
     if PRODUCTION:
         production_checks(url)

@@ -177,7 +177,8 @@ def plan(ws: int, edge_ids: list[str]) -> dict:
     patch = "".join(patch_parts)
     if not patch:
         raise FixError("None of the selected findings has an automatic fix that passed its safety checks. "
-                       "See the findings for what to change by hand.")
+                       "Use Assistant → Fix to let the agent fix them (it is re-scanned and tested), or see the "
+                       "findings for what to change by hand.")
     if len(patch) > MAX_PATCH:
         raise FixError("The patch is too large to review safely. Select fewer findings.")
     return {"job": job["id"], "repo": job["repo_url"], "patch": patch, "files": files, "fixed": fixed,

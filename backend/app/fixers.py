@@ -147,6 +147,99 @@ def _syntax_check(path: str, content: str) -> dict:
     return {"name": "syntax not checked for this file type (not syntax-checked)", "passed": None}
 
 
+# ---- structural rewrites: fixes a model is told not to attempt (they cannot keep behaviour byte-identical) but
+# that have one well-known safe form. Each returns (new file, explanation), or None when the code is not that shape.
+_SAFE_ARITH = '''
+
+def _safe_arith(expr):
+    """Evaluate numbers with + - * / // % ** only. Names, calls and attributes are refused (no code runs)."""
+    import ast as _ast
+    import operator as _op
+    ops = {_ast.Add: _op.add, _ast.Sub: _op.sub, _ast.Mult: _op.mul, _ast.Div: _op.truediv,
+           _ast.FloorDiv: _op.floordiv, _ast.Mod: _op.mod, _ast.Pow: _op.pow, _ast.USub: _op.neg, _ast.UAdd: _op.pos}
+
+    def ev(n):
+        if isinstance(n, _ast.Expression):
+            return ev(n.body)
+        if isinstance(n, _ast.Constant) and type(n.value) in (int, float):
+            return n.value
+        if isinstance(n, _ast.BinOp) and type(n.op) in ops:
+            left, right = ev(n.left), ev(n.right)
+            if isinstance(n.op, _ast.Pow) and abs(right) > 100:
+                raise ValueError("exponent too large")
+            return ops[type(n.op)](left, right)
+        if isinstance(n, _ast.UnaryOp) and type(n.op) in ops:
+            return ops[type(n.op)](ev(n.operand))
+        raise ValueError("only arithmetic is allowed")
+
+    if not isinstance(expr, str) or len(expr) > 200:
+        raise ValueError("expression must be a short string")
+    return ev(_ast.parse(expr, mode="eval"))
+'''
+_OS_SYSTEM = re.compile(r"""os\.system\(\s*(?:(['"])([^'"\\{}]*)\1\s*\+\s*([A-Za-z_][\w.]*(?:\[[^\]]+\])?)|"""
+                        r"""f(['"])([^'"\\{}]*)\{([A-Za-z_][\w.]*(?:\[[^\]]+\])?)\}\4)\s*\)""")
+_SECRET_NAME = re.compile(r"(?i)(api_?key|token|secret|passw(or)?d|signature|digest|hmac)")
+_TIMING_IF = re.compile(r"^(\s*)if\s+(.+?)\s*(!=|==)\s*([A-Za-z_][\w.]*)\s*:\s*$")
+_SHELL_RULES = ("shell-injection", "ai-command-execution")
+_EVAL_RULES = ("code-exec", "ai-injection", "ai-command-execution")
+_TIMING_RULES = ("ai-auth", "ai-crypto", "timing-compare")
+
+
+def _imports(content: str, mods: list[str]) -> str:
+    """Add `import x` after the module docstring and leading imports, for modules not imported yet."""
+    import ast
+    need = [m for m in mods if not re.search(rf"^\s*import {m}\b|^\s*from {m}\b", content, re.M)]
+    if not need:
+        return content
+    try:
+        body = ast.parse(content).body
+    except SyntaxError:
+        return content
+    last = 0
+    for i, node in enumerate(body):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) or (i == 0 and isinstance(node, ast.Expr)):
+            last = node.end_lineno
+        else:
+            break
+    lines = content.split("\n")
+    return "\n".join(lines[:last] + [f"import {m}" for m in need] + lines[last:])
+
+
+def _structural(content: str, f: dict) -> tuple[str, str] | None:
+    if not f["file"].endswith(".py"):
+        return None
+    lines = content.split("\n")
+    # earlier fixes in this file may have added import lines above: prefer the flagged line by its hash, then nearby
+    h = f.get("line_hash")
+    order = [i for i, ln in enumerate(lines) if h and codescan.line_hash(ln) == h]
+    order += [f["line"] - 1 + d for d in (0, 1, -1, 2, -2, 3, -3, 4, -4)]
+    for i in order:
+        if not 0 <= i < len(lines):
+            continue
+        ln, nl = lines[i], lines[:]
+        m = _OS_SYSTEM.search(ln)
+        if f["rule"] in _SHELL_RULES and m:
+            lit, var = (m[2], m[3]) if m[1] else (m[5], m[6])
+            nl[i] = (ln[:m.start()] + f"subprocess.run([*shlex.split({lit.strip()!r}), {var}], check=False).returncode"
+                     + ln[m.end():])
+            return (_imports("\n".join(nl), ["shlex", "subprocess"]),
+                    "argument list instead of a shell: input can no longer add commands (still validate the value)")
+        if f["rule"] in _EVAL_RULES and re.search(r"(?<![\w.])eval\(", ln):
+            nl[i] = re.sub(r"(?<![\w.])eval\(", "_safe_arith(", ln)
+            out = "\n".join(nl)
+            if "def _safe_arith(" not in out:
+                out = out.rstrip("\n") + "\n" + _SAFE_ARITH
+            return out, "eval replaced by an arithmetic-only evaluator: input can no longer run code"
+        m = _TIMING_IF.match(ln)
+        if f["rule"] in _TIMING_RULES and m and (_SECRET_NAME.search(m[4]) or _SECRET_NAME.search(m[2])):
+            ind, a, op, b = m[1], m[2], m[3], m[4]
+            cmp = f"hmac.compare_digest(str(_given).encode(), str({b}).encode())"
+            cond = f"(_given := {a}) is None or not {cmp}" if op == "!=" else f"(_given := {a}) is not None and {cmp}"
+            nl[i] = f"{ind}if {cond}:"
+            return _imports("\n".join(nl), ["hmac"]), "constant-time comparison (hmac.compare_digest)"
+    return None
+
+
 def try_fix(content: str, f: dict) -> dict | None:
     """Return {content, method, explanation, checks} for an accepted patch, or None. Every check that decided
     acceptance is returned by name so a reviewer can see exactly what was verified (and what was not)."""
@@ -164,6 +257,10 @@ def try_fix(content: str, f: dict) -> dict | None:
                 nl = lines[:]
                 nl[idx] = new_line
                 candidates.append(("rule", "\n".join(nl), f"deterministic rewrite for {rule}"))
+    if not candidates:
+        st = _structural(content, f)
+        if st:
+            candidates.append(("rule", st[0], st[1]))
     edit = None if candidates else _ai_edit(content, f)
     if edit:
         candidates.append(("haiku", edit[0], edit[1]))
@@ -185,8 +282,15 @@ def try_fix(content: str, f: dict) -> dict | None:
             ok = new_content != content and total_after <= before_total and changed
         checks.append({"name": "no new findings introduced", "passed": total_after <= before_total})
         if method == "haiku":
+            # compare with the file before the edit: an unrelated finding elsewhere in the same file (still open,
+            # or fixed by a separate patch) must not block a correct fix here. The edit's own text was checked in
+            # _ai_edit, so this only has to show the edit did not add or keep a new tainted call.
+            tainted_before = len(STILL_TAINTED.findall(content))
+            tainted_after = len(STILL_TAINTED.findall(new_content))
+            target = rule in ("code-exec", "shell-injection") or rule.startswith(("ai-command", "ai-injection"))
             checks.append({"name": "user input not left in an executor",
-                           "passed": not STILL_TAINTED.search(new_content)})
+                           "passed": tainted_after < tainted_before if target and tainted_before else
+                           tainted_after <= tainted_before})
         if ok and all(c["passed"] is not False for c in checks):
             return {"content": new_content, "method": method, "explanation": why, "checks": checks}
     return None

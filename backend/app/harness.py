@@ -24,6 +24,7 @@ URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
 AUTHOR = ("Attack Path Compiler", "apc@users.noreply.github.com")
 _threads: dict[int, threading.Thread] = {}
+_start_lock = threading.Lock()
 _cancels: dict[int, threading.Event] = {}
 
 
@@ -316,14 +317,15 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
         raise RuntimeError(settings.SERVERLESS_SCAN_MESSAGE)
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
-    busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")
-            if effective_state(r) in RUNNING]
-    if busy:
-        raise RuntimeError("a job is already running for this workspace")
-    now = time.time()
-    jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now, "updated": now,
-                               "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
-                      returning="id")[0]["id"]
+    with _start_lock:   # "is a scan running?" and "record this one" must be one step, or two clicks start two
+        busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)},
+                                       columns="id,state,updated") if effective_state(r) in RUNNING]
+        if busy:
+            raise RuntimeError("a job is already running for this workspace")
+        now = time.time()
+        jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now,
+                                   "updated": now, "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
+                          returning="id")[0]["id"]
     # the thread keeps this request's Supabase session (context copy), so its writes are still the user's own
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(_run, ws, jid, owner, repo, clone_url, token), daemon=True)
