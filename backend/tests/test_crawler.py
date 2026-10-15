@@ -205,3 +205,26 @@ def test_ai_call_retries_rate_limits_and_does_not_retry_auth(monkeypatch):
     monkeypatch.setattr(ai.httpx, "post", lambda *a, **k: (n.append(1), httpx.Response(401))[1])
     assert ai.call("s", "u") == (None, "auth") and len(n) == 1
     assert ai.call("s", "u", cancelled=lambda: True) == (None, "cancelled")
+
+
+def test_related_excerpts_are_not_dropped_for_being_larger_than_the_budget():
+    big = "\n".join(f"line_{i} = {i}  # padding to make this file long enough" for i in range(1, 400))
+    text = crawler._excerpt("app/big.py", big, [200], 1500)
+    assert "200|" in text and len(text) <= 1500 + len("--- app/big.py\n")
+
+
+def test_unparseable_replies_are_failures_and_never_cached(tmp_path, monkeypatch):
+    keys.set_many({"anthropic": "k"})
+    monkeypatch.setattr(crawler.ai, "call", lambda *a, **k: ('Sure! [{"file": "app/db.py", "line": 5, "quote": ', ""))
+    idx = crawler.index(FILES)
+    out, stats = crawler.review(BY, idx, crawler.reach(idx), [], cache_dir=tmp_path)
+    assert out == [] and stats["failed"].get("invalid", 0) >= 1 and stats["files_reviewed"] == 0
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_vendored_code_does_not_create_entry_points_but_manifests_still_count(monkeypatch):
+    monkeypatch.setattr(crawler.ai, "call", lambda *a, **k: ("[]", ""))
+    files = FILES + [{"path": "node_modules/express/example/app.js", "content": "app.get('/x', (q, r) => r.send(1))\n"}]
+    _, _, _, _, repo_map = crawler.analyze(files)
+    assert all("node_modules" not in e["file"] for e in repo_map["entries"])
+    assert repo_map["dependencies"] == 3

@@ -74,12 +74,18 @@ def messages(ws: int, cid: int) -> list[dict]:
     return [_shape(r, now) for r in rows]
 
 
+HISTORY_ROWS = 80      # the newest rows only: a long conversation never downloads (or sends) its whole past
+
+
 def history(ws: int, cid: int) -> list[dict]:
     """What the model sees: finished turns only, in order. A failed or empty reply is left out, and consecutive user
     turns (a reply that failed in between) are merged so the conversation still alternates."""
+    get(ws, cid)
+    rows = supa.select("messages", {"conversation": supa.eq(cid), "ws": supa.eq(ws)}, order="id.desc", limit=HISTORY_ROWS)
+    now = time.time()
     out: list[dict] = []
-    for m in messages(ws, cid):
-        if m["role"] == "assistant" and (m["status"] in ("error",) or not m["content"].strip()):
+    for m in (_shape(r, now) for r in reversed(rows)):
+        if m["role"] == "assistant" and (m["status"] in ("error", "interrupted") or not m["content"].strip()):
             continue
         if out and out[-1]["role"] == m["role"]:
             out[-1] = {"role": m["role"], "content": out[-1]["content"] + "\n\n" + m["content"]}
@@ -102,7 +108,7 @@ def add_user(ws: int, cid: int, content: str, client_id: str | None) -> dict:
                                    "created": now, "updated": now})[0]
     patch = {"updated": now}
     if conv["title"] == DEFAULT_TITLE:
-        patch["title"] = _title(content)[:60]
+        patch["title"] = _title(assistant.redact(content))[:60]
     supa.update("conversations", {"id": supa.eq(cid), "ws": supa.eq(ws)}, patch, returning=None)
     return _shape(row, now)
 

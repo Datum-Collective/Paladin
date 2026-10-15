@@ -167,6 +167,9 @@ async def chat(b: ChatBody, request: Request, u: dict = Depends(auth.require_use
         if not hist or hist[-1]["role"] != "user":
             raise HTTPException(409, "There is no unanswered question to retry.")
         msgs = assistant.clean_messages(hist[-assistant.MAX_MESSAGES:])
+        msgs = [{**m, "content": m["content"][:assistant.MAX_CONTENT]} for m in msgs]
+        while msgs and sum(len(m["content"]) for m in msgs) > assistant.MAX_TOTAL and len(msgs) > 1:
+            msgs.pop(0)                       # oldest first; the new question is always kept
         while msgs and msgs[0]["role"] != "user":
             msgs.pop(0)
         mid = await asyncio.to_thread(conversations.start_reply, ws, cid, {"provider": b.provider, "model": b.model})

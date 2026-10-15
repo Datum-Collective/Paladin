@@ -162,3 +162,38 @@ def test_retry_answers_the_stored_question_without_storing_it_again(client, monk
     assert msgs[-1]["content"] == "recovered"
     # nothing left to retry once it is answered
     assert ask(client, cid, "what now?", retry=True)[0] == 409
+
+
+def test_interrupted_reply_can_be_asked_again_and_titles_never_hold_a_key(client, world, monkeypatch):
+    sign_in(client, ALICE)
+    keys.set_many({"anthropic": "k"})
+    monkeypatch.setattr(anthropic_api, "TRANSPORT", httpx.MockTransport(answer("second try")))
+    cid = client.post("/api/conversations", json={}).json()["id"]
+    ws = client.get("/api/workspaces").json()["active"]
+    ask(client, cid, "why does sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX fail?")
+    title = client.get("/api/conversations").json()["conversations"][0]["title"]
+    assert "ABCDEFGHIJKLMNOPQRSTUVWX" not in title
+    # a later reply that was cut off mid-stream
+    old = time.time() - 600
+    world.db.add("messages", {"ws": ws, "conversation": cid, "user_id": ALICE, "role": "user", "content": "and now?",
+                              "status": "complete", "created": old, "updated": old})
+    world.db.add("messages", {"ws": ws, "conversation": cid, "user_id": ALICE, "role": "assistant", "content": "The wor",
+                              "status": "streaming", "created": old, "updated": old})
+    assert ask(client, cid, "and now?", retry=True)[0] == 200
+
+
+def test_stored_history_is_bounded_before_it_reaches_the_provider(client, world, monkeypatch):
+    sign_in(client, ALICE)
+    keys.set_many({"anthropic": "k"})
+    sent = []
+    monkeypatch.setattr(anthropic_api, "TRANSPORT", httpx.MockTransport(
+        lambda r: (sent.append(json.loads(r.content)["messages"]), answer("ok")(r))[1]))
+    cid = client.post("/api/conversations", json={}).json()["id"]
+    ws = client.get("/api/workspaces").json()["active"]
+    t = time.time() - 1000
+    for i in range(30):
+        world.db.add("messages", {"ws": ws, "conversation": cid, "user_id": ALICE, "role": "user" if i % 2 == 0 else "assistant",
+                                  "content": "x" * 7000, "status": "complete", "created": t + i, "updated": t + i})
+    assert ask(client, cid, "latest question")[0] == 200
+    total = sum(len(m["content"]) for m in sent[0])
+    assert total <= 60000 + 8000 and sent[0][-1]["content"].endswith("latest question") and sent[0][0]["role"] == "user"

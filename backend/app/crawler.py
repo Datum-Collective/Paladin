@@ -267,25 +267,33 @@ def _numbered(lines: list[str], lo: int, hi: int) -> str:
 
 
 def _windows(lines: list[str], hot: list[int], budget: int) -> str:
-    """Whole file if it fits, else the regions around hotspots (each line keeps its real number)."""
+    """Whole file if it fits, else the regions around hotspots (each line keeps its real number). The radius shrinks
+    until the regions fit, so the hotspots themselves are never the part that gets cut."""
     full = _numbered(lines, 1, len(lines)) if lines else ""
     if len(full) <= budget:
         return full
-    spans: list[list[int]] = []
-    for h in sorted(set(hot)) or [1]:
-        lo, hi = max(1, h - 30), min(len(lines), h + 30)
-        if spans and lo <= spans[-1][1] + 1:
-            spans[-1][1] = max(spans[-1][1], hi)
-        else:
-            spans.append([lo, hi])
-    out, used = [], 0
-    for lo, hi in spans:
-        chunk = _numbered(lines, lo, hi)
-        if used + len(chunk) > budget:
-            break
-        out.append(chunk)
-        used += len(chunk)
-    return "\n...\n".join(out)
+    pts = sorted(set(hot)) or [1]
+    best = ""
+    for radius in (30, 15, 8, 4, 2, 0):
+        spans: list[list[int]] = []
+        for h in pts:
+            lo, hi = max(1, h - radius), min(len(lines), h + radius)
+            if spans and lo <= spans[-1][1] + 1:
+                spans[-1][1] = max(spans[-1][1], hi)
+            else:
+                spans.append([lo, hi])
+        out, used = [], 0
+        for lo, hi in spans:
+            chunk = _numbered(lines, lo, hi)
+            if used + len(chunk) + 5 > budget:
+                break
+            out.append(chunk)
+            used += len(chunk) + 5
+        if out:
+            best = "\n...\n".join(out)
+            if len(out) == len(spans):
+                return best                      # every hotspot fits at this radius
+    return best[:budget]
 
 
 def _excerpt(path: str, content: str, focus: list[int], budget: int) -> str:
@@ -420,9 +428,11 @@ def review(files: dict, idx: dict, chains: dict, static: list[dict], cancelled=l
             return path, None, err, False
         m = re.search(r"\[.*\]", text, re.S)
         try:
-            items = json.loads(m.group(0)) if m else []
+            if not m:
+                raise ValueError("no JSON array in the reply")
+            items = json.loads(m.group(0))
         except ValueError:
-            items = []
+            return path, None, "invalid", False   # a truncated or garbled reply is a failure, never cached as "clean"
         _cache_put(cache_dir, key, items)
         return path, items, "", False
 
@@ -484,8 +494,12 @@ def analyze(all_files: list[dict], cancelled=lambda: False, progress=lambda m: N
     status (confirmed | potential), impact and evidence."""
     kept = codescan.accept_files(all_files)
     by_path = {f["path"]: f["content"] for f in kept}
-    progress(f"indexing {len(all_files)} files: routes, auth checks, sensitive calls, imports, dependencies")
-    idx = index(all_files)
+    # what the scan covers (no vendored or generated code), plus dependency manifests, which are not source files
+    manifests = [f for f in all_files if PurePosixPath(f["path"]).name in MANIFESTS
+                 and not any(d in f["path"].lower() for d in codescan.SKIP_DIRS)]
+    indexed = kept + [m for m in manifests if m["path"] not in by_path]
+    progress(f"indexing {len(indexed)} files: routes, auth checks, sensitive calls, imports, dependencies")
+    idx = index(indexed)
     if cancelled():
         raise InterruptedError("scan cancelled")
     chains = reach(idx)

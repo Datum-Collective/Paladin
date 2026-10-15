@@ -50,6 +50,9 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
   const [msgs, setMsgs] = useState([])
   const [convs, setConvs] = useState(null)                   // null while loading
   const [cid, setCid] = useStored(`assistant-conversation-${workspaceId || 0}`, null)
+  const cidRef = useRef(null)
+  const sentRef = useRef(false)      // the user has sent a message in this view
+  cidRef.current = cid
   const [loadErr, setLoadErr] = useState('')
   const [editing, setEditing] = useState(null)               // { id, title } while renaming
   const [confirmDel, setConfirmDel] = useState(null)
@@ -87,7 +90,10 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
   useEffect(() => {
     loadConvs().then((list) => {
       if (!list) return
-      if (!list.some((c) => c.id === cid)) setCid(list[0] ? list[0].id : null)    // stored id gone: newest instead
+      const now = cidRef.current          // read at answer time: the user may have started a chat meanwhile
+      if (now !== null && list.some((c) => c.id === now)) return
+      if (now === null && (skipLoad.current || sentRef.current)) return   // a chat is already being started
+      setCid(list[0] ? list[0].id : null)
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   // the selected conversation's messages always come from storage, so navigating away and back loses nothing
@@ -105,7 +111,7 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
     const ac = new AbortController()
     abort.current = ac
     setBusy(true)
-    setMsgs((m) => [...(retry ? m.filter((x, i) => !(i === m.length - 1 && x.role === 'assistant' && x.error)) : [...m, { role: 'user', content: text }]),
+    setMsgs((m) => [...(retry ? m.filter((x, i) => !(i === m.length - 1 && x.role === 'assistant' && (x.error || x.interrupted))) : [...m, { role: 'user', content: text }]),
       { role: 'assistant', content: '', streaming: true }])
     const patch = (fn) => setMsgs((m) => { const c = [...m]; c[c.length - 1] = fn(c[c.length - 1]); return c })
     const clientId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
@@ -125,6 +131,7 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
     const t = (text ?? input).trim()
     if (!t || !ready) return
     setInput('')
+    sentRef.current = true
     let conv = cid
     if (!conv) {
       try { conv = (await api.createConversation()).id } catch (e) { setLoadErr(e.message); setInput(t); return }
