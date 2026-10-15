@@ -1070,3 +1070,22 @@ kbd { background: var(--bg-3); border-radius: var(--r-s); box-shadow: none; font
 .stage.done .stage-dot { background: var(--ok); border-color: var(--ok); color: #fff; }
 .stage.failed .stage-dot { background: var(--bad); border-color: var(--bad); color: #fff; }
 .stage.current .stage-dot { border-color: var(--accent); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+
+/* provider setup inside the welcome tour: the dialog's flow without its chrome */
+.setup-embedded { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.setup-embedded h2 { font-size: 15px; margin: 0 0 4px; }
+.setup-embedded .setup-cards { margin-top: 8px; }
+.setup-embedded .setup-models { max-height: 180px; }
+.setup-progress { list-style: none; margin: 0 0 4px; padding: 0; display: flex; gap: 14px; font-size: 11px; color: var(--text-2); }
+.setup-progress li.on { color: var(--text); font-weight: 600; } .setup-progress li.done { color: var(--ok); }
+.ob-card.ob-setup { padding: 16px; }
+/* the tour's controls and surfaces on the same three radii and control heights as the app */
+.art, .ob-card, .ob-choice, .ob-summary, .ob-tab { border-radius: var(--r-l); }
+.ob-ico { border-radius: var(--r-m); }
+.bubble { border-radius: var(--r-l); }
+.ob-cta, .ob-pill, .ob-next { border-radius: var(--r-m); }
+.ob-next { height: 36px; min-height: 36px; padding: 0 18px; font-size: 13px; }
+.ob-back { border-radius: var(--r-m); width: 36px; height: 36px; min-height: 36px; }
+.ob-row input { border-radius: var(--r-m); height: 36px; }
+.ob-prov, .ob-choice { border-width: 1px; }
+.art-chip, .ob-status { border-radius: var(--r-s); }

@@ -47,7 +47,6 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); host.remove(); delete window.paladin })
 
 async function toKeyStep() {
-  await click(btn('Continue')); await click(btn('Continue'))   // welcome -> how -> provider
   await click(btn('Continue'))                                  // provider -> key
 }
 
@@ -103,7 +102,7 @@ describe('setup flow', () => {
     await act(async () => { root.render(<Setup config={{ desktop: true, providers: {} }} onClose={vi.fn()} onOpenAssistant={vi.fn()} />) })
     await tick()
     mocks.api.validate.mockResolvedValueOnce({ ok: false, error: { kind: 'network', message: 'offline', hint: '' } })
-    await click(btn('Continue')); await click(btn('Continue')); await click(btn('Continue'))
+    await click(btn('Continue'))
     await typeKey('sk-ant-api03-' + 'q'.repeat(30))
     await click(btn('Save and check key'))
     expect(host.textContent).toContain('offline')
@@ -116,5 +115,20 @@ describe('setup flow', () => {
     await click(btn('Set up later'))
     expect(prefsSet).toHaveBeenCalledWith('general.setup_skipped', true)
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('embedded in the welcome tour', () => {
+  it('runs the same validated flow and reports completion', async () => {
+    const onComplete = vi.fn()
+    await act(async () => { root.render(<Setup embedded config={{ desktop: true, providers: {} }} onClose={vi.fn()} onOpenAssistant={vi.fn()} onComplete={onComplete} />) })
+    await tick()
+    expect(host.querySelector('.scrim')).toBeNull()
+    await click(btn('Continue'))
+    await typeKey('sk-ant-api03-' + 'e'.repeat(30))
+    await click(btn('Save and check key'))
+    await click(btn('Test connection'))
+    expect(onComplete).toHaveBeenCalledWith({ provider: 'anthropic', model: 'm-big' })
+    expect(host.textContent).toContain('Connected to Claude')
   })
 })

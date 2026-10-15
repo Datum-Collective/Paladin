@@ -236,6 +236,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const isNew = wsl.loaded && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
   const showWelcome = prefsReady && !prefs['general.welcome_seen'] && isNew
   const finishWelcome = useCallback(async (choice, opts) => {
+    checkedSetup.current = true      // the tour already offered provider setup; never open it again straight after
     await setPref('general.welcome_seen', true)
     if (opts && opts.keepOpen) return
     if (choice === 'sample') { setView('analysis'); run('play') }

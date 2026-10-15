@@ -2,7 +2,7 @@
 // until that test call succeeds with the saved key and chosen model.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Network, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, X } from 'lucide-react'
 import { api } from './api.js'
 import { keyProblem, setupAdvice } from './lib.js'
 import { usePrefs } from './prefs.jsx'
@@ -18,7 +18,7 @@ export const PROVIDERS = [
     blurb: 'GPT models, if that is the account you already have.' },
 ]
 const STEPS = [
-  { id: 'welcome', label: 'Welcome' }, { id: 'how', label: 'How it works' }, { id: 'provider', label: 'Provider' },
+  { id: 'provider', label: 'Provider' },
   { id: 'key', label: 'API key' }, { id: 'model', label: 'Model' }, { id: 'test', label: 'Test' }, { id: 'done', label: 'Ready' },
 ]
 const IDS = STEPS.map((s) => s.id)
@@ -40,34 +40,6 @@ function ErrorBox({ error }) {
       <div><b>{error.message}</b>{error.hint && <span className="muted"> {error.hint}</span>}
         {error.request_id && <div className="muted small mono">Request {error.request_id}</div>}</div>
     </div>
-  )
-}
-
-function Welcome() {
-  return (
-    <>
-      <div className="setup-mark"><Sparkles size={22} aria-hidden="true" /></div>
-      <h2 id="setup-title" tabIndex={-1}>Welcome to Paladin</h2>
-      <p>Paladin turns the signals in your logs and code into attack paths, then shows the cheapest fixes that break them.</p>
-      <p className="muted">Setup takes about two minutes. The only thing it needs is an API key for the model that explains findings
-        and answers your questions. Everything else works without one.</p>
-    </>
-  )
-}
-
-function How() {
-  const items = [
-    [Network, 'See the paths', 'Logs and repositories become a graph of how an attacker could move, ranked by risk.'],
-    [ShieldCheck, 'Fix what matters', 'Paladin proposes the smallest set of changes that breaks the dangerous paths, and verifies them.'],
-    [Sparkles, 'Ask the assistant', 'A model you choose explains paths and reviews findings, using only what Paladin computed. Secrets are masked first.'],
-  ]
-  return (
-    <>
-      <h2 id="setup-title" tabIndex={-1}>What Paladin does</h2>
-      <ul className="setup-feats">
-        {items.map(([I, t, d]) => <li key={t}><span className="setup-feat-ic"><I size={18} aria-hidden="true" /></span><div><b>{t}</b><p className="muted">{d}</p></div></li>)}
-      </ul>
-    </>
   )
 }
 
@@ -245,10 +217,10 @@ function Done({ provider, model, openAssistant, finish }) {
 }
 
 /** Props: config, onClose(), onOpenAssistant(). Closing before the test passes records "set up later". */
-export default function Setup({ config, onClose, onOpenAssistant }) {
+export default function Setup({ config, onClose, onOpenAssistant, embedded = false, onComplete }) {
   const { prefs, set } = usePrefs()
   const reduce = useReducedMotion()
-  const [step, setStep] = useStored('setup-step', 'welcome')
+  const [step, setStep] = useStored('setup-step', 'provider')
   const [provider, setProvider] = useStored('setup-provider', prefs['assistant.provider'] || 'anthropic')
   const [model, setModel] = useState(prefs['assistant.model'] || '')
   const [env, setEnv] = useState({ desktop: Boolean(config.desktop && getBridge()), stored: null, server: config.providers || {} })
@@ -257,7 +229,7 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
   const root = useRef(null)
   const idx = Math.max(0, IDS.indexOf(step))
   // an interrupted run resumes at the provider step: the test result and model choice are not remembered
-  useEffect(() => { if (step !== 'welcome' && step !== 'how' && step !== 'provider') setStep('provider') }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (step !== 'provider') setStep('provider') }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(async () => {
     const [stored, list] = await Promise.all([
@@ -279,11 +251,11 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
   const prev = () => go(IDS[Math.max(idx - 1, 0)])
 
   const close = useCallback(async () => {
-    setStep('welcome')
+    setStep('provider')
     onClose()                                   // always leave, even if recording "later" fails
     if (step !== 'done') { try { await set('general.setup_skipped', true) } catch { /* preference stays unset */ } }
   }, [step, set, setStep, onClose])
-  const finish = async () => { setStep('welcome'); onClose() }
+  const finish = async () => { setStep('provider'); onClose() }
 
   useEffect(() => {
     const el = root.current && root.current.querySelector('#setup-title')
@@ -306,6 +278,7 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
       }
       setTest({ running: false, result })
       setStep('done')
+      if (onComplete) onComplete({ provider, model })
       return
     }
     setTest({ running: false, result })
@@ -316,11 +289,10 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
   // Esc leaves; Enter on a step with a single obvious action continues
   const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }
 
-  const canNext = { welcome: true, how: true, provider: Boolean(provider), key: keyOk || configured(provider), model: Boolean(model) }[step]
+  const canNext = { provider: Boolean(provider), key: keyOk || configured(provider), model: Boolean(model) }[step]
   const needsKeyCheck = step === 'key' && configured(provider) && !keyOk
   const advice = setupAdvice(test.result && test.result.error)
   const stepBody = {
-    welcome: <Welcome />, how: <How />,
     provider: <ProviderStep value={provider} onChange={(p) => { setProvider(p); setModel('') }} keyState={keyState} />,
     key: <KeyStep provider={provider} env={{ ...env, refresh }} onVerified={() => { setKeyOk(true); setStep('model') }} back={() => go('provider')} />,
     model: <ModelStep provider={provider} model={model} onPick={setModel} />,
@@ -328,6 +300,28 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
     done: <Done provider={provider} model={model} openAssistant={() => { finish(); onOpenAssistant() }} finish={finish} />,
   }[step]
 
+  const body = <Reveal k={step}>{stepBody}</Reveal>
+  if (embedded) {
+    return (
+      <div className="setup-embedded" ref={root}>
+        <ol className="setup-progress" aria-label="Model setup progress">
+          {STEPS.slice(0, -1).map((s, n) => <li key={s.id} className={n === idx ? 'on' : n < idx ? 'done' : ''}>{s.label}</li>)}
+        </ol>
+        {step === 'done' ? (
+          <div className="setup-status" role="status"><CheckCircle2 size={18} aria-hidden="true" /> Connected to {PROVIDERS.find((x) => x.id === provider).name} · <span className="mono">{model}</span></div>
+        ) : body}
+        {step !== 'done' && step !== 'key' && (
+          <div className="actions">
+            {idx > 0 && step !== 'test' && <button onClick={prev}><ArrowLeft size={14} aria-hidden="true" />Back</button>}
+            {step === 'test' && !test.running && <button onClick={prev}><ArrowLeft size={14} aria-hidden="true" />Back</button>}
+            {step !== 'test' && <button className="primary" disabled={!canNext || needsKeyCheck} onClick={next}>
+              {step === 'model' ? 'Test connection' : 'Continue'}<ArrowRight size={14} aria-hidden="true" /></button>}
+          </div>
+        )}
+        {step === 'key' && configured(provider) && !keyOk && null}
+      </div>
+    )
+  }
   return (
     <div className="scrim setup-scrim" onKeyDown={onKey}>
       <div className="setup" role="dialog" aria-modal="true" aria-labelledby="setup-title" ref={root}>
@@ -345,7 +339,7 @@ export default function Setup({ config, onClose, onOpenAssistant }) {
           <div className="setup-bar" aria-hidden="true"><motion.span animate={{ width: `${(idx / (STEPS.length - 1)) * 100}%` }} transition={reduce ? { duration: 0 } : { duration: 0.3 }} /></div>
           <button className="tool setup-x" onClick={close} aria-label="Close setup"><X size={16} /></button>
           <div className="setup-body" aria-live="off">
-            <Reveal k={step}>{stepBody}</Reveal>
+            {body}
           </div>
           {step !== 'done' && step !== 'test' && (
             <footer className="setup-foot">
