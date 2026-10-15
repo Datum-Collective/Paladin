@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections import Counter, deque
 from pathlib import Path, PurePosixPath
 
@@ -402,7 +403,7 @@ def _cache_put(cache_dir: Path | None, key: str, value) -> None:
 
 
 def review(files: dict, idx: dict, chains: dict, static: list[dict], cancelled=lambda: False, progress=lambda m: None,
-           cache_dir: Path | None = None) -> tuple[list[dict], dict]:
+           cache_dir: Path | None = None, on_findings=None) -> tuple[list[dict], dict]:
     stats = {"files_reviewed": 0, "claims": 0, "claims_rejected": 0, "files": [], "truncated": [], "failed": {},
              "cached": 0, "findings": 0, "confirmed": 0}
     if not ai.enabled():
@@ -481,6 +482,8 @@ def review(files: dict, idx: dict, chains: dict, static: list[dict], cancelled=l
                     same["reviewed_by"] = "haiku-crawler"
                     stats["enriched"] = stats.get("enriched", 0) + 1
             progress(f"AI review {done}/{len(targets)}: {path} ({len(good)} finding(s))")
+            if on_findings and (good or stats.get("enriched")):
+                on_findings(out)          # the graph, paths and fixes grow as each file's review lands
     stats["findings"] = len(out)
     stats["confirmed"] = sum(1 for f in out + static if f.get("status") == "confirmed")
     stats["partial"] = bool(stats["failed"]) or done < len(targets)
@@ -489,9 +492,10 @@ def review(files: dict, idx: dict, chains: dict, static: list[dict], cancelled=l
 
 # --- the whole pipeline ------------------------------------------------------------------------------------------
 def analyze(all_files: list[dict], cancelled=lambda: False, progress=lambda m: None,
-            cache_dir: Path | None = None) -> tuple[list[dict], bool, int, dict, dict]:
+            cache_dir: Path | None = None, emit=None) -> tuple[list[dict], bool, int, dict, dict]:
     """Returns (findings, ai_used, files_scanned, stats, repo_map). Findings use codescan's schema plus severity,
-    status (confirmed | potential), impact and evidence."""
+    status (confirmed | potential), impact and evidence. `emit(findings, refs, stage)` is called with the findings so
+    far as soon as each stage produces some, so callers can show results while the scan is still running."""
     kept = codescan.accept_files(all_files)
     by_path = {f["path"]: f["content"] for f in kept}
     # what the scan covers (no vendored or generated code), plus dependency manifests, which are not source files
@@ -519,15 +523,41 @@ def analyze(all_files: list[dict], cancelled=lambda: False, progress=lambda m: N
         progress(dep_note)
     elif idx["dependencies"]:
         progress(f"dependency advisories: {len(deps)} of {len(idx['dependencies'])} pinned packages have published advisories")
-    ai_found, stats = review(by_path, idx, chains, static, cancelled, progress, cache_dir)
-    findings = static + deps + ai_found
-    for n, f in enumerate(findings, 1):
-        f["id"] = f"f{n}"
-        f.setdefault("status", "potential")
-        f.setdefault("severity", "medium")
-        if f["file"] in chains:
-            f["reached_via"] = chains[f["file"]]
-    findings = findings[:codescan.MAX_FINDINGS * 2]
+    cap = codescan.MAX_FINDINGS * 2
+
+    def numbered(ai_so_far: list[dict]) -> list[dict]:
+        # ids follow position (rule hits, advisories, then AI findings in the order they arrive), so a finding keeps
+        # its id from the first emit to the last
+        out = (static + deps + ai_so_far)[:cap]
+        for n, f in enumerate(out, 1):
+            f["id"] = f"f{n}"
+            f.setdefault("status", "potential")
+            f.setdefault("severity", "medium")
+            if f["file"] in chains:
+                f["reached_via"] = chains[f["file"]]
+        return out
+
+    def refs_for(fs: list[dict]) -> dict:
+        have = {f["file"] for f in fs}
+        return {p: c for p, c in chains.items() if p in have}
+
+    last_emit = [0.0]
+
+    def push(ai_so_far: list[dict], stage: str, force: bool = False) -> None:
+        if not emit:
+            return
+        now = time.monotonic()
+        if not force and now - last_emit[0] < 1.0:
+            return                              # a burst of reviews is one update, not ten
+        last_emit[0] = now
+        fs = numbered(ai_so_far)
+        emit(fs, refs_for(fs), stage)
+
+    push([], "rules", force=True)
+    ai_found, stats = review(by_path, idx, chains, static, cancelled, progress, cache_dir,
+                             on_findings=lambda found: push(found, "review"))
+    findings = numbered(ai_found)
+    push(ai_found, "review", force=True)
     stats.update(triage=triaged, lines=sum(c.count("\n") + 1 for c in by_path.values()), dependency_note=dep_note,
                  advisories=len(deps))
     repo_map = {"languages": idx["languages"], "top_dirs": idx["top_dirs"],
@@ -535,5 +565,5 @@ def analyze(all_files: list[dict], cancelled=lambda: False, progress=lambda m: N
                             for p in idx["entries"][:40]],
                 "dependencies": len(idx["dependencies"]),
                 "manifests": sorted({d["file"] for d in idx["dependencies"]}),
-                "reach": {p: c for p, c in chains.items() if any(f["file"] == p for f in findings)}}
+                "reach": refs_for(findings)}
     return findings, bool(triaged or stats["files_reviewed"]), len(kept), stats, repo_map

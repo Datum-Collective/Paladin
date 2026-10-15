@@ -5,7 +5,7 @@ import { useToast } from './toast.jsx'
 /** All server state for the active workspace plus the actions that change it. */
 export function useWorkspace(user, onExpired, activeId) {
   const toast = useToast()
-  const [data, setData] = useState({ graph: null, paths: [], fixes: null, events: null, rems: [] })
+  const [data, setData] = useState({ graph: null, paths: [], fixes: null, events: null, rems: [], scan: null })
   const [loaded, setLoaded] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [canPlay, setCanPlay] = useState(false)
@@ -17,8 +17,11 @@ export function useWorkspace(user, onExpired, activeId) {
   const refresh = useCallback(async () => {
     const mine = ++seq.current // only the newest response may write, so out-of-order replies cannot show stale data
     try {
-      const [graph, p, fixes, r, events] = await Promise.all([api.graph(), api.paths(), api.fixes(), api.remediations(), api.events()])
-      if (alive.current && mine === seq.current) setData({ graph, paths: p.paths, fixes, events, rems: r.remediations })
+      const [graph, p, fixes, r, events, jobs] = await Promise.all([api.graph(), api.paths(), api.fixes(), api.remediations(),
+        api.events(), api.hJobs().catch(() => ({ jobs: [] }))])      // the scan banner must never block the results
+      if (alive.current && mine === seq.current) {
+        setData({ graph, paths: p.paths, fixes, events, rems: r.remediations, scan: (jobs.jobs && jobs.jobs[0]) || null })
+      }
     } catch (e) {
       if (e.status === 401 && onExpired) onExpired()
       else toast(`Could not refresh: ${e.message}`, 'bad')

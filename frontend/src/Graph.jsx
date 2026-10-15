@@ -46,6 +46,7 @@ export default function Graph({ graph, highlight, selected, onNode, onEdge, onCl
   const ref = useRef(null)
   const cy = useRef(null)
   const cb = useRef({})
+  const orient = useRef('LR')
   cb.current = { onNode, onEdge, onClear }
 
   useEffect(() => {
@@ -53,13 +54,22 @@ export default function Graph({ graph, highlight, selected, onNode, onEdge, onCl
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onScheme = () => { cy.current.style(theme().style); draw() }
     mq.addEventListener('change', onScheme)
+    const mo = new MutationObserver(onScheme)        // the Theme setting changes data-theme on <html>
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     cy.current.on('tap', 'edge', (e) => cb.current.onEdge && cb.current.onEdge(e.target.id()))
     cy.current.on('tap', 'node', (e) => cb.current.onNode && cb.current.onNode(e.target.id()))
     cy.current.on('tap', (e) => { if (e.target === cy.current && cb.current.onClear) cb.current.onClear() })
     // refit whenever the pane is resized (window, splitter drag, first layout) so the graph never stays tiny
-    const ro = new ResizeObserver(() => { if (cy.current) { cy.current.resize(); cy.current.fit(undefined, 40) } })
+    const ro = new ResizeObserver(() => {
+      if (!cy.current) return
+      cy.current.resize()
+      const el = ref.current
+      const want = el && el.clientHeight > el.clientWidth * 1.15 ? 'TB' : 'LR'
+      if (want !== orient.current) draw()            // the pane changed shape: lay it out the other way
+      else cy.current.fit(undefined, 40)
+    })
     ro.observe(ref.current)
-    return () => { ro.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
+    return () => { ro.disconnect(); mo.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
   }, [])
 
   const graphRef = useRef(null)
@@ -79,7 +89,11 @@ export default function Graph({ graph, highlight, selected, onNode, onEdge, onCl
     ]
     cy.current.elements().remove()
     cy.current.add(els)
-    cy.current.layout({ name: 'dagre', rankDir: 'LR', nodeSep: 56, rankSep: 84, edgeSep: 30,
+    // a tall, narrow pane reads better top to bottom; a wide one left to right (the attack direction either way)
+    const el = ref.current
+    const tall = el && el.clientHeight > el.clientWidth * 1.15
+    orient.current = tall ? 'TB' : 'LR'
+    cy.current.layout({ name: 'dagre', rankDir: orient.current, nodeSep: tall ? 110 : 56, rankSep: tall ? 70 : 84, edgeSep: 30,
       ranker: 'longest-path', fit: true, padding: 40 }).run()
   }
 

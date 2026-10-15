@@ -224,3 +224,11 @@ def test_a_real_local_repository_is_cloned_and_scanned_in_desktop_mode(desktop, 
     job = harness.get(ws, jid)
     assert job["state"] in ("done", "ready"), (job["state"], job["error"], job["log"][-3:])
     assert job["findings"], "the SQL injection in app.py should be found"
+
+
+def test_theme_preference_is_a_closed_choice(client):
+    sign_in(client)
+    assert client.get("/api/prefs").json()["appearance.theme"] == "system"
+    assert client.put("/api/prefs", json={"appearance.theme": "dark"}).json()["appearance.theme"] == "dark"
+    assert client.get("/api/prefs").json()["appearance.theme"] == "dark"
+    assert client.put("/api/prefs", json={"appearance.theme": "solarized"}).status_code == 422

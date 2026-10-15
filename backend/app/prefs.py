@@ -11,6 +11,7 @@ DEFAULTS: dict = {
     "general.welcome_seen": False,        # the first-run setup guide has been completed or skipped
     "workspaces.sort": "recent",          # recent | name | events
     "appearance.density": "comfortable",  # comfortable | compact
+    "appearance.theme": "system",         # system | light | dark
     "appearance.graph_labels": True,
     "diff.wrap": True,
     "diff.font_size": 12,
@@ -22,7 +23,7 @@ DEFAULTS: dict = {
 _ENUM = {
     "general.startup": {"home", "last"}, "general.after_import": {"repository", "analysis"},
     "workspaces.sort": {"recent", "name", "events"},
-    "appearance.density": {"comfortable", "compact"}, "assistant.provider": {"", "anthropic", "openai"},
+    "appearance.density": {"comfortable", "compact"}, "appearance.theme": {"system", "light", "dark"}, "assistant.provider": {"", "anthropic", "openai"},
     "assistant.effort": {"", "low", "medium", "high"},
 }
 _INT = {"diff.font_size": (10, 16)}

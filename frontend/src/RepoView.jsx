@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from './api.js'
-import { looksLikeRepo, scanStages } from './lib.js'
+import { api, downloadText } from './api.js'
+import { looksLikeRepo, scanStages, scanTarget } from './lib.js'
 import DiffView from './DiffView.jsx'
 import Icon from './Icons.jsx'
 
@@ -158,8 +158,7 @@ export default function RepoView({ onDone, onViewPaths }) {
   const failedAt = (j) => (lastLive.current.id === j.id && lastLive.current.state) ||
     (j.findings && j.findings.length ? 'fixing' : j.report && j.report.files_total !== undefined ? 'scanning' : 'cloning')
   // the text to scan again: what was submitted here, else a GitHub owner/name from history, else the stored path
-  const retryTarget = (j) => submitted.current ||
-    (/^[A-Za-z0-9-]+\/[\w.-]+$/.test(j.repo_url) ? `https://github.com/${j.repo_url}` : j.repo_url)
+  const retryTarget = (j) => submitted.current || scanTarget(j.repo_url)
   const openPr = async () => {
     setErr(''); setBusy(true)
     try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
@@ -238,9 +237,11 @@ export default function RepoView({ onDone, onViewPaths }) {
               </div>
               <div className="actions">
                 <button onClick={copy}><Icon name="copy" size={14} /> {copied ? 'Copied' : 'Copy patch'}</button>
-                <a className="btn" href={`/api/harness/jobs/${job.id}/patch`} target="_blank" rel="noreferrer">Download</a>
+                <button onClick={async () => { try { await downloadText(`/api/harness/jobs/${job.id}/patch`, `paladin-fixes-${job.id}.patch`) } catch (e) { setErr(e.message) } }}>
+                  Download Patch</button>
                 {job.state === 'ready' && (
-                  <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}>
+                  <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}
+                          title={cfg.github_enabled ? undefined : 'Pull requests need a connected GitHub account. Download the patch instead.'}>
                     {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}

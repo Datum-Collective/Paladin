@@ -115,7 +115,13 @@ function Appearance() {
   const { prefs, set } = usePrefs()
   return (
     <>
-      <Group title="Layout" footer="Paladin follows the system appearance. Change Light or Dark in System Settings.">
+      <Group title="Theme" footer="System follows your computer’s appearance and changes with it. Light and Dark stay as you set them.">
+        <Row label="Appearance">
+          <Segmented label="Theme" value={prefs['appearance.theme']} onChange={(v) => set('appearance.theme', v)}
+                     options={[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} />
+        </Row>
+      </Group>
+      <Group title="Layout">
         <Row label="Density" help="Compact fits more paths and events on screen.">
           <Segmented label="Density" value={prefs['appearance.density']} onChange={(v) => set('appearance.density', v)}
                      options={[['comfortable', 'Comfortable'], ['compact', 'Compact']]} />

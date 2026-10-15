@@ -402,9 +402,26 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             return
         _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
                   f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
+        # Results of the previous scan of THIS repository stay until the new scan has results of its own (closing the
+        # app, a failed clone or a cancel must never leave the workspace empty). Another repository's are cleared.
+        prev = codescan.report(ws)
+        if prev.get("scanned") and prev.get("repo") != f"{owner}/{repo}":
+            codescan.clear(ws)
+
+        def emit(fs: list[dict], refs: dict, stage: str) -> None:
+            """Results so far, stored while the scan is still running: the graph, paths, fixes and the findings
+            list all update from this (the live stream watches the stored model)."""
+            if cancel_event.is_set():
+                return
+            try:
+                codescan.persist(ws, f"{owner}/{repo}", fs, ai.enabled(), len(kept), refs=refs, job=jid)
+                _upd(jid, findings=json.dumps([{k: v for k, v in f.items() if k != "context"} for f in fs]))
+            except Exception as e:  # noqa: BLE001 - a storage hiccup must not kill the scan; the final write retries
+                log.warning("progressive results not stored: %s", type(e).__name__)
+
         findings, ai_used, n, stats, repo_map = crawler.analyze(
             files, cancelled=cancel_event.is_set, progress=lambda m: _log(jid, m),
-            cache_dir=data_root() / "ai-cache" / str(ws))
+            cache_dir=data_root() / "ai-cache" / str(ws), emit=emit)
         if cancel_event.is_set():
             raise Cancelled()
         rep = coverage(src, kept, findings, stats, ai.enabled())
@@ -416,7 +433,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
                   f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
                   f"{rep['judged_not_exploitable']} judged not exploitable")
         _stage(jid, cancel_event, "fixing")
-        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n, refs=repo_map["reach"])
+        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n, refs=repo_map["reach"], job=jid)
         _upd(jid, ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings, cancel_event.is_set)
         for f in findings:

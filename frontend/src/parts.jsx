@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from './api.js'
+import { api, downloadText } from './api.js'
+import DiffView from './DiffView.jsx'
 import { hhmm, pathLabels } from './lib.js'
 import { KIND_LABEL } from './kinds.js'
 import { useToast } from './toast.jsx'
@@ -146,7 +147,7 @@ export function Fixes({ fixes, onPropose }) {
       <div className="row-top"><b>{title}</b><span className="muted">cost {f.total_cost}</span></div>
       <p className="muted">
         Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
-        {' '}{f.mitigations.map((m) => m.mitigation).filter(Boolean).join(', ')}
+        {' '}{[...new Set(f.mitigations.map((m) => m.mitigation).filter(Boolean))].join(', ')}
       </p>
       <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose Fix</button>
     </div>
@@ -164,63 +165,103 @@ export function Fixes({ fixes, onPropose }) {
   )
 }
 
-export function Remediations({ items, onChange }) {
-  const [open, setOpen] = useState(null)
+const STATE_WORD = { proposed: 'Review', approved: 'Approved', executed: 'Applied', verified: 'Verified', failed: 'Failed',
+  rolled_back: 'Rolled back' }
+const STATE_TONE = { verified: 'ok', failed: 'bad', rolled_back: 'mute', executed: 'info', approved: 'info', proposed: 'warn' }
+
+/** One remediation: what will change (a real diff for code), the buttons for its next step, and what happened. */
+function RemediationCard({ r, open, onToggle, onChange, desktop }) {
   const [detail, setDetail] = useState(null)
-  const [busy, setBusy] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
   const toast = useToast()
+  const code = r.kind === 'code'
+  const remote = code && r.applied && /^https:\/\//.test(r.applied)
+  useEffect(() => {
+    if (!open) return undefined
+    let live = true
+    api.remediation(r.id).then((d) => live && setDetail(d)).catch((e) => live && setErr(e.message))
+    return () => { live = false }
+  }, [open, r.id, r.state])
+  const run = async (action, label) => {
+    setBusy(action); setErr('')
+    try { await api.rstep(r.id, action); toast(label, 'ok'); await onChange() }
+    catch (e) { setErr(e.message) }          // shown on this card, next to the button that caused it
+    finally { setBusy('') }
+  }
+  const save = async () => {
+    try { await downloadText(api.remediationPatchUrl(r.id), `paladin-fix-${r.id}.patch`) } catch (e) { setErr(e.message) }
+  }
+  const files = detail ? detail.files : r.files
+  const fixes = (files || []).flatMap((f) => (f.fixed || []).map((x) => ({ ...x, file: f.path, technique: x.technique || '' })))
+  const primary = {
+    proposed: { action: 'approve', label: 'Approve', done: 'Approved. Nothing has changed yet.' },
+    approved: { action: 'execute', label: code ? (remote ? 'Open Pull Request' : 'Apply to Folder') : 'Execute',
+                done: code ? (remote ? 'Pull request opened' : 'Applied to the folder') : 'Executed' },
+    executed: { action: 'verify', label: remote ? 'Check After Merge' : 'Verify', done: 'Verified' },
+  }[r.state]
+  const what = !code ? 'This closes the steps in the analysed environment only; no real host or file is changed.'
+    : r.state === 'proposed' ? 'Approving does not change any file. The next step applies exactly this diff.'
+      : r.state === 'executed' && remote ? 'Merge the pull request on GitHub, then check. Nothing is marked fixed until the change is in the repository.'
+      : r.state === 'approved' ? (remote ? 'Opens a pull request on the fixes branch with only these files. Your default branch is not touched.'
+        : 'Applies exactly this diff to your folder after checking that the files still match the scan.') : ''
+  return (
+    <div className="card rem-card">
+      <button className="row-btn" onClick={onToggle} aria-expanded={open}>
+        <b>{r.title}</b>
+        <span className={`pill ${STATE_TONE[r.state] || 'info'}`}>{STATE_WORD[r.state] || r.state}</span>
+      </button>
+      <p className="muted small">
+        {code ? `${r.finding_ids.length} finding(s) · ${r.files.length} file(s)` : 'Environment model'}
+        {r.applied ? <> · {remote ? <a href={r.applied} target="_blank" rel="noreferrer">pull request</a> : r.applied}</> : ''}
+      </p>
+      {r.note && <p className="err">{r.note}</p>}
+      {r.risk_before != null && <p className="muted small">Risk {r.risk_before} to {r.risk_after} · dangerous paths {r.paths_before} to {r.paths_after}</p>}
+      {err && <p className="err" role="alert">{err}</p>}
+      {what && <p className="muted small">{what}</p>}
+      <div className="actions">
+        {primary && <button className="primary" disabled={Boolean(busy)} onClick={() => run(primary.action, primary.done)}>
+          {busy === primary.action ? 'Working…' : primary.label}</button>}
+        {['executed', 'verified', 'failed'].includes(r.state) && (
+          <button disabled={Boolean(busy)} onClick={() => run('rollback', 'Rolled back')}>{busy === 'rollback' ? 'Working…' : 'Roll Back'}</button>)}
+        {['proposed', 'approved'].includes(r.state) && (
+          <button disabled={Boolean(busy)} onClick={() => run('rollback', 'Discarded. No file was touched.')}>{busy === 'rollback' ? 'Working…' : 'Discard'}</button>)}
+        {code && r.state === 'proposed' && <button onClick={onToggle}>{open ? 'Hide Diff' : 'Review Diff'}</button>}
+        {code && <button onClick={save}>Download Patch</button>}
+      </div>
+      {open && detail && (
+        <>
+          {code && detail.patch ? <DiffView diff={detail.patch} fixes={fixes} /> : <pre className="runbook">{detail.runbook}</pre>}
+          {code && <pre className="runbook">{detail.runbook}</pre>}
+          {detail.ai_drafted && <p className="muted small">Part of this change was drafted by AI from the code around each finding, then checked.</p>}
+          <h3>History</h3>
+          <ul className="plain small">
+            {detail.audit.map((a, i) => <li key={i}>{a.action} <span className="muted">by {a.actor} {a.detail}</span></li>)}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function Remediations({ items, onChange, desktop }) {
+  const [open, setOpen] = useState(null)
   if (!items.length) {
     return (
       <div className="inspector-empty">
         <Icon name="check" size={22} />
         <p>Nothing in remediation</p>
-        <p className="muted small">Proposed fixes move through approve, execute and verify here, with an audit trail.</p>
+        <p className="muted small">Propose a fix from the Fixes tab. For code findings you review the exact diff, approve it,
+          and Paladin applies it and checks the result.</p>
       </div>
     )
-  }
-  const show = async (id) => {
-    if (open === id) { setOpen(null); return }
-    setOpen(id)
-    try { setDetail(await api.remediation(id)) } catch (e) { toast(e.message, 'bad') }
-  }
-  const step = async (id, action) => {
-    setBusy(id)
-    try { await api.rstep(id, action); if (open === id) setDetail(await api.remediation(id)); onChange() }
-    catch (e) { toast(e.message, 'bad') } finally { setBusy(null) }
   }
   return (
     <div>
       <h3 className="first">Remediation</h3>
       {items.map((r) => (
-        <div key={r.id} className="card">
-          <button className="row-btn" onClick={() => show(r.id)} aria-expanded={open === r.id}>
-            <b>{r.title}</b>
-            <span className={`pill ${r.state === 'verified' ? 'ok' : r.state === 'failed' ? 'bad' : 'info'}`}>{r.state.replace('_', ' ')}</span>
-          </button>
-          {r.note && <p className="err">{r.note}</p>}
-          {r.risk_before != null && (
-            <p className="muted">Risk {r.risk_before} to {r.risk_after} · dangerous paths {r.paths_before} to {r.paths_after}</p>
-          )}
-          <div className="actions">
-            {NEXT_ACTION[r.state] && (
-              <button className="primary" disabled={busy === r.id} onClick={() => step(r.id, STEP[NEXT_ACTION[r.state]])}>
-                {NEXT_ACTION[r.state]}
-              </button>
-            )}
-            {['executed', 'verified', 'failed'].includes(r.state) && (
-              <button disabled={busy === r.id} onClick={() => step(r.id, 'rollback')}>Roll Back</button>
-            )}
-          </div>
-          {open === r.id && detail && (
-            <>
-              <pre className="runbook">{detail.runbook}</pre>
-              {detail.ai_drafted && <p className="muted small">Runbook drafted by AI from the computed facts.</p>}
-              <ul className="plain">
-                {detail.audit.map((a, i) => <li key={i}>{a.action} <span className="muted">by {a.actor} {a.detail}</span></li>)}
-              </ul>
-            </>
-          )}
-        </div>
+        <RemediationCard key={r.id} r={r} open={open === r.id} desktop={desktop}
+                         onToggle={() => setOpen(open === r.id ? null : r.id)} onChange={onChange} />
       ))}
     </div>
   )

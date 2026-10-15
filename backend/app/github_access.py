@@ -572,6 +572,56 @@ async def open_job_pr(u: dict, jid: int) -> dict:
     return await asyncio.to_thread(harness.mark_pr_opened, u["id"], jid, out["pull_request"]["html_url"])
 
 
+async def _fix_ctx(u: dict, repo_full: str) -> "RepoCtx":
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo_full or ""):
+        raise HTTPException(409, "Pull requests are only available for GitHub repositories.")
+    owner, repo = repo_full.split("/", 1)
+    if config.desktop_mode():
+        return await _token_repo(u["user_id"], owner, repo)
+    ctx = await resolve_repo(u["user_id"], owner, repo)
+    if ctx is None:
+        raise HTTPException(409, "Connect this repository through the GitHub App (Integrations) to open pull "
+                                 "requests, or download the patch instead.")
+    return ctx
+
+
+async def read_repo_files(u: dict, repo_full: str, paths: list[str]) -> dict[str, str | None]:
+    """Current content of each file on the default branch; None where the file is gone."""
+    ctx = await _fix_ctx(u, repo_full)
+    out: dict[str, str | None] = {}
+    for p in paths:
+        r = await _call(ctx, "GET", f"/contents/{quote(_validate_path(p, for_write=False), safe='/')}",
+                        params={"ref": ctx.default_branch})
+        if r.status_code == 404:
+            out[p] = None
+            continue
+        if r.status_code != 200:
+            raise _upstream_error("read file", r)
+        d = r.json()
+        if not isinstance(d, dict) or d.get("encoding") != "base64":
+            raise HTTPException(409, f"{p} is too large or not a regular file to patch safely.")
+        out[p] = base64.b64decode(d["content"]).decode("utf-8", errors="strict")
+    return out
+
+
+async def pull_merged(u: dict, repo_full: str, number: int) -> bool:
+    ctx = await _fix_ctx(u, repo_full)
+    r = await _call(ctx, "GET", f"/pulls/{int(number)}")
+    if r.status_code != 200:
+        raise _upstream_error("read pull request", r)
+    return bool(r.json().get("merged"))
+
+
+async def open_fix_pr(u: dict, repo_full: str, title: str, body: str, commit_message: str, files: dict[str, str]) -> str:
+    """Send exactly `files` as a pull request through the fixes-branch flow and return its URL."""
+    _write_limit.hit(f"user:{u['user_id']}")
+    ctx = await _fix_ctx(u, repo_full)
+    fix = FixRequest(title=title[:200], body=body[:10_000], commit_message=commit_message[:500],
+                     files=[FileChange(path=p, content=c) for p, c in files.items()])
+    out = await commit_fix(ctx, fix)
+    return out["pull_request"]["html_url"]
+
+
 async def clone_token(user_id: str, owner: str, repo: str) -> str | None:
     """Web: a read-only token for this one repo if it is in the user's own installation, else None (public clone).
     Desktop: None, and the scan uses the user's own token from the keychain."""

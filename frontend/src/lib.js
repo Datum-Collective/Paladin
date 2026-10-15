@@ -168,10 +168,41 @@ export function setupAdvice(error) {
   return { goto: null, retry: true }
 }
 
+export const THEMES = ['system', 'light', 'dark']
+/** A stored theme choice, or "system" for anything unrecognised (an old or hand-edited value). */
+export const normalizeTheme = (v) => (THEMES.includes(v) ? v : 'system')
+
 /** Path node ids -> the labels people read ("Internet (any client)", "server.py"), id when a label is missing. */
 export function pathLabels(ids, nodes) {
   const by = new Map((nodes || []).map((n) => [n.id, n.label]))
   return ids.map((i) => by.get(i) || i)
+}
+
+/** The address to hand back to the engine to scan a stored job's repository again (stored as owner/name or a path). */
+export function scanTarget(repoUrl) {
+  const r = String(repoUrl || '')
+  return /^[A-Za-z0-9-]+\/[\w.-]+$/.test(r) ? `https://github.com/${r}` : r
+}
+
+/** The line shown above the analysis while a scan is running, was cut off, or failed; null when there is nothing to say.
+ *  `action` is "rescan" when scanning again is the useful next step. */
+export function scanBanner(scan, paths = 0) {
+  if (!scan) return null
+  const repo = scan.repo_url ? scan.repo_url.split(/[\\/]/).filter(Boolean).slice(-2).join('/') : 'the repository'
+  const found = (n) => `${n} attack path${n === 1 ? '' : 's'}`
+  const kept = paths ? ` Showing the ${found(paths)} found before it stopped.` : ''
+  const age = scan.updated ? Date.now() / 1000 - scan.updated : 0
+  if (scan.state === 'queued' || scan.state === 'cloning') return { busy: true, tone: 'info', text: `Fetching ${repo}…` }
+  if (scan.state === 'scanning') return { busy: true, tone: 'info', text: `Scanning ${repo}. ${found(paths)} so far; the graph, paths and fixes update as findings arrive.` }
+  if (scan.state === 'fixing') return { busy: true, tone: 'info', text: `Preparing fixes for ${repo}. ${found(paths)} so far.` }
+  if (scan.state === 'failed' && /^Interrupted/.test(scan.error || '')) {      // the app closed mid-scan: always worth saying
+    return { busy: false, tone: 'warn', action: 'rescan', text: `The last scan of ${repo} was interrupted when Paladin closed.${kept || ' Nothing had been found yet.'}` }
+  }
+  if (scan.state === 'failed' && age < 600) {
+    return { busy: false, tone: 'bad', action: 'rescan', text: `The scan of ${repo} failed${scan.error ? `: ${scan.error}` : ''}.${kept}` }
+  }
+  if (scan.state === 'cancelled' && age < 600) return { busy: false, tone: 'warn', action: 'rescan', text: `The scan of ${repo} was cancelled.${kept}` }
+  return null
 }
 
 const STAGES = [['clone', 'Fetch repository', ['queued', 'cloning']], ['scan', 'Find weaknesses', ['scanning']],

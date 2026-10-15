@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { scanTarget, scanBanner, normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -200,5 +200,60 @@ describe('fromStored', () => {
     const ok = fromStored({ id: 3, role: 'assistant', content: 'hi', status: 'complete', meta: { stop_reason: 'end_turn', usage: { input: 1, output: 2 } } })
     expect(ok).toMatchObject({ content: 'hi', stop: 'end_turn', usage: { output: 2 }, stopped: false, interrupted: false })
     expect(ok.error).toBeUndefined()
+  })
+})
+
+describe('normalizeTheme', () => {
+  it('keeps the three known choices and falls back to following the system', () => {
+    expect(['system', 'light', 'dark'].map(normalizeTheme)).toEqual(['system', 'light', 'dark'])
+    for (const bad of ['', 'solarized', null, undefined, 3]) expect(normalizeTheme(bad)).toBe('system')
+  })
+})
+
+describe('scanBanner', () => {
+  const job = (state, extra = {}) => ({ state, repo_url: 'acme/shop', error: '', updated: Date.now() / 1000, ...extra })
+  it('says what is happening and how much has arrived while a scan runs', () => {
+    expect(scanBanner(job('cloning'), 0)).toMatchObject({ busy: true, text: expect.stringContaining('Fetching acme/shop') })
+    const b = scanBanner(job('scanning'), 3)
+    expect(b.busy).toBe(true)
+    expect(b.text).toContain('3 attack paths so far')
+    expect(scanBanner(job('scanning'), 1).text).toContain('1 attack path so far')
+  })
+  it('keeps what was found when a scan fails or is cancelled, and says why', () => {
+    const f = scanBanner(job('failed', { error: 'clone timed out' }), 2)
+    expect(f).toMatchObject({ busy: false, tone: 'bad' })
+    expect(f.text).toContain('clone timed out')
+    expect(f.text).toContain('2 attack paths found before it stopped')
+    expect(scanBanner(job('cancelled'), 0).text).toBe('The scan of acme/shop was cancelled.')
+    expect(f.action).toBe('rescan')
+  })
+  it('stays quiet when nothing is running, and for old failures', () => {
+    expect(scanBanner(null)).toBeNull()
+    expect(scanBanner(job('ready'), 4)).toBeNull()
+    expect(scanBanner(job('done'), 0)).toBeNull()
+    expect(scanBanner(job('failed', { updated: Date.now() / 1000 - 7200 }), 0)).toBeNull()
+  })
+  it('shortens a local folder path to the last two segments', () => {
+    expect(scanBanner(job('scanning', { repo_url: '/Users/me/code/shop' }), 0).text).toContain('code/shop')
+  })
+})
+
+describe('a scan cut off by closing the app', () => {
+  const interrupted = (paths, ageS = 86400 * 3) => scanBanner({ state: 'failed', repo_url: 'acme/shop', updated: Date.now() / 1000 - ageS,
+    error: 'Interrupted: the app closed before this scan finished. Retry to run it again.' }, paths)
+  it('is always mentioned, however long ago, keeps the saved paths and offers to scan again', () => {
+    const b = interrupted(3)
+    expect(b).toMatchObject({ busy: false, tone: 'warn', action: 'rescan' })
+    expect(b.text).toContain('interrupted when Paladin closed')
+    expect(b.text).toContain('3 attack paths found before it stopped')
+    expect(interrupted(0).text).toContain('Nothing had been found yet')
+  })
+})
+
+describe('scanTarget', () => {
+  it('turns a stored owner/name back into a GitHub address and leaves paths alone', () => {
+    expect(scanTarget('acme/shop')).toBe('https://github.com/acme/shop')
+    expect(scanTarget('/Users/me/code/shop')).toBe('/Users/me/code/shop')
+    expect(scanTarget('C:\\code\\shop')).toBe('C:\\code\\shop')
   })
 })
