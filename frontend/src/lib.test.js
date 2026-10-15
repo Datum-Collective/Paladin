@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scanTarget, scanBanner, normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { scanTarget, scanBanner, normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus, errorText, githubUrl, pathKey } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -122,6 +122,24 @@ describe('filter and sort workspaces', () => {
   it('names a folder from its path', () => {
     expect(folderName('/Users/me/code/api/')).toBe('api')
     expect(folderName('C:\\code\\api')).toBe('api')
+  })
+})
+
+describe('githubUrl', () => {
+  it('only passes https github.com links', () => {
+    expect(githubUrl('https://github.com/a/b/pull/1')).toBe('https://github.com/a/b/pull/1')
+    for (const bad of ['javascript:alert(1)', 'http://github.com/a/b', 'https://github.com.evil.io/a', 'data:text/html,x', null, undefined, 5]) {
+      expect(githubUrl(bad)).toBeUndefined()
+    }
+  })
+})
+
+describe('errorText', () => {
+  it('reads strings and FastAPI validation lists, else falls back', () => {
+    expect(errorText('nope')).toBe('nope')
+    expect(errorText([{ msg: 'ts must be an ISO-8601 timestamp' }, { msg: 'bad' }])).toBe('ts must be an ISO-8601 timestamp; bad')
+    expect(errorText([])).toBe('request failed')
+    expect(errorText({ a: 1 }, 'x')).toBe('x')
   })
 })
 
@@ -255,5 +273,19 @@ describe('scanTarget', () => {
     expect(scanTarget('acme/shop')).toBe('https://github.com/acme/shop')
     expect(scanTarget('/Users/me/code/shop')).toBe('/Users/me/code/shop')
     expect(scanTarget('C:\\code\\shop')).toBe('C:\\code\\shop')
+  })
+})
+
+describe('pathKey', () => {
+  it('stays the same when a path moves in the ranking', () => {
+    const hops = [{ edge: 'e1' }, { edge: 'e7' }]
+    expect(pathKey({ id: 'p1', hops })).toBe(pathKey({ id: 'p4', hops }))
+  })
+  it('differs between paths over different edges', () => {
+    expect(pathKey({ id: 'p1', hops: [{ edge: 'e1' }] })).not.toBe(pathKey({ id: 'p1', hops: [{ edge: 'e2' }] }))
+  })
+  it('falls back to the id when there are no hops', () => {
+    expect(pathKey({ id: 'p3', hops: [] })).toBe('p3')
+    expect(pathKey(undefined)).toBe(null)
   })
 })

@@ -146,7 +146,9 @@ def test_scan_rules_are_not_quadratic_on_long_lines():
     from app import codescan
     n = 190_000
     hostile = ["a." * (n // 2), "execute(" + " " * n, "<script a" * (n // 9), "key=" + "'a" * (n // 2),
-               "execute(" * (n // 8), "target='_blank' " * (n // 16)]
+               "execute(" * (n // 8), "target='_blank' " * (n // 16),
+               # contains a keyword, so the cheap pre-check lets it through to the secret regex itself
+               "key_" + "a." * (n // 2), "token." * (n // 6)]
     t = time.perf_counter()
     for text in hostile:
         codescan.static_scan([{"path": "x.py", "content": text}])

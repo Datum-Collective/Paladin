@@ -17,8 +17,11 @@ ROUTE = re.compile(r"@(app|router|bp)\.(get|post|put|delete|route)|app\.(get|pos
 # id, regex, cwe, technique, sink, title
 RULES = [
     ("hardcoded-secret", re.compile(
-        r"""(?i)\b[\w.]*(api[_-]?key|secret|passw(or)?d|passwd|token|credential|private[_-]?key|auth|key)[\w.]*"""
-        r"""\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
+        # The name must START where an identifier starts and the keyword is found with a lookahead, so each
+        # identifier is scanned a constant number of times. The earlier `\b[\w.]*(kw)[\w.]*` form was quadratic: a
+        # single long "a.a.a." line in a scanned repository held a scan thread for minutes.
+        r"""(?i)(?<![\w.])(?=[\w.]*?(?:api[_-]?key|secret|passw(?:or)?d|passwd|token|credential|private[_-]?key|"""
+        r"""auth|key))[\w.]+\s*[:=]\s*['"][^'"\s]{8,}['"]"""),
      "CWE-798", "T1552.001", "secret", "Hard-coded credential"),
     ("code-exec", re.compile(r"\b(eval|exec)\s*\("), "CWE-95", "T1059", "host", "Dynamic code execution"),
     ("shell-injection", re.compile(r"shell\s*=\s*True|os\.system\(|child_process\.exec\("), "CWE-78", "T1059",

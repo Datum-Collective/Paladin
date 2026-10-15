@@ -1,3 +1,5 @@
+import { errorText } from './lib.js'
+
 // every request names its workspace, so a second window switching workspaces cannot redirect this one
 let currentWs = null
 export const setWorkspace = (id) => { currentWs = id }
@@ -14,7 +16,7 @@ async function req(method, url, body, signal) {
   })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) {
-    const e = new Error(typeof data.detail === 'string' ? data.detail : 'request failed')
+    const e = new Error(errorText(data.detail))
     e.status = r.status
     throw e
   }
@@ -80,6 +82,9 @@ export const api = {
   providers: () => req('GET', '/api/providers'),
   models: (pid) => req('GET', `/api/providers/${pid}/models`),
   validate: (pid) => req('POST', `/api/providers/${pid}/validate`),
+  // web: the signed-in user's own model key, checked by the server and held in its memory for this account only
+  setKey: (pid, key) => req('PUT', `/api/providers/${pid}/key`, { key }),
+  removeKey: (pid) => req('DELETE', `/api/providers/${pid}/key`),
   conversations: () => req('GET', '/api/conversations'),
   createConversation: (title = '') => req('POST', '/api/conversations', { title }),
   renameConversation: (id, title) => req('PATCH', `/api/conversations/${id}`, { title }),

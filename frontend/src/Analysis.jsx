@@ -5,7 +5,7 @@ import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
 import { Tabs } from './ui.jsx'
 import { api } from './api.js'
-import { pathLabels, scanBanner, scanTarget } from './lib.js'
+import { pathKey, pathLabels, scanBanner, scanTarget } from './lib.js'
 import { ElementDetail, Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
 /** One line above the panes while a scan runs (or after it failed): what it is doing and how much has arrived. */
@@ -43,7 +43,11 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
   // never let the side panes take more than ~60% of the window, so the graph stays usable at the minimum size
   const leftW = Math.round(Math.min(left, width * 0.3))
   const rightW = inspectorOpen ? Math.round(Math.min(right, width * 0.34)) : 0
-  const sel = paths.find((p) => p.id === selected)
+  // selection is kept by the edges a path crosses: the server's id is its rank, which shifts as results arrive
+  const sel = paths.find((p) => pathKey(p) === selected)
+  // open on the most dangerous path, and fall back to it if the selected one no longer exists
+  const top = paths.length ? pathKey(paths[0]) : null
+  useEffect(() => { if (top && !sel) setSelected(top) }, [top, sel, setSelected])
   const [el, setEl] = useState(null)               // a clicked node or edge in the graph
   const pending = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
 
@@ -56,9 +60,9 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
         {tab === 'paths' && (paths.length === 0 ? <p className="muted">No paths yet.</p> : (
           <ul className="rows selectable" role="listbox" aria-label="Attack paths">
             {paths.map((p) => (
-              <li key={p.id} role="option" aria-selected={p.id === selected} tabIndex={0}
-                  className={p.id === selected ? 'on' : ''} onClick={() => setSelected(p.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
+              <li key={pathKey(p)} role="option" aria-selected={pathKey(p) === selected} tabIndex={0}
+                  className={pathKey(p) === selected ? 'on' : ''} onClick={() => { setSelected(pathKey(p)); setInspect('path') }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(pathKey(p)); setInspect('path') } }}>
                 <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
                 <div className="path-line">{pathLabels(p.nodes, graph && graph.nodes).join(' → ')}</div>
               </li>
