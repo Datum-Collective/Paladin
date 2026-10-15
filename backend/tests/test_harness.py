@@ -157,14 +157,14 @@ def test_cancel_during_scan_stops_before_results_are_persisted(client, repo, mon
         shutil.copytree(repo, args[-1])
         return ""
 
-    def blocked_scan(files, cancelled):
+    def blocked_scan(files, cancelled, **_):
         scanning.set()
         while not cancelled():
             time.sleep(0.01)
         raise InterruptedError("scan cancelled")
 
     monkeypatch.setattr(harness, "_git", clone)
-    monkeypatch.setattr(harness.codescan, "scan_full", blocked_scan)
+    monkeypatch.setattr(harness.crawler, "analyze", blocked_scan)
     job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     assert scanning.wait(2)
 
@@ -305,6 +305,24 @@ def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, 
     assert expect in msg and "data_dir" not in msg and "jobs" not in msg and "ghs_t" not in msg
 
 
+def test_scan_result_is_visible_to_the_live_stream_and_graph_api(client, world, repo):
+    """Root cause of 'the graph never shows up': finishing a scan changed nothing the live stream watched."""
+    sign_in(client, ALICE)
+    before = client.get("/api/graph").json()
+    assert before["nodes"] == []
+    assert not world.db.tables.get("code_models")
+    job = _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()["id"])
+    assert job["state"] == "ready"
+    [row] = world.db.tables["code_models"]
+    assert row["created"] > 0       # `created` is what codescan.version() reports, and the stream watches it
+    g = client.get("/api/graph").json()
+    kinds = {n["kind"] for n in g["nodes"]}
+    assert {"external", "component", "weakness", "data"} <= kinds
+    w = next(n for n in g["nodes"] if n["kind"] == "weakness")
+    assert w["meta"]["file"] == "server.py" and w["meta"]["line"] > 0
+    assert {e["basis"] for e in g["edges"]} >= {"finding", "assumed"}
+    p = client.get("/api/paths").json()["paths"][0]
+    assert {h["basis"] for h in p["hops"]} >= {"finding", "assumed"}
 def test_clone_token_is_not_left_in_the_working_copy(tmp_path, monkeypatch):
     """The token travels as an environment-only header: nothing in the clone's .git may contain it."""
     import os

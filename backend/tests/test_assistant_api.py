@@ -150,3 +150,67 @@ def test_context_is_valid_json_and_keeps_fixes_when_over_budget(client):
         data = json.loads(assistant.context(ws, limit=limit))
         assert "fixes" in data and "paths" in data
         assert len(assistant.context(ws, limit=limit)) <= max(limit, len(json.dumps({"fixes": data["fixes"]})) + 200)
+
+
+# ---- setup: a real inference round-trip with the saved key and chosen model ----
+def _ok_stream(req):
+    return httpx.Response(200, content=sse(
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}},
+        {"type": "message_stop"}))
+
+
+def test_provider_test_round_trips_with_saved_key_and_model(client, monkeypatch):
+    login(client)
+    keys.set_many({"anthropic": "k"})
+    seen = {}
+    monkeypatch.setattr(anthropic_api, "TRANSPORT", httpx.MockTransport(
+        lambda r: (seen.update(json.loads(r.content), key=r.headers.get("x-api-key")), _ok_stream(r))[1]))
+    r = client.post("/api/providers/anthropic/test", json={"model": "claude-opus-5-5"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "model": "claude-opus-5-5"}
+    assert seen["model"] == "claude-opus-5-5" and seen["key"] == "k" and seen["max_tokens"] <= 64
+
+
+@pytest.mark.parametrize("status,body,kind", [
+    (401, {"error": {"type": "authentication_error", "message": "invalid x-api-key"}}, "auth"),
+    (404, {"error": {"type": "not_found_error", "message": "model: nope"}}, "not_found"),
+    (402, {"error": {"type": "billing_error", "message": "credit balance is too low"}}, "quota"),
+])
+def test_provider_test_reports_failures_without_leaking_the_key(client, monkeypatch, status, body, kind):
+    login(client)
+    keys.set_many({"anthropic": "sk-ant-secretsecretsecret"})
+    monkeypatch.setattr(anthropic_api, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(status, json=body)))
+    r = client.post("/api/providers/anthropic/test", json={"model": "nope"})
+    assert r.status_code == 200 and r.json()["ok"] is False
+    assert r.json()["error"]["kind"] == kind and r.json()["error"]["hint"]
+    assert "secretsecret" not in r.text
+
+
+def test_provider_test_without_key_and_bad_input(client):
+    login(client)
+    r = client.post("/api/providers/openai/test", json={"model": "gpt-x"})
+    assert r.status_code == 200 and r.json()["error"]["kind"] == "auth"
+    assert client.post("/api/providers/nope/test", json={"model": "m"}).status_code == 404
+    assert client.post("/api/providers/openai/test", json={"model": ""}).status_code == 422
+    assert client.post("/api/providers/openai/test", json={}).status_code == 422
+
+
+def test_setup_prefs_persist_and_reject_bad_values(client):
+    login(client)
+    p = client.get("/api/prefs").json()
+    assert p["general.setup_done"] is False and p["general.setup_skipped"] is False
+    r = client.put("/api/prefs", json={"general.setup_done": True, "assistant.provider": "openai", "assistant.model": "gpt-x"})
+    assert r.status_code == 200 and r.json()["general.setup_done"] is True
+    assert client.get("/api/prefs").json()["assistant.provider"] == "openai"
+    assert client.put("/api/prefs", json={"general.setup_done": "yes"}).status_code == 422
+
+
+def test_provider_test_turns_unexpected_exceptions_into_a_reason(client, monkeypatch):
+    from app.providers import get_provider
+    login(client)
+
+    async def boom(model):
+        raise KeyError("choices")
+    monkeypatch.setattr(get_provider("anthropic"), "probe", boom)
+    r = client.post("/api/providers/anthropic/test", json={"model": "m"})
+    assert r.status_code == 200 and r.json()["ok"] is False and r.json()["error"]["kind"] == "server"

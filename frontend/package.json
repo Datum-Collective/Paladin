@@ -12,11 +12,14 @@
   "dependencies": {
     "cytoscape": "3.30.4",
     "cytoscape-dagre": "2.5.0",
+    "framer-motion": "^11.11.17",
+    "lucide-react": "^0.456.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "4.3.4",
+    "jsdom": "^25.0.1",
     "vite": "5.4.11",
     "vitest": "^2.1.8"
   }

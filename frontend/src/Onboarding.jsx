@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from './Icons.jsx'
 import { api } from './api.js'
+import Setup from './Setup.jsx'
 
 const bridge = typeof window !== 'undefined' ? window.paladin : undefined
-const PROVIDERS = [
-  { id: 'anthropic', name: 'Claude', field: 'anthropicApiKey', hint: 'Anthropic API key', note: 'Best for the assistant and fix review' },
-  { id: 'openai', name: 'OpenAI', field: 'openaiApiKey', hint: 'OpenAI API key', note: 'GPT models for chat and review' },
-]
 const FEATURES = [
   { id: 'paths', icon: 'graph', title: 'Ranked attack paths',
     text: 'Logs, scans and your asset map are joined into the routes an attacker could actually take, ordered by real risk.' },
@@ -83,18 +80,17 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
   const [feature, setFeature] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const [provider, setProvider] = useState('anthropic')
   const [secret, setSecret] = useState('')
   const [saved, setSaved] = useState({})
   const [choice, setChoice] = useState(canPlay ? 'sample' : 'repo')
   const [leaving, setLeaving] = useState(false)
+  const [connected, setConnected] = useState(false)   // a provider passed the live test in this session
   const root = useRef(null)
   const step = ORDER[i]
   const providers = config.providers || {}
   const canStoreKeys = Boolean(config.desktop && bridge)
   const first = ((user && (user.name || user.login)) || '').split(' ')[0]
   const modelReady = Boolean(providers.anthropic || providers.openai || saved.anthropicApiKey || saved.openaiApiKey)
-  const p = PROVIDERS.find((x) => x.id === provider)
 
   const go = useCallback((n) => {
     setErr(''); setSecret('')
@@ -148,7 +144,7 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
   const primary = step === 'welcome' ? 'Get started'
     : step === 'features' ? 'Continue'
       : step === 'github' ? (saved.githubToken ? 'Continue' : 'Skip for now')
-        : step === 'model' ? (modelReady ? 'Continue' : 'Skip for now')
+        : step === 'model' ? (connected ? 'Continue' : 'Skip for now')
           : step === 'start' ? 'Continue' : null
 
   return (
@@ -237,33 +233,9 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
               <span className="ob-eyebrow">Step 2 of 2 · optional</span>
               <h1 id="ob-t" className="ob-lead">Give it a brain.</h1>
               <p className="ob-sub">A model key unlocks the assistant and AI review of findings. Paladin works fully without one.</p>
-              <div className="ob-card">
-                {canStoreKeys ? (
-                  <>
-                    <div className="ob-providers" role="radiogroup" aria-label="Provider">
-                      {PROVIDERS.map((x) => (
-                        <button key={x.id} role="radio" aria-checked={provider === x.id} className={provider === x.id ? 'ob-prov on' : 'ob-prov'}
-                                onClick={() => setProvider(x.id)}>
-                          <b>{x.name}</b><small>{x.note}</small>
-                          {saved[x.field] && <span className="ob-tick"><Icon name="check" size={13} /></span>}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="ob-row">
-                      <input type="password" autoComplete="off" spellCheck={false} placeholder={p.hint} value={secret}
-                             disabled={busy} onChange={(e) => setSecret(e.target.value.trim())} />
-                      <button className="ob-pill" disabled={!secret || busy} onClick={() => saveSecret(p.field)}>Save</button>
-                    </div>
-                    <p className="ob-note">{saved[p.field] ? `${p.name} key saved to your keychain.` : 'Stored in your system keychain, never on a server.'}</p>
-                  </>
-                ) : (
-                  <p className="ob-note">
-                    <span className={`ob-status${modelReady ? ' on' : ''}`}>{modelReady ? 'Ready' : 'Not set'}</span>{' '}
-                    {modelReady ? 'This server already has a model key, so the assistant works.'
-                      : 'On the web, model keys are set by the server administrator. Store your own in the desktop app.'}
-                  </p>
-                )}
-                {err && <p className="ob-err" role="alert">{err}</p>}
+              <div className="ob-card ob-setup">
+                {/* the same validated flow as Settings → Run Setup: key in the keychain, real model list, live test */}
+                <Setup embedded config={config} onClose={() => {}} onOpenAssistant={() => {}} onComplete={() => setConnected(true)} />
               </div>
             </div>
             <div className="ob-visual">
@@ -306,7 +278,7 @@ export default function Onboarding({ config, user, canPlay, onFinish }) {
             <p className="ob-sub">{startLabel}. Everything below can be changed any time in Settings.</p>
             <ul className="ob-summary">
               <li className={saved.githubToken ? 'ok' : ''}><span>GitHub</span><em>{saved.githubToken ? 'Token saved' : ghMode === 'app' ? 'Connect from Integrations' : 'Public repositories by link'}</em></li>
-              <li className={modelReady ? 'ok' : ''}><span>Model</span><em>{modelReady ? 'Ready for the assistant' : 'Not set, add one in Settings'}</em></li>
+              <li className={connected || modelReady ? 'ok' : ''}><span>Model</span><em>{connected ? 'Connected and tested' : modelReady ? 'Key present, not tested yet' : 'Not set, run setup from Settings'}</em></li>
               <li className="ok"><span>Start</span><em>{{ sample: 'Sample scenario', repo: 'Open a repository', explore: 'Home' }[choice]}</em></li>
             </ul>
             <button className="ob-next big" onClick={() => finish(choice)} disabled={leaving}>Enter Paladin</button>

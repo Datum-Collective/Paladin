@@ -69,3 +69,44 @@ def test_api_scan_builds_paths_and_isolated(client):
 
 def test_scan_requires_auth(client):
     assert client.post("/api/codescan", json={"files": []}).status_code == 401
+
+
+# ---- graph model: what each node is, and how each step is supported ----
+def _finding(**kw):
+    base = {"id": "f1", "file": "app/views.py", "line": 12, "rule": "sql-concat", "cwe": "CWE-89", "technique": "T1190",
+            "sink": "db", "title": "SQL built from strings", "routed": True, "snippet": "cur.execute(f'...')",
+            "exploitable": None, "confidence": 0.5, "reason": "", "triaged_by": "static"}
+    return {**base, **kw}
+
+
+def test_model_labels_kinds_and_basis_of_every_step():
+    m = codescan.to_model([_finding(), _finding(id="f2", file="util.py", routed=False, sink="secret", rule="hardcoded-secret")],
+                          lambda t: "M1")
+    nodes = {n["id"]: n for n in m["nodes"]}
+    assert nodes["code:internet"]["kind"] == "external"
+    assert nodes["code:app/views.py"]["kind"] == "component" and nodes["code:app/views.py"]["meta"]["routed"] is True
+    w = nodes["code:finding:f1"]
+    assert w["kind"] == "weakness" and w["meta"]["file"] == "app/views.py" and w["meta"]["line"] == 12
+    assert w["meta"]["cwe"] == "CWE-89" and w["meta"]["confirmed"] is False
+    edges = {e["id"]: e for e in m["edges"]}
+    assert edges["code:f1"]["basis"] == "finding" and "app/views.py:12" in edges["code:f1"]["note"]
+    assert edges["code:sink:f1"]["basis"] == "assumed"                    # impact is inferred, never claimed as proof
+    assert edges["code:in:app/views.py"]["basis"] == "assumed" and "route handler" in edges["code:in:app/views.py"]["note"]
+    assert "unverified" in edges["code:in:util.py"]["note"]               # no route found: say so, low prior
+    assert edges["code:in:util.py"]["p"] < edges["code:in:app/views.py"]["p"]
+
+
+def test_triaged_exploitable_finding_is_marked_confirmed_and_not_exploitable_is_dropped():
+    m = codescan.to_model([_finding(exploitable=True, confidence=0.9), _finding(id="f2", exploitable=False)], lambda t: "")
+    ids = {n["id"] for n in m["nodes"]}
+    assert "code:finding:f1" in ids and "code:finding:f2" not in ids
+    assert next(n for n in m["nodes"] if n["id"] == "code:finding:f1")["meta"]["confirmed"] is True
+
+
+def test_long_paths_and_reasons_never_push_a_note_past_the_edge_limit():
+    """An over-long note would fail Edge validation and silently drop the whole path from the graph."""
+    from app.models import Edge
+    f = _finding(file="src/main/java/com/acme/web/controllers/" + "x" * 120 + "/AccountController.java", reason="r" * 200)
+    m = codescan.to_model([f], lambda t: "")
+    for e in m["edges"]:
+        Edge(**e)

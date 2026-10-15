@@ -22,7 +22,7 @@ function Suggestion({ s, on, onPick, onHover }) {
   )
 }
 
-function Preview({ p, busy, canScan = true, onConfirm, onOpenExisting, onCancel }) {
+function Preview({ p, busy, retry = false, canScan = true, onConfirm, onOpenExisting, onCancel }) {
   const info = p.info
   const existing = info.workspace_id
   return (
@@ -40,7 +40,7 @@ function Preview({ p, busy, canScan = true, onConfirm, onOpenExisting, onCancel 
         {p.type === 'github' && <><dt>Default branch</dt><dd>{info.default_branch}</dd></>}
         <dt>What happens</dt>
         <dd>{existing ? 'This is already a workspace. Open it, or scan again.'
-          : p.type === 'github' ? 'Clones the default branch (read-only, hooks off), scans it and proposes fixes. Code is never run.'
+          : p.type === 'github' ? 'Clones the default branch (read-only, hooks off), scans it and builds attack paths. Code is never run.'
             : 'Scans the committed code in place. The folder is read, never modified or executed.'}</dd>
       </dl>
       {!canScan && (
@@ -51,7 +51,7 @@ function Preview({ p, busy, canScan = true, onConfirm, onOpenExisting, onCancel 
         {existing && <button className="primary" onClick={onOpenExisting}>Open Workspace</button>}
         <button className={existing ? '' : 'primary'} onClick={onConfirm} disabled={busy || !canScan}
                 title={canScan ? undefined : 'Scans are not available on this hosted site'}>
-          {busy ? 'Starting…' : existing ? 'Scan Again' : p.type === 'github' ? 'Clone and Scan' : 'Scan Folder'}
+          {busy ? 'Starting…' : retry ? 'Try Again' : existing ? 'Scan Again' : 'Start Scan'}
         </button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
       </div>
@@ -117,24 +117,38 @@ export default function Home({
     setPhase('idle')
   }, [])
 
+  // Submitting is the whole interaction: once the repository is validated and reachable, analysis starts by itself.
+  // The preview only stays on screen when something went wrong, so the recovery action sits next to the reason.
+  const start = useCallback(async (p) => {
+    setPhase('working'); setErr(null)
+    try {
+      if (p.type === 'github') await onImportRepo(p.text)
+      else await onImportFolder(p.info.path)
+    } catch (e) { fail(e); setPhase('preview') }
+  }, [onImportRepo, onImportFolder, fail])
+  const canScan = config.scans !== false
+
   const previewRepo = useCallback(async (text) => {
     setErr(null); setPhase('checking')
-    try { setPreview({ type: 'github', text, info: await api.resolveRepo(text) }); setPhase('preview') } catch (e) { fail(e) }
-  }, [fail])
+    try {
+      const p = { type: 'github', text, info: await api.resolveRepo(text) }
+      setPreview(p)
+      // a repository that is already a workspace keeps the choice between opening it and scanning it again
+      if (canScan && !p.info.workspace_id) await start(p); else setPhase('preview')
+    } catch (e) { fail(e) }
+  }, [fail, start, canScan])
   const previewFolder = useCallback(async (path) => {
     setErr(null)
     if (!desktop) { setErr({ message: 'Local folders can only be opened in the desktop app.' }); return }
     setPhase('checking')
-    try { setPreview({ type: 'local', text: path, info: await api.resolveLocal(path) }); setPhase('preview') } catch (e) { fail(e) }
-  }, [desktop, fail])
-
-  const confirm = useCallback(async () => {
-    setPhase('working'); setErr(null)
     try {
-      if (preview.type === 'github') await onImportRepo(preview.text)
-      else await onImportFolder(preview.info.path)
-    } catch (e) { fail(e); setPhase('preview') }
-  }, [preview, onImportRepo, onImportFolder, fail])
+      const p = { type: 'local', text: path, info: await api.resolveLocal(path) }
+      setPreview(p)
+      if (canScan && !p.info.workspace_id) await start(p); else setPhase('preview')
+    } catch (e) { fail(e) }
+  }, [desktop, fail, start, canScan])
+
+  const confirm = useCallback(() => start(preview), [preview, start])
 
   const cancel = () => { setPreview(null); setPhase('idle'); setErr(null) }
   const chooseFolder = async () => { const p = onChooseFolder && await onChooseFolder(); if (p) { setQ(p); previewFolder(p) } }
@@ -213,7 +227,7 @@ export default function Home({
                    onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => { setFocus(false); setArmed(false) }, 120)} onKeyDown={onKey} />
             {phase === 'checking' ? <span className="spinner" role="status" aria-label="Checking" />
               : <button className="primary bar-go" onClick={submit} disabled={phase !== 'idle' || !q.trim()}>
-                {classifyInput(q) === 'github' || classifyInput(q) === 'path' ? 'Preview' : live[hi] && live[hi].kind === 'workspace' ? 'Open' : 'Go'}
+                {classifyInput(q) === 'github' || classifyInput(q) === 'path' ? 'Scan' : live[hi] && live[hi].kind === 'workspace' ? 'Open' : 'Go'}
                 <Icon name="return" size={14} /></button>}
           </div>
 
@@ -232,7 +246,7 @@ export default function Home({
             <button onClick={onNew}><Icon name="plus" size={14} />New Workspace…</button>
           </div>
 
-          {phase === 'checking' && <p className="progress" role="status"><span className="spinner tiny" aria-hidden="true" />Checking the repository…</p>}
+          {(phase === 'checking' || phase === 'working') && <p className="progress" role="status"><span className="spinner tiny" aria-hidden="true" />{phase === 'checking' ? 'Checking the repository…' : 'Repository accepted. Starting the scan…'}</p>}
           {err && (
             <div className="inline-error" role="alert">
               <span>{err.message}</span>
@@ -242,8 +256,8 @@ export default function Home({
               </span>
             </div>
           )}
-          {preview && phase !== 'idle' && (
-            <Preview p={preview} busy={phase === 'working'} canScan={config.scans !== false} onConfirm={confirm} onCancel={cancel}
+          {preview && (phase === 'preview' || (phase === 'working' && err)) && (
+            <Preview p={preview} busy={phase === 'working'} retry={Boolean(err)} canScan={config.scans !== false} onConfirm={confirm} onCancel={cancel}
                      onOpenExisting={() => onOpen(preview.info.workspace_id)} />
           )}
 

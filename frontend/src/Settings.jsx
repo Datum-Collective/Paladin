@@ -276,7 +276,7 @@ function GitHubToken({ config }) {
   )
 }
 
-function Providers({ config }) {
+function Providers({ config, onSetup }) {
   const { prefs, set } = usePrefs()
   const k = useKeys(config)
   const [checks, setChecks] = useState({})
@@ -304,6 +304,9 @@ function Providers({ config }) {
   return (
     <>
       {config.desktop && k.stored && !k.stored.encryptionAvailable && <p className="notice warn">Secure storage is unavailable on this system, so keys cannot be saved.</p>}
+      <Group title="Guided setup" footer="Walks through provider, key, model and a live connection test.">
+        <Row label="Set up the assistant"><button onClick={onSetup}>Run Setup…</button></Row>
+      </Group>
       <Group title="API keys" footer="Keys live in the system keychain and are used only by Paladin’s engine; the interface never receives them.">
         {specs.map((s) => (
           <KeyRow key={s.id} spec={s} canEdit={k.canEdit} stored={Boolean(k.stored && k.stored[s.field])}
@@ -456,10 +459,10 @@ function Advanced({ config, user }) {
   )
 }
 
-export default function Settings({ pane, setPane, config, user, wsl, onCreate, onReset }) {
+export default function Settings({ pane, setPane, onSetup, config, user, wsl, onCreate, onReset }) {
   const body = {
     general: <General config={config} onReset={onReset} />, appearance: <Appearance />, workspaces: <Workspaces wsl={wsl} onCreate={onCreate} />,
-    github: <GitHub config={config} />, providers: <Providers config={config} />, code: <Code />, shortcuts: <Shortcuts />,
+    github: <GitHub config={config} />, providers: <Providers config={config} onSetup={onSetup} />, code: <Code />, shortcuts: <Shortcuts />,
     privacy: <Privacy wsl={wsl} />, advanced: <Advanced config={config} user={user} />,
   }[pane]
   return (
