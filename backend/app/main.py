@@ -105,6 +105,7 @@ def config():
             "github": keys.configured("github") if desktop else github_access.app_enabled(),
             "github_mode": "token" if desktop else "app",
             "providers": keys.status(),
+            "scans": not settings.SERVERLESS,
             "version": os.environ.get("APP_VERSION", "dev")}
 
 

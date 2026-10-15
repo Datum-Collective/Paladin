@@ -24,6 +24,11 @@ URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
 AUTHOR = ("Attack Path Compiler", "apc@users.noreply.github.com")
 _threads: dict[int, threading.Thread] = {}
+_cancels: dict[int, threading.Event] = {}
+
+
+class Cancelled(Exception):
+    """Internal control flow for a user-cancelled job."""
 
 
 def data_root() -> Path:
@@ -42,20 +47,44 @@ def parse_url(url: str) -> tuple[str, str, str]:
 
 
 def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60,
-         allow_file: bool = False):
+         allow_file: bool = False, cancel: threading.Event | None = None):
     base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never",
             "-c", "credential.helper="]   # never ask a credential manager: the only credential is `token`
     # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
     base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
-    try:
-        r = subprocess.run(base + args, cwd=cwd, env=git_env(token), capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"git {args[0]} timed out: {NETWORK_ERROR}") from None
-    if r.returncode != 0:
-        stderr = r.stderr.replace(token, "***") if token else r.stderr
+    cmd = base + args
+    if cancel is None:   # nothing can cancel this call: the plain, blocking path
+        try:
+            r = subprocess.run(cmd, cwd=cwd, env=git_env(token), capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"git {args[0]} timed out: {NETWORK_ERROR}") from None
+        stdout, stderr, code = r.stdout, r.stderr, r.returncode
+    else:   # a scan thread: poll so a user's Cancel stops a long clone within ~100 ms instead of waiting for it
+        p = subprocess.Popen(cmd, cwd=cwd, env=git_env(token), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        end = time.monotonic() + timeout
+        while True:
+            if cancel.is_set():
+                p.terminate()
+                try:
+                    p.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.communicate()
+                raise Cancelled()
+            try:
+                stdout, stderr = p.communicate(timeout=min(0.1, max(0.01, end - time.monotonic())))
+                break
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= end:
+                    p.kill()
+                    p.communicate()
+                    raise RuntimeError(f"git {args[0]} timed out: {NETWORK_ERROR}") from None
+        code = p.returncode
+    if code != 0:
+        stderr = stderr.replace(token, "***") if token else stderr
         log.warning("git %s failed: %s", args[0], stderr.strip()[:500])   # full detail stays in the server log
         raise RuntimeError(f"git {args[0]} failed: {git_error(stderr)}")
-    return r.stdout
+    return stdout
 
 
 # Copied from the parent environment because git cannot work without them: SYSTEMROOT/WINDIR (Windows needs them to
@@ -104,9 +133,11 @@ def _dir_size(p: Path) -> int:
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file() and not f.is_symlink())
 
 
-def load_files(root: Path) -> list[dict]:
+def load_files(root: Path, cancelled=lambda: False) -> list[dict]:
     out = []
     for p in sorted(root.rglob("*")):
+        if cancelled():
+            raise Cancelled()
         if ".git" in p.relative_to(root).parts or p.is_symlink() or not p.is_file():
             continue
         if p.stat().st_size > codescan.MAX_FILE_BYTES:
@@ -238,7 +269,10 @@ def _upd(jid: int, **cols) -> None:
             cols[k] = json.loads(cols[k])
     if "ai_used" in cols:
         cols["ai_used"] = bool(cols["ai_used"])
-    supa.update("jobs", {"id": supa.eq(jid)}, cols, returning=None)
+    where = {"id": supa.eq(jid)}
+    if "state" in cols and cols["state"] != "cancelled":
+        where["state"] = supa.neq("cancelled")   # a late write from the worker must never undo a user's Cancel
+    supa.update("jobs", where, cols, returning=None)
 
 
 def _log(jid: int, msg: str) -> None:
@@ -277,6 +311,8 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
     """Start a scan. `token` is the credential for cloning a private repo: on the web, a short-lived GitHub App
     token limited to this one repo (resolved by the caller from the user's own installation); on the desktop,
     None means the user's own token from the keychain."""
+    if settings.SERVERLESS:
+        raise RuntimeError(settings.SERVERLESS_SCAN_MESSAGE)
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
     busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")
@@ -290,6 +326,7 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
     # the thread keeps this request's Supabase session (context copy), so its writes are still the user's own
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(_run, ws, jid, owner, repo, clone_url, token), daemon=True)
+    _cancels[jid] = threading.Event()
     _threads[jid] = t
     t.start()
     return get(ws, jid)
@@ -301,25 +338,54 @@ def wait(jid: int, timeout: float = 60) -> None:
         t.join(timeout)
 
 
+def cancel(ws: int, jid: int) -> dict:
+    """Cancel a running job owned by this workspace. Settled jobs are an idempotent no-op."""
+    if not supa.first("jobs", {"id": supa.eq(jid), "ws": supa.eq(ws)}, columns="id"):
+        raise KeyError(jid)
+    changed = supa.update("jobs", {"id": supa.eq(jid), "ws": supa.eq(ws), "state": supa.in_(RUNNING)},
+                          {"state": "cancelled", "error": "", "updated": time.time()}, returning="id")
+    if changed:
+        event, thread = _cancels.get(jid), _threads.get(jid)
+        if event:
+            event.set()
+        _log(jid, "cancelled by user")
+        if thread and thread is not threading.current_thread():
+            thread.join(2)
+    return get(ws, jid)
+
+
+def _stage(jid: int, cancel_event: threading.Event, state: str) -> None:
+    """Move to the next stage, unless the job was cancelled meanwhile (the guarded update then changes nothing)."""
+    if cancel_event.is_set():
+        raise Cancelled()
+    changed = supa.update("jobs", {"id": supa.eq(jid), "state": supa.neq("cancelled")},
+                          {"state": state, "updated": time.time()}, returning="id")
+    if not changed:
+        raise Cancelled()
+
+
 def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | None = None) -> None:
     work = data_root() / str(jid)
+    cancel_event = _cancels.get(jid) or threading.Event()
     if token is None and owner != "local":
         token = keys.get("GITHUB_TOKEN")   # desktop only; always None on the web server
     try:
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
         src = work / "repo"
-        _upd(jid, state="cloning")
+        _stage(jid, cancel_event, "cloning")
         _log(jid, f"cloning {owner}/{repo} (depth 1, hooks off, symlinks off)")
         local = owner == "local"
         # a file:// URL makes git copy objects (no hardlinks into the user's repo) and honour --depth
         source = Path(clone_url).resolve().as_uri() if local else clone_url
         _git(["clone", "--depth", "1", "--no-tags", "--single-branch", "--no-recurse-submodules",
-              source, str(src)], token=token, timeout=CLONE_TIMEOUT, allow_file=local)
+              source, str(src)], token=token, timeout=CLONE_TIMEOUT, allow_file=local, cancel=cancel_event)
+        if cancel_event.is_set():
+            raise Cancelled()
         if _dir_size(src) > MAX_REPO_BYTES:
             raise RuntimeError("repository too large")
-        _upd(jid, state="scanning")
-        files = load_files(src)
+        _stage(jid, cancel_event, "scanning")
+        files = load_files(src, cancel_event.is_set)
         total = sum(1 for p in src.rglob("*") if p.is_file() and ".git" not in p.relative_to(src).parts)
         kept = codescan.accept_files(files)
         exts = sorted({Path(f["path"]).suffix or f["path"] for f in kept})
@@ -335,15 +401,18 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             return
         _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
                   f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
-        findings, ai_used, n, stats = codescan.scan_full(files)
+        findings, ai_used, n, stats = codescan.scan_full(files, cancelled=cancel_event.is_set)
+        if cancel_event.is_set():
+            raise Cancelled()
         rep = coverage(src, kept, findings, stats, ai.enabled())
         _upd(jid, report=json.dumps(rep))
         _log(jid, f"scanned {n} files, {rep['lines_scanned']} lines against {len(rep['rules'])} rules: "
                   f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
                   f"{rep['judged_not_exploitable']} judged not exploitable")
+        _stage(jid, cancel_event, "fixing")
         codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
-        _upd(jid, state="fixing", ai_used=int(ai_used))
-        fixes = _fix_all(jid, src, files, findings)
+        _upd(jid, ai_used=int(ai_used))
+        fixes = _fix_all(jid, src, files, findings, cancel_event.is_set)
         for f in findings:
             f.pop("context", None)
         _upd(jid, findings=json.dumps(findings))
@@ -362,22 +431,33 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
                  f"{len(live)} need a manual fix (no safe automatic patch)")
             return
         branch = f"apc/fix-{jid}-{int(time.time())}"
-        _git(["checkout", "-q", "-b", branch], cwd=src)
+        _git(["checkout", "-q", "-b", branch], cwd=src, cancel=cancel_event)
         for p, new in _final_contents(files, fixes).items():
+            if cancel_event.is_set():
+                raise Cancelled()
             (src / p).write_text(new, encoding="utf-8")
+        if cancel_event.is_set():
+            raise Cancelled()
         verification = _verify_tree(src, files, fixes, findings)
         rep["verification"] = verification
         _upd(jid, report=json.dumps(rep))
         _log(jid, f"verified on disk: {verification['python_files_compiled']}/{verification['python_files_changed']} "
                   f"changed Python file(s) compile; findings {verification['findings_before']} -> "
                   f"{verification['findings_after']}")
-        _git(["add", "-A"], cwd=src)
+        _git(["add", "-A"], cwd=src, cancel=cancel_event)
         msg = f"Fix {len(fixes)} security finding(s) found by Attack Path Compiler"
-        _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg], cwd=src)
-        diff = _git(["diff", "HEAD~1", "HEAD"], cwd=src)
+        _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg],
+             cwd=src, cancel=cancel_event)
+        diff = _git(["diff", "HEAD~1", "HEAD"], cwd=src, cancel=cancel_event)
         _upd(jid, state="ready", branch=branch, diff=diff[:400_000],
              fixes=json.dumps([{k: v for k, v in x.items() if k != "content"} for x in fixes]))
         _log(jid, f"committed {len(fixes)} fix(es) on local branch {branch}; waiting for human approval to open PR")
+    except Cancelled:
+        pass   # the user already moved the job to "cancelled"; the guarded writes keep it there
+    except InterruptedError as e:
+        if not cancel_event.is_set():
+            _upd(jid, state="failed", error=str(e)[:300])
+            _log(jid, f"failed: {str(e)[:200]}")
     except Exception as e:  # noqa: BLE001 - recorded, never leaked as a stack trace
         msg = str(e).replace(token, "***") if token else str(e)
         try:
@@ -385,15 +465,20 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             _log(jid, f"failed: {msg[:200]}")
         except Exception:  # noqa: BLE001 - e.g. the session expired mid-scan: the row goes stale, shows as failed
             pass
+    finally:
+        _threads.pop(jid, None)
+        _cancels.pop(jid, None)
 
 
-def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict]) -> list[dict]:
+def _fix_all(jid: int, src: Path, files: list[dict], findings: list[dict], cancelled=lambda: False) -> list[dict]:
     contents = {f["path"]: f["content"] for f in files}
     done, seen = [], set()
     # fix bottom-up per file so earlier line numbers stay valid
     order = sorted((f for f in findings if f["exploitable"] is not False),
                    key=lambda f: (f["file"], -f["line"]))
     for f in order[:MAX_FIXES * 2]:
+        if cancelled():
+            raise Cancelled()
         if len(done) >= MAX_FIXES:
             break
         res = fixers.try_fix(contents[f["file"]], f)

@@ -22,7 +22,7 @@ function Suggestion({ s, on, onPick, onHover }) {
   )
 }
 
-function Preview({ p, busy, onConfirm, onOpenExisting, onCancel }) {
+function Preview({ p, busy, canScan = true, onConfirm, onOpenExisting, onCancel }) {
   const info = p.info
   const existing = info.workspace_id
   return (
@@ -43,9 +43,14 @@ function Preview({ p, busy, onConfirm, onOpenExisting, onCancel }) {
           : p.type === 'github' ? 'Clones the default branch (read-only, hooks off), scans it and proposes fixes. Code is never run.'
             : 'Scans the committed code in place. The folder is read, never modified or executed.'}</dd>
       </dl>
+      {!canScan && (
+        <p className="muted small">Repository scans aren’t available on this hosted site because it runs as short-lived
+          functions. Use the desktop app, or a server that stays running, to scan a repository.</p>
+      )}
       <div className="actions">
         {existing && <button className="primary" onClick={onOpenExisting}>Open Workspace</button>}
-        <button className={existing ? '' : 'primary'} onClick={onConfirm} disabled={busy}>
+        <button className={existing ? '' : 'primary'} onClick={onConfirm} disabled={busy || !canScan}
+                title={canScan ? undefined : 'Scans are not available on this hosted site'}>
           {busy ? 'Starting…' : existing ? 'Scan Again' : p.type === 'github' ? 'Clone and Scan' : 'Scan Folder'}
         </button>
         <button onClick={onCancel} disabled={busy}>Cancel</button>
@@ -238,7 +243,7 @@ export default function Home({
             </div>
           )}
           {preview && phase !== 'idle' && (
-            <Preview p={preview} busy={phase === 'working'} onConfirm={confirm} onCancel={cancel}
+            <Preview p={preview} busy={phase === 'working'} canScan={config.scans !== false} onConfirm={confirm} onCancel={cancel}
                      onOpenExisting={() => onOpen(preview.info.workspace_id)} />
           )}
 

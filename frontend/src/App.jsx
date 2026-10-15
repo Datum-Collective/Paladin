@@ -57,31 +57,40 @@ function Login({ onDone, config }) {
     try { await bridge.signIn(); setWaiting(true) } catch { setErr('Could not open your browser to sign in.') }
   }
   return (
-    <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
-      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
-      <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      {!config.signin ? (
-        <div className="err" role="alert">
-          <p>Sign-in is not set up on this server.</p>
-          {config.signin_missing && config.signin_missing.length > 0 && (
-            <p className="small">Missing: <code>{config.signin_missing.join(', ')}</code>. Copy <code>.env.example</code> to{' '}
-              <code>backend/.env</code>, fill them in, restart the server, then run{' '}
-              <code>python scripts/check_signin.py</code> to verify.</p>
-          )}
-        </div>
-      ) : waiting ? (
-        <>
-          <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
-          <button type="button" onClick={start}>Open the Browser Again</button>
-          <button type="button" className="link" onClick={() => setWaiting(false)}>Cancel</button>
-        </>
-      ) : (
-        <button type="submit" className="primary"><Icon name="github" size={16} /> Sign In with GitHub</button>
-      )}
-      <p className="muted small">GitHub asks which account to use. Signing in shares only your public profile and email;
-        repository access is a separate step you choose later.</p>
-      {err && <p className="err" role="alert">{err}</p>}
-    </form>
+    <main className="login-page">
+      <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
+        <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+        <h1 className="login-title">See the shortest path to your crown jewels.</h1>
+        <p className="muted login-lede">Paladin turns logs and repository scans into ranked attack paths, then tells you the
+          cheapest fix that cuts the most of them.</p>
+        <ul className="login-points">
+          <li><Icon name="graph" size={14} /> Ranked attack paths from the signals you already have</li>
+          <li><Icon name="check" size={14} /> One cheapest fix, with the paths it removes</li>
+          <li><Icon name="repo" size={14} /> Remediation tracked from finding to merged pull request</li>
+        </ul>
+        {!config.signin ? (
+          <div className="err login-card" role="alert">
+            <p>Sign-in is not set up on this server.</p>
+            {config.signin_missing && config.signin_missing.length > 0 && (
+              <p className="small">Missing: <code>{config.signin_missing.join(', ')}</code>. Copy <code>.env.example</code> to{' '}
+                <code>backend/.env</code>, fill them in, restart the server, then run{' '}
+                <code>python scripts/check_signin.py</code> to verify.</p>
+            )}
+          </div>
+        ) : waiting ? (
+          <div className="login-card">
+            <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
+            <button type="button" onClick={start}>Open the Browser Again</button>
+            <button type="button" className="link" onClick={() => setWaiting(false)}>Cancel</button>
+          </div>
+        ) : (
+          <button type="submit" className="primary login-cta"><Icon name="github" size={16} /> Continue with GitHub</button>
+        )}
+        {err && <p className="err" role="alert">{err}</p>}
+        <p className="muted small login-fine">GitHub asks which account to use. Signing in shares only your public profile
+          and email; repository access is a separate step you choose later.</p>
+      </form>
+    </main>
   )
 }
 

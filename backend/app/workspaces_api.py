@@ -250,7 +250,8 @@ def activity(limit: int = 100, u: dict = Depends(auth.require_user)):
         r["state"] = harness.effective_state(r)
         items.append({"kind": "scan", "id": r["id"], "title": f"Scan {r['repo_url']}", "state": r["state"],
                       "detail": r["error"] or "", "ts": r["updated"],
-                      "retry": r["repo_url"] if r["state"] == "failed" else None})
+                      "retry": r["repo_url"] if r["state"] == "failed" else None,
+                      "cancel": r["state"] in harness.RUNNING})
     for r in remediation.history(ws, limit):
         items.append({"kind": "remediation", "id": r["id"], "title": r["title"] or "Remediation", "action": r["action"],
                       "actor": r["actor"], "detail": r["detail"], "state": r["state"], "ts": r["ts"]})
@@ -284,8 +285,8 @@ def clear_clones(u: dict = Depends(auth.require_user)):
     """Delete cloned working copies of settled scans (done, failed, PR opened). Scans in progress and scans with
     fixes awaiting approval are kept; findings and history always stay."""
     # 'ready' jobs still hold the fix branch awaiting approval, so only settled scans are cleared
-    rows = supa.select("jobs", {"user_id": supa.eq(u["user_id"]), "state": supa.in_(("done", "failed", "pr_opened"))},
-                       columns="id")
+    rows = supa.select("jobs", {"user_id": supa.eq(u["user_id"]),
+                                "state": supa.in_(("done", "failed", "cancelled", "pr_opened"))}, columns="id")
     removed = 0
     for r in rows:
         d = harness.data_root() / str(r["id"])
