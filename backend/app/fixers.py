@@ -282,8 +282,15 @@ def try_fix(content: str, f: dict) -> dict | None:
             ok = new_content != content and total_after <= before_total and changed
         checks.append({"name": "no new findings introduced", "passed": total_after <= before_total})
         if method == "haiku":
+            # compare with the file before the edit: an unrelated finding elsewhere in the same file (still open,
+            # or fixed by a separate patch) must not block a correct fix here. The edit's own text was checked in
+            # _ai_edit, so this only has to show the edit did not add or keep a new tainted call.
+            tainted_before = len(STILL_TAINTED.findall(content))
+            tainted_after = len(STILL_TAINTED.findall(new_content))
+            target = rule in ("code-exec", "shell-injection") or rule.startswith(("ai-command", "ai-injection"))
             checks.append({"name": "user input not left in an executor",
-                           "passed": not STILL_TAINTED.search(new_content)})
+                           "passed": tainted_after < tainted_before if target and tainted_before else
+                           tainted_after <= tainted_before})
         if ok and all(c["passed"] is not False for c in checks):
             return {"content": new_content, "method": method, "explanation": why, "checks": checks}
     return None

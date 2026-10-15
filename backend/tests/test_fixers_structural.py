@@ -92,3 +92,28 @@ def test_timing_fix_keeps_missing_header_rejected():
     for given, key, rejected in ((None, "", True), ("", "", False), ("a", "b", True), ("k", "k", False)):
         ns = {"hmac": hmac, "API_KEY": key, "request": type("R", (), {"headers": {"X-API-Key": given} if given is not None else {}})}
         assert bool(eval(cond, ns)) is rejected, (given, key)   # noqa: S307 - evaluating our own fixed condition
+
+
+def test_an_ai_fix_is_not_blocked_by_an_unrelated_open_finding_in_the_same_file(monkeypatch):
+    """Regression: proposing the password-hash fix for paladin-demo failed every time, because the file still held
+    the unrelated eval(request...) finding and the taint check scanned the whole file."""
+    import json as _json
+    src = ('import hashlib\nfrom flask import request\n\n\ndef password_hash(pw):\n'
+           '    return hashlib.sha256(pw.encode()).hexdigest()\n\n\ndef calc():\n    return eval(request.json["e"])\n')
+    f = {"file": "app/server.py", "rule": "ai-crypto", "line": 6, "cwe": "CWE-916", "technique": "T1110",
+         "line_hash": codescan.line_hash("    return hashlib.sha256(pw.encode()).hexdigest()")}
+    new = "    return hashlib.pbkdf2_hmac('sha256', pw.encode(), b'salt', 600000).hex()"
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: _json.dumps(
+        {"old": "    return hashlib.sha256(pw.encode()).hexdigest()", "new": new, "explanation": "pbkdf2"}))
+    r = fixers.try_fix(src, f)
+    assert r and r["method"] == "haiku" and "pbkdf2_hmac" in r["content"], r
+    assert "eval(request" in r["content"]                       # the other finding is untouched, not "fixed"
+
+
+def test_an_ai_fix_for_an_executor_must_remove_the_tainted_call(monkeypatch):
+    import json as _json
+    src = 'from flask import request\n\n\ndef run():\n    exec(request.args["c"])\n'
+    f = {"file": "a.py", "rule": "code-exec", "line": 5, "cwe": "", "technique": ""}
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: _json.dumps(
+        {"old": 'exec(request.args["c"])', "new": 'exec(request.args["c"])  # reviewed', "explanation": "x"}))
+    assert fixers.try_fix(src, f) is None
