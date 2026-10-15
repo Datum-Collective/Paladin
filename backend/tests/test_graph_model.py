@@ -69,3 +69,22 @@ def test_demo_edges_are_not_valid_targets_in_a_code_only_workspace(client):
     assert client.post("/api/remediations", json={"edges": ["scan-web"]}).status_code == 422
     good = client.get("/api/fixes").json()["best_single"]["edges"]
     assert client.post("/api/remediations", json={"edges": good}).status_code == 200
+
+
+def test_graph_never_contains_edges_to_missing_nodes(client, monkeypatch):
+    """Regression: a stored model with a skipped (invalid) node left edges pointing at nothing, and the browser's
+    graph library throws on such an edge, which blanked the whole app."""
+    from app import codescan
+    sign_in(client)
+    model = {"nodes": [{"id": "a", "kind": "external", "label": "A", "criticality": 1},
+                       {"id": "b", "kind": "data", "label": "B", "criticality": 9},
+                       {"id": "bad", "kind": "data", "label": "X", "criticality": 99}],      # invalid: dropped
+             "edges": [{"id": "e1", "src": "a", "dst": "b", "technique": "T1190", "p": 0.5},
+                       {"id": "e2", "src": "a", "dst": "bad", "technique": "T1190", "p": 0.5},
+                       {"id": "e1", "src": "a", "dst": "b", "technique": "T1190", "p": 0.5}]}   # duplicate id
+    monkeypatch.setattr(codescan, "load_model", lambda ws: model)
+    g = client.get("/api/graph").json()
+    ids = {n["id"] for n in g["nodes"]}
+    assert ids == {"a", "b"}
+    assert [e["id"] for e in g["edges"]] == ["e1"]
+    assert all(e["src"] in ids and e["dst"] in ids for e in g["edges"])

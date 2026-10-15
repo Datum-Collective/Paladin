@@ -58,15 +58,15 @@ def test_deterministic_fixers():
 
 def test_unsafe_ai_patch_is_rejected(monkeypatch):
     f = {"file": "a.py", "rule": "code-exec", "line": 1, "cwe": "", "technique": ""}
-    src = "x = eval(input())\n"
+    src = "x = exec(input())\n"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     # patch that breaks syntax, one that does not remove the finding, one whose old text is absent
-    for bad in ('{"old":"x = eval(input())","new":"x = ((("}',
-                '{"old":"x = eval(input())","new":"x = eval(input())  # ok"}',
+    for bad in ('{"old":"x = exec(input())","new":"x = ((("}',
+                '{"old":"x = exec(input())","new":"x = exec(input())  # ok"}',
                 '{"old":"nonexistent","new":"y"}'):
         monkeypatch.setattr(fixers.ai, "complete", lambda *a, _b=bad, **k: _b)
         assert fixers.try_fix(src, f) is None
-    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: '{"old":"eval(input())","new":"int(input())","explanation":"x"}')
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: '{"old":"exec(input())","new":"int(input())","explanation":"x"}')
     assert fixers.try_fix(src, f)["content"] == "x = int(input())\n"
 
 

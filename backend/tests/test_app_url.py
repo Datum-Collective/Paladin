@@ -63,7 +63,8 @@ def test_vercel_entrypoint_exposes_the_asgi_app():
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    code = ("import api.index as m; paths={r.path for r in m.app.routes}; "
+    # FastAPI 0.14x wraps included routers (no .path), so resolve the routes by name through the schema
+    code = ("import api.index as m; paths={getattr(r, 'path', None) for r in m.app.routes} | set(m.app.openapi()['paths']); "
             "assert '/health' in paths and '/api/config' in paths and '/api/auth/login' in paths, paths; print('ok')")
     r = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
                        env={"PATH": __import__("os").environ["PATH"], "PYTHONPATH": str(root), "APC_SKIP_DOTENV": "1",

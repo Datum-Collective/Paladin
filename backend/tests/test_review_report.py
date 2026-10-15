@@ -154,7 +154,7 @@ def test_ai_review_fix_must_change_the_flagged_line(monkeypatch):
 def test_fix_prompt_window_is_redacted_and_masked_edits_rejected(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     seen = {}
-    src = 'import hashlib\nK = "sk-live-abcdef1234567890"\nx = eval(input())\n'
+    src = 'import hashlib\nK = "sk-live-abcdef1234567890"\nx = exec(input())\n'
     f = {"file": "a.py", "line": 3, "rule": "code-exec", "cwe": "", "technique": ""}
 
     def fake(system, user, *a, **k):

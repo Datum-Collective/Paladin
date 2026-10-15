@@ -193,15 +193,16 @@ function Shell({ config, user, onSignOut, onExpired }) {
   }, [wsl, prefs, toast])
   const chooseFolder = useCallback(() => (bridge && bridge.chooseFolder ? bridge.chooseFolder() : Promise.resolve(null)), [])
 
-  const importRepo = useCallback(async (q) => {
-    const r = await wsl.importRepo(q)               // throws to Home, which shows the message inline
+  const importRepo = useCallback(async (q, rescan = false) => {
+    const r = await wsl.importRepo(q, rescan)       // throws to Home, which shows the message inline
     setSelected(null)
     setView(prefs['general.after_import'] === 'analysis' ? 'analysis' : 'repo')
-    toast(r.reopened ? `Opened ${r.workspace.name}` : `Scanning ${r.workspace.name}`, 'ok')
+    toast(r.rescanned ? `Scanning ${r.workspace.name} again` : r.reopened ? `Opened ${r.workspace.name}`
+      : `Scanning ${r.workspace.name}`, 'ok')
   }, [wsl, prefs, toast])
   const retryScan = useCallback(async (target) => {      // stays where it is: the user is looking at Activity
     if (classifyInput(target) === 'path') await api.importLocal(target)
-    else await api.importRepo(target)
+    else await api.importRepo(target, true)
     await wsl.reload()
     toast('Scan restarted', 'ok')
   }, [wsl, toast])

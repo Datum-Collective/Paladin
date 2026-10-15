@@ -25,6 +25,7 @@ class RenameBody(BaseModel):
 
 class QueryBody(BaseModel):
     query: str = Field(max_length=400)
+    rescan: bool = False   # "Scan Again": always start a new scan, never hand back the previous result
 
 
 def _ws(fn, *a):
@@ -77,14 +78,14 @@ async def import_repo(b: QueryBody, u: dict = Depends(auth.require_user)):
         jobs = await T(harness.list_jobs, existing["id"])
         try:
             # reuse the latest scan unless there is none or it failed (the user is probably retrying after a fix)
-            if jobs and jobs[0].get("state") != "failed":
+            if jobs and jobs[0].get("state") != "failed" and not b.rescan:
                 job = await T(harness.get, existing["id"], jobs[0]["id"])
             else:
                 job = await harness_api.start_scan({**u, "id": existing["id"]}, existing["repo_url"])
         except (ValueError, RuntimeError) as e:
             raise HTTPException(409, str(e)) from None
         await T(workspaces.open_, uid, existing["id"])      # switch only once the scan is known to be running
-        return {"workspace": await T(workspaces._row, existing), "job": job, "reopened": True,
+        return {"workspace": await T(workspaces._row, existing), "job": job, "reopened": True, "rescanned": b.rescan,
                 **await T(workspaces.listing, uid)}
     info = await _repo_info(uid, *parsed)
     previous = await T(workspaces.active, uid)

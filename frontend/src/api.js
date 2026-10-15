@@ -63,7 +63,7 @@ export const api = {
   githubDisconnect: (id) => req('DELETE', `/api/github/installations/${encodeURIComponent(id)}`),
   workspaces: () => req('GET', '/api/workspaces'),
   createWorkspace: (name) => req('POST', '/api/workspaces', { name: name || null }),
-  importRepo: (query) => req('POST', '/api/workspaces/import', { query }),
+  importRepo: (query, rescan = false) => req('POST', '/api/workspaces/import', { query, rescan }),
   openWorkspace: (id) => req('POST', `/api/workspaces/${id}/open`),
   renameWorkspace: (id, name) => req('PATCH', `/api/workspaces/${id}`, { name }),
   deleteWorkspace: (id) => req('DELETE', `/api/workspaces/${id}`),
