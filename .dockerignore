@@ -2,6 +2,7 @@
 .gitignore
 .env
 .env.*
+backend/.env
 !.env.example
 **/__pycache__
 **/*.pyc
