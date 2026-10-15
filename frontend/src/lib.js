@@ -96,6 +96,7 @@ export function workspaceStatus(w) {
   const st = w.status
   if (st && RUNNING.has(st.state)) return { tone: 'info', label: STATE_LABEL[st.state], busy: true, detail: '' }
   if (st && st.state === 'failed') return { tone: 'bad', label: 'Scan failed', busy: false, detail: st.error || '' }
+  if (st && st.state === 'cancelled') return { tone: 'mute', label: 'Cancelled', busy: false, detail: '' }
   if (st && st.state === 'pr_opened') return { tone: 'ok', label: 'Pull request opened', busy: false, detail: '' }
   if (st && st.state === 'ready') return { tone: 'ok', label: 'Fixes ready', busy: false, detail: '' }
   if (st && st.state === 'done') return { tone: 'ok', label: 'Scanned', busy: false, detail: '' }

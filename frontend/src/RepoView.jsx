@@ -104,6 +104,10 @@ export default function RepoView({ onDone }) {
     setErr(''); setBusy(true)
     try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
+  const cancel = async () => {
+    setErr(''); setBusy(true)
+    try { setJob(await api.hCancel(job.id)); onDone() } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(job.diff)
@@ -120,6 +124,7 @@ export default function RepoView({ onDone }) {
           <input placeholder="https://github.com/owner/repo" value={url} aria-label="GitHub repository URL"
                  onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && url && !running && run()} />
           <button className="primary" onClick={run} disabled={!url || running}>{running ? 'Scanning' : 'Scan'}</button>
+          {running && <button onClick={cancel} disabled={busy}>{busy ? 'Cancelling…' : 'Cancel'}</button>}
         </div>
         <p className="muted small">AI {cfg.ai_enabled ? 'on' : 'off'} · Pull requests {cfg.github_enabled ? 'enabled' : 'unavailable (patch download only)'}</p>
         {err && <p className="err">{err}</p>}
@@ -127,8 +132,8 @@ export default function RepoView({ onDone }) {
           <>
             <div className="status">
               <b>{job.repo_url}</b>
-              <span className={`pill ${job.state === 'failed' ? 'bad' : running ? 'info' : 'ok'}`}>
-                {job.state === 'pr_opened' ? 'PR opened' : job.state}
+              <span className={`pill ${job.state === 'failed' ? 'bad' : running ? 'info' : job.state === 'cancelled' ? 'mute' : 'ok'}`}>
+                {job.state === 'pr_opened' ? 'PR opened' : job.state === 'cancelled' ? 'Cancelled' : job.state}
               </span>
             </div>
             {job.error && <p className="err">{job.error}</p>}
@@ -140,7 +145,7 @@ export default function RepoView({ onDone }) {
       </aside>
       <main className="repo-main">
         {!job && <div className="empty"><h2>No repository scanned</h2><p className="muted">Changes appear here as a reviewable diff.</p></div>}
-        {job && job.fixes.length === 0 && !running && (
+        {job && job.fixes.length === 0 && !running && job.state !== 'cancelled' && (
           <div className="empty"><h2>No code changes</h2>
             <p className="muted">{job.findings.length ? 'Nothing could be fixed safely and automatically. See the findings.' : 'Nothing needed changing.'}</p></div>
         )}

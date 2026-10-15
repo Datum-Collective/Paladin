@@ -11,6 +11,7 @@ import WorkspacesView from './WorkspacesView.jsx'
 import ActivityView from './ActivityView.jsx'
 import IntegrationsView from './IntegrationsView.jsx'
 import { ConfirmDialog, NewWorkspaceDialog } from './Dialogs.jsx'
+import Onboarding from './Onboarding.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
@@ -58,31 +59,40 @@ function Login({ onDone, config }) {
     try { await bridge.signIn(); setWaiting(true) } catch { setErr('Could not open your browser to sign in.') }
   }
   return (
-    <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
-      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
-      <p className="muted">Turn scattered security signals into ranked attack paths and the cheapest fix.</p>
-      {!config.signin ? (
-        <div className="err" role="alert">
-          <p>Sign-in is not set up on this server.</p>
-          {config.signin_missing && config.signin_missing.length > 0 && (
-            <p className="small">Missing: <code>{config.signin_missing.join(', ')}</code>. Copy <code>.env.example</code> to{' '}
-              <code>backend/.env</code>, fill them in, restart the server, then run{' '}
-              <code>python scripts/check_signin.py</code> to verify.</p>
-          )}
-        </div>
-      ) : waiting ? (
-        <>
-          <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
-          <button type="button" onClick={start}>Open the Browser Again</button>
-          <button type="button" className="link" onClick={() => setWaiting(false)}>Cancel</button>
-        </>
-      ) : (
-        <button type="submit" className="primary"><Icon name="github" size={16} /> Sign In with GitHub</button>
-      )}
-      <p className="muted small">GitHub asks which account to use. Signing in shares only your public profile and email;
-        repository access is a separate step you choose later.</p>
-      {err && <p className="err" role="alert">{err}</p>}
-    </form>
+    <main className="login-page">
+      <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
+        <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+        <h1 className="login-title">See the shortest path to your crown jewels.</h1>
+        <p className="muted login-lede">Paladin turns logs and repository scans into ranked attack paths, then tells you the
+          cheapest fix that cuts the most of them.</p>
+        <ul className="login-points">
+          <li><Icon name="graph" size={14} /> Ranked attack paths from the signals you already have</li>
+          <li><Icon name="check" size={14} /> One cheapest fix, with the paths it removes</li>
+          <li><Icon name="repo" size={14} /> Remediation tracked from finding to merged pull request</li>
+        </ul>
+        {!config.signin ? (
+          <div className="err login-card" role="alert">
+            <p>Sign-in is not set up on this server.</p>
+            {config.signin_missing && config.signin_missing.length > 0 && (
+              <p className="small">Missing: <code>{config.signin_missing.join(', ')}</code>. Copy <code>.env.example</code> to{' '}
+                <code>backend/.env</code>, fill them in, restart the server, then run{' '}
+                <code>python scripts/check_signin.py</code> to verify.</p>
+            )}
+          </div>
+        ) : waiting ? (
+          <div className="login-card">
+            <p>Continue in your browser. Paladin opens as soon as you are signed in.</p>
+            <button type="button" onClick={start}>Open the Browser Again</button>
+            <button type="button" className="link" onClick={() => setWaiting(false)}>Cancel</button>
+          </div>
+        ) : (
+          <button type="submit" className="primary login-cta"><Icon name="github" size={16} /> Continue with GitHub</button>
+        )}
+        {err && <p className="err" role="alert">{err}</p>}
+        <p className="muted small login-fine">GitHub asks which account to use. Signing in shares only your public profile
+          and email; repository access is a separate step you choose later.</p>
+      </form>
+    </main>
   )
 }
 
@@ -90,12 +100,13 @@ function Splash({ error, onRetry }) {
   return (
     <div className="splash">
       <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+      {!error && <span className="splash-bar" aria-hidden="true" />}
       {error ? (
         <>
           <p className="err" role="alert">{error}</p>
           <button onClick={onRetry}>Try Again</button>
         </>
-      ) : <p className="muted">Starting…</p>}
+      ) : <span className="sr-only" role="status">Loading</span>}
     </div>
   )
 }
@@ -105,7 +116,7 @@ const TITLES = { home: 'Home', workspaces: 'Workspaces', analysis: 'Analysis', r
 
 function Shell({ config, user, onSignOut, onExpired }) {
   const toast = useToast()
-  const { prefs, ready: prefsReady } = usePrefs()
+  const { prefs, set: setPref, ready: prefsReady } = usePrefs()
   const wsl = useWorkspaces(user)
   const ws = useWorkspace(user, onExpired, wsl.active)
   const [view, setView] = useState(null)               // null until preferences and workspaces are known
@@ -143,13 +154,15 @@ function Shell({ config, user, onSignOut, onExpired }) {
   // web users whose server already holds a key) go straight in; setup stays reachable from Settings and the palette.
   const checkedSetup = useRef(false)
   useEffect(() => {
-    if (checkedSetup.current || !prefsReady) return
+    if (checkedSetup.current || !prefsReady || !wsl.loaded) return
+    const welcoming = !prefs['general.welcome_seen'] && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
+    if (welcoming) return                      // the welcome tour comes first; this re-runs when it finishes
     checkedSetup.current = true
     if (prefs['general.setup_done'] || prefs['general.setup_skipped']) return
     api.providers().then((r) => {
       if (!r.providers.some((p) => p.configured)) setSetupOpen(true)
     }).catch(() => {})
-  }, [prefsReady, prefs])
+  }, [prefsReady, wsl.loaded, wsl.workspaces, prefs])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
@@ -218,6 +231,17 @@ function Shell({ config, user, onSignOut, onExpired }) {
     }
     if (table[id]) table[id]()
   }, [ws, fx, go, goSettings, chooseFolder, toast, setSidebarOpen, setInspectorOpen, setRail])
+
+  // first-run guide: brand-new accounts only (nothing imported yet), once; any way out remembers it was seen
+  const isNew = wsl.loaded && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
+  const showWelcome = prefsReady && !prefs['general.welcome_seen'] && isNew
+  const finishWelcome = useCallback(async (choice, opts) => {
+    await setPref('general.welcome_seen', true)
+    if (opts && opts.keepOpen) return
+    if (choice === 'sample') { setView('analysis'); run('play') }
+    else if (choice === 'repo') run('open-repo')
+    else setView('home')
+  }, [setPref, run])
 
   // native menu bar -> same table (desktop)
   const runRef = useRef(run)
@@ -333,6 +357,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       </div>
 
       {setupOpen && <Setup config={config} onClose={() => { setSetupOpen(false); setSetupRuns((n) => n + 1) }} onOpenAssistant={() => setView('assistant')} />}
+      {showWelcome && <Onboarding config={config} user={user} canPlay={ws.canPlay} onFinish={finishWelcome} />}
       {newDlg && (
         <NewWorkspaceDialog desktop={config.desktop} onCancel={() => setNewDlg(false)} onCreate={createNamed}
                             onImportRepo={importRepo} onImportFolder={importLocal} onChooseFolder={chooseFolder} />

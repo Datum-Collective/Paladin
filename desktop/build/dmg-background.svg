@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400" width="660" height="400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfe0ff"/><stop offset="0.38" stop-color="#f1ecff"/><stop offset="0.72" stop-color="#ffe6d2"/><stop offset="1" stop-color="#ffcfa6"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="1.1" r="0.7"><stop offset="0" stop-color="#fff4d6"/><stop offset="0.45" stop-color="#ffd9a0" stop-opacity="0.7"/><stop offset="1" stop-color="#ffbe82" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="660" height="400" fill="url(#bg)"/><rect width="660" height="400" fill="url(#sun)"/>
+  <text x="330" y="62" text-anchor="middle" font-family="-apple-system, 'SF Pro Display', Helvetica, Arial" font-size="24" font-weight="650" fill="#2b211c" letter-spacing="-0.4">Install Paladin</text>
+  <text x="330" y="88" text-anchor="middle" font-family="-apple-system, 'SF Pro Text', Helvetica, Arial" font-size="13.5" fill="#6b5a50">Drag the icon into your Applications folder</text>
+  <g stroke="#2b211c" stroke-opacity="0.55" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M262 200 H392"/><path d="M372 180 L396 200 L372 220"/>
+  </g>
+  <text x="330" y="362" text-anchor="middle" font-family="-apple-system, Helvetica, Arial" font-size="11.5" fill="#6b5a50" opacity="0.9">Paladin · attack path compiler</text>
+</svg>
