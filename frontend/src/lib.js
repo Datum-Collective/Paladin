@@ -178,6 +178,20 @@ export function pathLabels(ids, nodes) {
   return ids.map((i) => by.get(i) || i)
 }
 
+/** The line shown above the analysis while a scan is running or has just failed; null when there is nothing to say. */
+export function scanBanner(scan, paths = 0) {
+  if (!scan) return null
+  const repo = scan.repo_url ? scan.repo_url.split(/[\\/]/).filter(Boolean).slice(-2).join('/') : 'the repository'
+  const now = `${paths} attack path${paths === 1 ? '' : 's'} so far`
+  const age = scan.updated ? Date.now() / 1000 - scan.updated : 0
+  if (scan.state === 'queued' || scan.state === 'cloning') return { busy: true, tone: 'info', text: `Fetching ${repo}…` }
+  if (scan.state === 'scanning') return { busy: true, tone: 'info', text: `Scanning ${repo}. ${now}; the graph, paths and fixes update as findings arrive.` }
+  if (scan.state === 'fixing') return { busy: true, tone: 'info', text: `Preparing fixes for ${repo}. ${now}.` }
+  if (scan.state === 'failed' && age < 600) return { busy: false, tone: 'bad', text: `The scan of ${repo} failed${scan.error ? `: ${scan.error}` : ''}. ${paths ? `Showing the ${now.replace(' so far', '')} found before it stopped.` : ''}`.trim() }
+  if (scan.state === 'cancelled' && age < 600) return { busy: false, tone: 'warn', text: `The scan of ${repo} was cancelled. ${paths ? `Showing the ${now.replace(' so far', '')} found before it stopped.` : ''}`.trim() }
+  return null
+}
+
 const STAGES = [['clone', 'Fetch repository', ['queued', 'cloning']], ['scan', 'Find weaknesses', ['scanning']],
   ['paths', 'Build attack paths', ['fixing']], ['done', 'Results ready', ['ready', 'done', 'pr_opened']]]
 

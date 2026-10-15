@@ -402,9 +402,22 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             return
         _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
                   f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
+        codescan.clear(ws)    # the previous scan's results are not this repository's: never show them as current
+
+        def emit(fs: list[dict], refs: dict, stage: str) -> None:
+            """Results so far, stored while the scan is still running: the graph, paths, fixes and the findings
+            list all update from this (the live stream watches the stored model)."""
+            if cancel_event.is_set():
+                return
+            try:
+                codescan.persist(ws, f"{owner}/{repo}", fs, ai.enabled(), len(kept), refs=refs, job=jid)
+                _upd(jid, findings=json.dumps([{k: v for k, v in f.items() if k != "context"} for f in fs]))
+            except Exception as e:  # noqa: BLE001 - a storage hiccup must not kill the scan; the final write retries
+                log.warning("progressive results not stored: %s", type(e).__name__)
+
         findings, ai_used, n, stats, repo_map = crawler.analyze(
             files, cancelled=cancel_event.is_set, progress=lambda m: _log(jid, m),
-            cache_dir=data_root() / "ai-cache" / str(ws))
+            cache_dir=data_root() / "ai-cache" / str(ws), emit=emit)
         if cancel_event.is_set():
             raise Cancelled()
         rep = coverage(src, kept, findings, stats, ai.enabled())

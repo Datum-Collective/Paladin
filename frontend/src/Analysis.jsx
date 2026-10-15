@@ -4,11 +4,23 @@ import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
 import { Tabs } from './ui.jsx'
-import { pathLabels } from './lib.js'
+import { pathLabels, scanBanner } from './lib.js'
 import { ElementDetail, Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
+/** One line above the panes while a scan runs (or after it failed): what it is doing and how much has arrived. */
+function ScanBanner({ scan, paths }) {
+  const b = scanBanner(scan, paths)
+  if (!b) return null
+  return (
+    <div className={`scan-banner ${b.tone}`} role="status" aria-live="polite">
+      {b.busy && <span className="spinner tiny" aria-hidden="true" />}
+      <span>{b.text}</span>
+    </div>
+  )
+}
+
 export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
-  const { graph, paths, fixes, events, rems, empty, canPlay, play, refresh, propose } = state
+  const { graph, paths, fixes, events, rems, empty, canPlay, play, refresh, propose, scan } = state
   const [left, setLeft] = useStored('w-left', 280)
   const [right, setRight] = useStored('w-right', 360)
   const [inspect, setInspect] = useStored('inspector', 'path')
@@ -29,6 +41,7 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
 
   return (
     <main className="analysis" ref={root} style={{ gridTemplateColumns: `${leftW}px 1fr ${rightW}px` }}>
+      <ScanBanner scan={scan} paths={paths.length} />
       <section className="pane left" aria-label="Paths, events and data">
         <Tabs label="Paths, events and data" value={tab} onChange={setTab}
               tabs={[{ id: 'paths', label: 'Paths', count: paths.length }, { id: 'events', label: 'Events' }, { id: 'ingest', label: 'Import' }]} />

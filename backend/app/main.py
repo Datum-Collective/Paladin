@@ -312,8 +312,11 @@ async def stream(request: Request, u: dict = Depends(auth.require_user)):
         tick, code_ver = 0, None
         while not await request.is_disconnected():
             try:   # Supabase calls block: off the event loop (the thread inherits this request's session)
-                if tick % 4 == 0:   # a stored scan is rare: check it every 2 s, the live counters every 0.5 s
-                    code_ver = await asyncio.to_thread(codescan.version, ws)
+                if tick % 4 == 0:   # scans change slowly: check them every 2 s, the live counters every 0.5 s
+                    def scan_sig():
+                        j = supa.select("jobs", {"ws": supa.eq(ws)}, columns="id,state", order="id.desc", limit=1)
+                        return (codescan.version(ws), j[0]["id"] if j else 0, j[0]["state"] if j else "")
+                    code_ver = await asyncio.to_thread(scan_sig)
                 tick += 1
                 ver = await asyncio.to_thread(lambda: (store.event_count(ws), len(store.applied_fixes(ws)), code_ver))
             except supa.DataError:

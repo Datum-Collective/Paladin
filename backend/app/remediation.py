@@ -80,6 +80,8 @@ def propose(ws: int, actor: str, edge_ids: list[str], title: str) -> dict:
     code = [e for e in edge_ids if codefix.is_code_edge(e)]
     if code and len(code) != len(edge_ids):
         raise ValueError("Code fixes and log-environment fixes are separate remediations. Propose them one at a time.")
+    if code and codefix.scan_running(ws):
+        raise ValueError(codefix.STILL_RUNNING)
     if code and codefix.latest_job(ws) is not None:
         return _propose_code(ws, actor, edge_ids, title)
     # a code model with no repository scan behind it (findings uploaded through the API): there is no source copy to

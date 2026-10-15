@@ -76,6 +76,15 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+STILL_RUNNING = ("The scan is still running. Results are shown as they arrive, but a fix is prepared from the "
+                 "finished scan: propose it when the scan completes.")
+
+
+def scan_running(ws: int) -> bool:
+    newest = supa.select("jobs", {"ws": supa.eq(ws)}, columns="id,state", order="id.desc", limit=1)
+    return bool(newest) and harness.effective_state(newest[0]) in harness.RUNNING
+
+
 def latest_job(ws: int) -> dict | None:
     for r in supa.select("jobs", {"ws": supa.eq(ws)}, order="id.desc", limit=8):
         if r["state"] in SETTLED and isinstance(r.get("findings"), list) and r["findings"]:
@@ -130,6 +139,8 @@ def plan(ws: int, edge_ids: list[str]) -> dict:
     if not ids:
         raise FixError("These steps are exposure, not weaknesses in code, so there is nothing to patch. "
                        "Pick the weakness steps (the fixes list does).")
+    if scan_running(ws):
+        raise FixError(STILL_RUNNING)
     job = latest_job(ws)
     if not job:
         raise FixError("No finished scan with findings in this workspace.")
