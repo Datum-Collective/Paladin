@@ -71,19 +71,29 @@ class _Redact:
 REDACT = _Redact()
 
 
+MAX_PATH = 300
+_SKIP_DIR_NAMES = frozenset(directory.rstrip("/") for directory in SKIP_DIRS)
+
+
+def in_skipped_dir(path: str) -> bool:
+    """Match whole directory names, so e.g. ``rebuild`` remains scannable."""
+    return any(segment in _SKIP_DIR_NAMES for segment in path.lower().split("/")[:-1])
+
+
 def accept_files(files: list[dict]) -> list[dict]:
     out, total = [], 0
     for f in files:
         p, c = str(f.get("path", "")), f.get("content", "")
-        if not isinstance(c, str) or ".." in p or p.startswith("/"):
+        if (not isinstance(c, str) or p.startswith("/") or ".." in p.split("/")
+                or "\\" in p or len(p) > MAX_PATH):
             continue
         low = p.lower()
-        if any(d in low for d in SKIP_DIRS) or low.endswith(SKIP_FILES) or not low.endswith(CODE_EXT):
+        if in_skipped_dir(p) or low.endswith(SKIP_FILES) or not low.endswith(CODE_EXT):
             continue
         if len(c) > MAX_FILE_BYTES or total + len(c) > MAX_TOTAL_BYTES:
             continue
         total += len(c)
-        out.append({"path": p[:300], "content": c})
+        out.append({"path": p, "content": c})
         if len(out) >= MAX_FILES:
             break
     return out
