@@ -5,6 +5,13 @@
 // download finishes, restart into the new version after `installDelayMs` (long enough for the UI to say so).
 // Updates only run in a packaged build. On macOS the app must be Developer ID signed for the swap to succeed:
 // when it cannot be applied the state carries `releaseUrl` so the UI can send the person to the download page.
+// A build made without a publish feed (no resources/app-update.yml, e.g. the Windows build while releases are
+// private) has updates off instead of failing a check every half hour.
+const fs = require('node:fs')
+const path = require('node:path')
+
+const hasFeedFile = () => Boolean(process.resourcesPath) && fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
+
 const DEFAULTS = {
   intervalMs: 30 * 60 * 1000,    // how often to look for a newer release while the app stays open
   firstCheckMs: 5000,            // first look, shortly after launch
@@ -13,16 +20,17 @@ const DEFAULTS = {
 }
 
 function createUpdater({ app, send, log = () => {}, releaseUrl = '', load = () => require('electron-updater'),
-  timers = { setTimeout, setInterval, clearTimeout, clearInterval }, ...opts }) {
+  timers = { setTimeout, setInterval, clearTimeout, clearInterval }, hasFeed = hasFeedFile, ...opts }) {
   const cfg = { ...DEFAULTS, ...opts }
-  let state = { phase: app.isPackaged ? 'idle' : 'disabled', version: null, percent: 0, error: null, releaseUrl: '' }
+  const enabled = app.isPackaged && hasFeed()
+  let state = { phase: enabled ? 'idle' : 'disabled', version: null, percent: 0, error: null, releaseUrl: '' }
   const set = (patch) => { state = { ...state, ...patch }; send(state) }
   let autoUpdater = null
   let interval = null
   let installTimer = null
   let busy = false
 
-  if (app.isPackaged) {
+  if (enabled) {
     try {
       ;({ autoUpdater } = load())
       autoUpdater.autoDownload = true

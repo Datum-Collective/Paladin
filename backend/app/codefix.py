@@ -118,8 +118,8 @@ def _diff(path: str, before: str, after: str) -> str:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(text, encoding="utf-8", newline="")
         # empty prefixes: the scratch layout (a/<path>, b/<path>) already is a normal git patch's a/ and b/
-        r = subprocess.run(_GIT + ["diff", "--no-index", "--no-color", "--no-ext-diff", "--src-prefix=", "--dst-prefix=",
-                                   f"a/{path}", f"b/{path}"], cwd=d, capture_output=True, text=True, env=_env())
+        r = _bytes_run(_GIT + ["diff", "--no-index", "--no-color", "--no-ext-diff", "--src-prefix=", "--dst-prefix=",
+                               f"a/{path}", f"b/{path}"], cwd=d, env=_env())
     out = r.stdout
     if r.returncode not in (0, 1) or not out.strip():
         raise FixError(f"Could not build a patch for {path}.")
@@ -197,9 +197,16 @@ def target(job_repo: str) -> tuple[str, Path | str]:
     return "remote", job_repo
 
 
+def _bytes_run(cmd: list[str], data: str | None = None, **kw) -> subprocess.CompletedProcess:
+    """Run git exchanging raw bytes: text mode would rewrite every \n as \r\n on Windows and corrupt patches."""
+    r = subprocess.run(cmd, input=None if data is None else data.encode("utf-8"), capture_output=True, **kw)
+    return subprocess.CompletedProcess(r.args, r.returncode, r.stdout.decode("utf-8", "replace"),
+                                       r.stderr.decode("utf-8", "replace"))
+
+
 def _git_apply(folder: Path, patch: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(_GIT + ["-C", str(folder), "apply", "--whitespace=nowarn", "-C1", *args, "-"],
-                          input=patch, capture_output=True, text=True, timeout=60, env=_env())
+    return _bytes_run(_GIT + ["-C", str(folder), "apply", "--whitespace=nowarn", "-C1", *args, "-"], patch,
+                      timeout=60, env=_env())
 
 
 def _why(stderr: str, folder: Path) -> str:
@@ -207,8 +214,65 @@ def _why(stderr: str, folder: Path) -> str:
     return (" ".join(first).replace(str(folder), "") or "the patch does not apply")[:240]
 
 
+def _sections(patch: str) -> list[str]:
+    """The per-file parts of a multi-file git patch, in order."""
+    parts = re.split(r"(?m)^(?=diff --git )", patch)
+    return [p for p in parts if p]
+
+
+def _section_path(section: str) -> str | None:
+    """The file a patch part changes, from its `+++ b/<path>` line (None for a quoted or unusual header)."""
+    m = re.search(r"(?m)^\+\+\+ b/(.+)$", section)
+    return m.group(1).rstrip("\t") if m else None   # git ends a name that has spaces with a tab
+
+
+def _uses_crlf(p: Path) -> bool:
+    """True when every line break in the file is CRLF (a Windows checkout with core.autocrlf)."""
+    try:
+        data = p.read_bytes() if p.is_file() and not p.is_symlink() else b""
+    except OSError:
+        return False
+    lf = data.count(b"\n")
+    return lf > 0 and data.count(b"\r\n") == lf
+
+
+def _to_crlf(section: str) -> str:
+    """One file's patch with CRLF on its content lines, so it matches a CRLF working copy. Headers, hunk headers and
+    the 'No newline at end of file' marker keep LF, and a line followed by that marker gets no CR (it has no break)."""
+    lines = section.split("\n")
+    out = []
+    in_hunk = False
+    for i, ln in enumerate(lines):
+        if ln.startswith("@@"):
+            in_hunk = True
+        elif ln.startswith("diff --git "):
+            in_hunk = False
+        elif in_hunk and ln[:1] in (" ", "+", "-") and i + 1 < len(lines):
+            nxt = lines[i + 1]
+            if not nxt.startswith("\\") and not ln.endswith("\r"):
+                ln += "\r"
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _for_folder(folder: Path, patch: str) -> str:
+    """The patch with each file's part in that file's line endings. Fixes are computed from the scanned copy (LF),
+    while a Windows checkout usually holds CRLF; git apply compares bytes, so an LF patch would never apply there.
+    Files that are LF or mixed keep the patch as it is (git apply --check still has the last word)."""
+    out = []
+    for s in _sections(patch):
+        rel = _section_path(s)
+        try:
+            crlf = rel is not None and _uses_crlf(safe_join(folder, rel))
+        except FixError:
+            crlf = False
+        out.append(_to_crlf(s) if crlf else s)
+    return "".join(out)
+
+
 def apply_local(folder: Path, patch: str, reverse: bool = False) -> None:
     flag = ["-R"] if reverse else []
+    patch = _for_folder(folder, patch)
     chk = _git_apply(folder, patch, "--check", *flag)
     if chk.returncode != 0:
         raise FixError(("The files changed since the scan, so Paladin did not touch them: " if not reverse else

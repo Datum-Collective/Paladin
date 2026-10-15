@@ -20,6 +20,7 @@ import concurrent.futures as cf
 import hashlib
 import json
 import os
+import posixpath
 import re
 import time
 from collections import Counter, deque
@@ -112,7 +113,7 @@ def _dependencies(path: str, content: str) -> list[dict]:
 def _resolve(src: str, spec: str, paths: set[str], kind: str) -> str | None:
     base = PurePosixPath(src).parent
     if kind == "js":
-        target = PurePosixPath(os.path.normpath(str(base / spec)))
+        target = PurePosixPath(posixpath.normpath(str(base / spec)))
         cands = [str(target)] + [f"{target}{e}" for e in (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")] + \
                 [f"{target}/index{e}" for e in (".js", ".ts", ".jsx", ".tsx")]
     else:
@@ -123,7 +124,7 @@ def _resolve(src: str, spec: str, paths: set[str], kind: str) -> str | None:
             roots.append(PurePosixPath("."))
         cands = []
         for r in roots:
-            t = PurePosixPath(os.path.normpath(str(r / mod))) if mod else r
+            t = PurePosixPath(posixpath.normpath(str(r / mod))) if mod else r
             cands += [f"{t}.py", f"{t}/__init__.py"]
     for c in cands:
         c = c[2:] if c.startswith("./") else c

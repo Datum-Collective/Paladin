@@ -458,7 +458,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
         for p, new in _final_contents(files, fixes).items():
             if cancel_event.is_set():
                 raise Cancelled()
-            (src / p).write_text(new, encoding="utf-8")
+            (src / p).write_text(new, encoding="utf-8", newline="")
         if cancel_event.is_set():
             raise Cancelled()
         verification = _verify_tree(src, files, fixes, findings)

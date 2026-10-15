@@ -20,6 +20,7 @@ import { classifyInput, pathKey, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
 import Icon from './Icons.jsx'
+import Brand from './Brand.jsx'
 import { SEV_TONE } from './parts.jsx'
 import { ToastProvider, useToast } from './toast.jsx'
 import { useWorkspace } from './useWorkspace.js'
@@ -63,15 +64,23 @@ function Login({ onDone, config }) {
   return (
     <main className="login-page">
       <form className="login" onSubmit={(e) => { e.preventDefault(); start() }}>
-        <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
-        <h1 className="login-title">See the shortest path to your crown jewels.</h1>
-        <p className="muted login-lede">Paladin turns logs and repository scans into ranked attack paths, then tells you the
-          cheapest fix that cuts the most of them.</p>
-        <ul className="login-points">
-          <li><Icon name="graph" size={14} /> Ranked attack paths from the signals you already have</li>
-          <li><Icon name="check" size={14} /> One cheapest fix, with the paths it removes</li>
-          <li><Icon name="repo" size={14} /> Remediation tracked from finding to merged pull request</li>
-        </ul>
+        <Brand big />
+        {/* Windows app: the PALADIN card from the brand references; elsewhere the existing introduction */}
+        <div className="win-only login-head">
+          <h1 className="login-title">Authenticate to PALADIN</h1>
+          <p className="login-eyebrow">Attack path intelligence</p>
+          <p className="muted">Sign in to access your security workspace.</p>
+        </div>
+        <div className="not-win">
+          <h1 className="login-title">See the shortest path to your crown jewels.</h1>
+          <p className="muted login-lede">Paladin turns logs and repository scans into ranked attack paths, then tells you the
+            cheapest fix that cuts the most of them.</p>
+          <ul className="login-points">
+            <li><Icon name="graph" size={14} /> Ranked attack paths from the signals you already have</li>
+            <li><Icon name="check" size={14} /> One cheapest fix, with the paths it removes</li>
+            <li><Icon name="repo" size={14} /> Remediation tracked from finding to merged pull request</li>
+          </ul>
+        </div>
         {!config.signin ? (
           <div className="err login-card" role="alert">
             <p>Sign-in is not set up on this server.</p>
@@ -91,8 +100,10 @@ function Login({ onDone, config }) {
           <button type="submit" className="primary login-cta"><Icon name="github" size={16} /> Continue with GitHub</button>
         )}
         {err && <p className="err" role="alert">{err}</p>}
-        <p className="muted small login-fine">GitHub asks which account to use. Signing in shares only your public profile
+        <p className="muted small login-fine not-win">GitHub asks which account to use. Signing in shares only your public profile
           and email; repository access is a separate step you choose later.</p>
+        <p className="muted small login-fine win-only">Secure authentication powered by GitHub. Repository access is a
+          separate step you choose later.</p>
       </form>
     </main>
   )
@@ -101,7 +112,7 @@ function Login({ onDone, config }) {
 function Splash({ error, onRetry }) {
   return (
     <div className="splash">
-      <span className="brand big"><span className="brand-mark" aria-hidden="true" />Paladin</span>
+      <Brand big />
       {!error && <span className="splash-bar" aria-hidden="true" />}
       {error ? (
         <>
@@ -228,7 +239,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       'check-updates': async () => {
         if (!bridge) return
         const s = await bridge.checkForUpdates()
-        toast(s.phase === 'disabled' ? 'Updates are off in development builds.' : 'Checking for updates…')
+        toast(s.phase === 'disabled' ? 'Updates are off in this build.' : 'Checking for updates…')
       },
     }
     if (table[id]) table[id]()

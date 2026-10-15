@@ -1,4 +1,5 @@
 """Remediation changes real files: plan -> approve -> apply -> verify -> graph updates, or rollback; conflicts refuse."""
+import os
 import subprocess
 
 import pytest
@@ -274,7 +275,7 @@ def test_repository_gitconfig_is_never_read(scanned, tmp_path):
     marker = tmp_path / "ran"
     (repo / ".gitconfig").write_text(f"[core]\n\tfsmonitor = touch {marker}\n")
     env = codefix._env()
-    assert env["HOME"] != str(repo) and env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert env["HOME"] != str(repo) and env["GIT_CONFIG_GLOBAL"] == os.devnull
     codefix.uncommitted(repo, ["server.py"])
     assert not marker.exists()
 
@@ -288,3 +289,54 @@ def test_paths_with_spaces_make_a_valid_patch(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     codefix.apply_local(repo, p)
     assert (repo / "docs" / "My File.py").read_text() == "a = 2\n"
+
+
+def _bare_repo(tmp_path, name, data: bytes):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / name).write_bytes(data)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    return repo
+
+
+def test_a_crlf_working_copy_is_patched_in_crlf_and_rolls_back_byte_for_byte(tmp_path):
+    # fixes are computed from the scanned copy (LF); a Windows checkout with core.autocrlf holds CRLF
+    before = b"import os\r\nx = 1\r\ny = 2\r\n"
+    repo = _bare_repo(tmp_path, "m.py", before)
+    p = codefix._diff("m.py", "import os\nx = 1\ny = 2\n", "import os\nx = 1\nz = 3\nw = 4\ny = 2\n")
+    codefix.apply_local(repo, p)
+    assert (repo / "m.py").read_bytes() == b"import os\r\nx = 1\r\nz = 3\r\nw = 4\r\ny = 2\r\n"
+    codefix.apply_local(repo, p, reverse=True)
+    assert (repo / "m.py").read_bytes() == before
+
+
+def test_an_lf_working_copy_stays_lf(tmp_path):
+    repo = _bare_repo(tmp_path, "m.py", b"a = 1\nb = 2\n")
+    codefix.apply_local(repo, codefix._diff("m.py", "a = 1\nb = 2\n", "a = 1\nb = 3\n"))
+    assert (repo / "m.py").read_bytes() == b"a = 1\nb = 3\n"
+
+
+def test_crlf_conversion_keeps_the_no_newline_at_end_marker_right(tmp_path):
+    repo = _bare_repo(tmp_path, "m.py", b"a = 1\r\nb = 2")
+    p = codefix._diff("m.py", "a = 1\nb = 2", "a = 1\nb = 3")
+    assert r"\ No newline at end of file" in p
+    codefix.apply_local(repo, p)
+    assert (repo / "m.py").read_bytes() == b"a = 1\r\nb = 3"
+
+
+def test_a_crlf_file_edited_since_the_scan_is_still_refused(tmp_path):
+    repo = _bare_repo(tmp_path, "m.py", b"a = 1\r\nb = 99\r\n")
+    with pytest.raises(codefix.FixError, match="changed since the scan"):
+        codefix.apply_local(repo, codefix._diff("m.py", "a = 1\nb = 2\n", "a = 1\nb = 3\n"))
+    assert (repo / "m.py").read_bytes() == b"a = 1\r\nb = 99\r\n"
+
+
+def test_a_patch_section_outside_the_folder_is_not_inspected(tmp_path):
+    # the line-ending probe goes through safe_join, so a hostile path in a stored patch reads nothing outside
+    (tmp_path / "secret.py").write_bytes(b"a = 1\r\n")
+    repo = _bare_repo(tmp_path, "m.py", b"a = 1\n")
+    hostile = "diff --git a/../secret.py b/../secret.py\n--- a/../secret.py\n+++ b/../secret.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+    assert codefix._for_folder(repo, hostile) == hostile
+    with pytest.raises(codefix.FixError):
+        codefix.apply_local(repo, hostile)
+    assert (tmp_path / "secret.py").read_bytes() == b"a = 1\r\n"

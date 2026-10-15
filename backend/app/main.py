@@ -381,7 +381,8 @@ if os.environ.get("STATIC_DIR") and _static.is_dir():
             except StarletteHTTPException as e:
                 # client-side routes get the app shell; a missing API route or file stays a real 404, and any
                 # other failure is not hidden behind a 200 page
-                if e.status_code != 404 or path == "api" or path.startswith("api/"):
+                route = path.replace("\\", "/")   # Starlette passes OS separators: api\x on Windows
+                if e.status_code != 404 or route == "api" or route.startswith("api/"):
                     raise
                 return await super().get_response("index.html", scope)
 

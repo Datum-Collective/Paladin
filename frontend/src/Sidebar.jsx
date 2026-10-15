@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Icon from './Icons.jsx'
 import { Severity } from './parts.jsx'
 import WorkspaceSwitcher from './WorkspaceSwitcher.jsx'
+import Brand from './Brand.jsx'
 
 const mod = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 const TOP = [['home', 'Home', 'home', '⇧H'], ['workspaces', 'Workspaces', 'folder', '6']]
@@ -31,6 +32,7 @@ export default function Sidebar({ view, setView, graph, empty, canPlay, playing,
   return (
     <aside className={rail ? 'sidebar rail' : 'sidebar'}>
       <div className="sidebar-top drag" aria-hidden="true" />
+      {!rail && <div className="side-brand win-only"><Brand /></div>}
       <button className="palette-trigger nodrag" onClick={onPalette} aria-label="Open command palette" title={rail ? `Search  ${mod}K` : undefined}>
         <Icon name="search" size={14} />{!rail && <><span>Search</span><kbd>{mod}K</kbd></>}
       </button>

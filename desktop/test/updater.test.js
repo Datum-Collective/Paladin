@@ -19,6 +19,7 @@ function harness({ packaged = true, checkImpl, ...opts } = {}) {
     clearInterval: () => {},
   }
   const u = createUpdater({ app: { isPackaged: packaged }, send: (s) => sent.push(s), load: () => ({ autoUpdater: au }), timers,
+    hasFeed: () => true,
     releaseUrl: 'https://example.test/releases/latest', ...opts })
   return { u, au, sent, fake }
 }
@@ -84,4 +85,13 @@ test('checks do not overlap or interrupt a download', async () => {
   au.emit('update-available', { version: '2.0.0' })
   await u.check()
   assert.equal(au.checks, 0)
+})
+
+test('a packaged build without an update feed has updates off and never checks', async () => {
+  let loaded = false
+  const u = createUpdater({ app: { isPackaged: true }, send: () => {}, hasFeed: () => false,
+    load: () => { loaded = true; return { autoUpdater: new EventEmitter() } } })
+  u.start()
+  assert.equal((await u.check()).phase, 'disabled')
+  assert.equal(loaded, false)
 })
