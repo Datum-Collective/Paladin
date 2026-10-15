@@ -239,7 +239,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       'check-updates': async () => {
         if (!bridge) return
         const s = await bridge.checkForUpdates()
-        toast(s.phase === 'disabled' ? 'Updates are off in development builds.' : 'Checking for updates…')
+        toast(s.phase === 'disabled' ? 'Updates are off in this build.' : 'Checking for updates…')
       },
     }
     if (table[id]) table[id]()

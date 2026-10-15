@@ -63,7 +63,7 @@ def test_vercel_entrypoint_exposes_the_asgi_app():
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    code = ("import api.index as m; paths={r.path for r in m.app.routes}; "
+    code = ("import api.index as m; paths=set(m.app.openapi()['paths']); "
             "assert '/health' in paths and '/api/config' in paths and '/api/auth/login' in paths, paths; print('ok')")
     r = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
                        env={"PATH": __import__("os").environ["PATH"], "PYTHONPATH": str(root), "APC_SKIP_DOTENV": "1",
