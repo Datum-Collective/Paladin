@@ -98,6 +98,34 @@ function buildEnv({ base, port, token, dataDir, staticDir, seedDir, version, ext
   }
 }
 
+const LOG_MAX = 1024 * 1024
+
+function openLog(file) {
+  try {
+    if (fs.statSync(file).size > LOG_MAX) {
+      try { fs.rmSync(`${file}.1`, { force: true }) } catch { /* best effort */ }
+      fs.renameSync(file, `${file}.1`)
+    }
+  } catch { /* first run */ }
+  let written = 0
+  let stream = null
+  try { stream = fs.createWriteStream(file, { flags: 'a' }) } catch { /* logging is best effort */ }
+  if (stream) {
+    stream.on('error', () => { stream = null })
+    stream.write(`\n--- engine start ${new Date().toISOString()} ---\n`)
+  }
+  return {
+    write(b) {
+      if (!stream || written >= LOG_MAX) return
+      const chunk = Buffer.isBuffer(b) ? b : Buffer.from(String(b))
+      const limited = chunk.subarray(0, LOG_MAX - written)
+      written += limited.length
+      stream.write(limited)
+    },
+    end() { if (stream) stream.end() },
+  }
+}
+
 class Backend extends EventEmitter {
   constructor(opts) {
     super()
@@ -132,10 +160,14 @@ class Backend extends EventEmitter {
                                                     windowsHide: true })
     this.proc = proc
     let tail = ''
-    const keep = (b) => { tail = (tail + b.toString()).slice(-4000) }
+    // The engine's own log (warnings and errors, e.g. why a sign-in failed) goes to <data>/engine.log so it can be
+    // read after the fact. One previous file is kept; each is capped at about 1 MB.
+    const log = openLog(path.join(dataDir, 'engine.log'))
+    const keep = (b) => { tail = (tail + b.toString()).slice(-4000); log.write(b) }
     proc.stdout.on('data', keep)
     proc.stderr.on('data', keep)
     proc.on('exit', (code, signal) => {
+      log.end()
       if (this.proc === proc) this.proc = null
       if (this.stopping || !this.ready) return // a failed start is reported by start() itself
       this.ready = false
@@ -171,4 +203,4 @@ class Backend extends EventEmitter {
   }
 }
 
-module.exports = { readSupabaseConfig, SERVER_SECRETS, Backend, freePort, ping, waitHealthy, resolveCommand, buildEnv, EXE }
+module.exports = { openLog, readSupabaseConfig, SERVER_SECRETS, Backend, freePort, ping, waitHealthy, resolveCommand, buildEnv, EXE }
