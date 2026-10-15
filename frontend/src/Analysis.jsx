@@ -4,7 +4,8 @@ import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
 import { Tabs } from './ui.jsx'
-import { Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
+import { pathLabels } from './lib.js'
+import { ElementDetail, Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
 export default function Analysis({ state, selected, setSelected, tab, setTab, go, desktop, inspectorOpen = true }) {
   const { graph, paths, fixes, events, rems, empty, canPlay, play, refresh, propose } = state
@@ -23,6 +24,7 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
   const leftW = Math.round(Math.min(left, width * 0.3))
   const rightW = inspectorOpen ? Math.round(Math.min(right, width * 0.34)) : 0
   const sel = paths.find((p) => p.id === selected)
+  const [el, setEl] = useState(null)               // a clicked node or edge in the graph
   const pending = rems.filter((r) => !['verified', 'rolled_back'].includes(r.state)).length
 
   return (
@@ -37,7 +39,7 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
                   className={p.id === selected ? 'on' : ''} onClick={() => setSelected(p.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(p.id) } }}>
                 <div className="row-top"><Severity level={p.severity} /><span className="muted">{p.risk.toFixed(3)}</span></div>
-                <div className="path-line">{p.nodes.join(' → ')}</div>
+                <div className="path-line">{pathLabels(p.nodes, graph && graph.nodes).join(' → ')}</div>
               </li>
             ))}
           </ul>
@@ -48,13 +50,16 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
       <Resizer side="left" value={leftW} min={200} max={480} onChange={setLeft} label="Resize paths column" />
 
       <section className="canvas" aria-label="Attack graph">
-        {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={sel} showLabels={prefs['appearance.graph_labels']} />}
+        {empty ? <Empty canPlay={canPlay} onPlay={play} go={go} /> : <Graph graph={graph} highlight={sel} selected={el} showLabels={prefs['appearance.graph_labels']}
+                                    onNode={(id) => { setEl({ type: 'node', id }); setInspect('path') }}
+                                    onEdge={(id) => { setEl({ type: 'edge', id }); setInspect('path') }} onClear={() => setEl(null)} />}
       </section>
 
       {inspectorOpen && <Resizer side="right" value={rightW} min={260} max={560} onChange={setRight} label="Resize inspector" />}
       <aside className="pane right" aria-label="Inspector" hidden={!inspectorOpen}>
         <Tabs label="Inspector" value={inspect} onChange={setInspect}
               tabs={[{ id: 'path', label: 'Path' }, { id: 'fixes', label: 'Fixes' }, { id: 'rem', label: 'Remediation', count: pending }]} />
+        {inspect === 'path' && el && <ElementDetail el={el} graph={graph} onClear={() => setEl(null)} />}
         {inspect === 'path' && (empty ? <p className="muted">Nothing selected.</p> : <PathDetail path={sel} />)}
         {inspect === 'fixes' && (empty ? <p className="muted">Nothing to fix yet.</p> : <Fixes fixes={fixes} onPropose={propose} />)}
         {inspect === 'rem' && <Remediations items={rems} onChange={refresh} />}

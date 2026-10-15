@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
+import { looksLikeRepo, scanStages } from './lib.js'
 import DiffView from './DiffView.jsx'
 import Icon from './Icons.jsx'
 
@@ -74,7 +75,7 @@ function Findings({ items }) {
   )
 }
 
-export default function RepoView({ onDone }) {
+export default function RepoView({ onDone, onViewPaths }) {
   const [url, setUrl] = useState('')
   const [job, setJob] = useState(null)
   const [cfg, setCfg] = useState({ github_enabled: false, ai_enabled: false })
@@ -82,24 +83,54 @@ export default function RepoView({ onDone }) {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
 
+  const submitted = useRef('')        // the exact text last handed to the engine, reused by "Try again"
+  const userStarted = useRef(false)   // once the user starts a scan, the initial history fetch must not replace it
+  const lastLive = useRef({ id: null, state: '' })   // the stage a job was in before it failed
+
   useEffect(() => {
     api.hConfig().then(setCfg).catch(() => {})
-    api.hJobs().then((r) => r.jobs[0] && api.hJob(r.jobs[0].id).then(setJob)).catch(() => {})
+    api.hJobs().then((r) => r.jobs[0] && api.hJob(r.jobs[0].id))
+      .then((j) => { if (j && !userStarted.current) setJob(j) }).catch(() => {})
   }, [])
+  const seen = useRef(null)
   useEffect(() => {
-    if (!job || !RUNNING.includes(job.state)) return
+    if (!job) return undefined
+    if (lastLive.current.id !== job.id) lastLive.current = { id: job.id, state: '' }
+    if (RUNNING.includes(job.state)) lastLive.current.state = job.state
+    // refresh the graph the moment findings are stored (the "fixing" stage) and again when the scan settles
+    const key = `${job.id}:${job.state}`
+    if (seen.current !== key && (job.state === 'fixing' || !RUNNING.includes(job.state))) { seen.current = key; onDone() }
+    if (!RUNNING.includes(job.state)) return undefined
+    let live = true
     const t = setTimeout(async () => {
-      const j = await api.hJob(job.id)
-      setJob(j)
-      if (!RUNNING.includes(j.state)) onDone()
+      try {
+        const j = await api.hJob(job.id)
+        if (live) setJob(j)           // a newer submission replaced this job: its reply must not overwrite it
+      } catch (e) { if (live) setErr(e.message) }
     }, 1200)
-    return () => clearTimeout(t)
+    return () => { live = false; clearTimeout(t) }
   }, [job])
 
-  const run = async () => {
+  const run = async (target = url) => {
+    const t = target.trim()
+    if (!t || (job && RUNNING.includes(job.state))) return
+    submitted.current = t
+    userStarted.current = true
     setErr('')
-    try { setJob(await api.hStart(url.trim())) } catch (e) { setErr(e.message) }
+    try { setJob(await api.hStart(t)) } catch (e) { setErr(e.message); submitted.current = '' }
   }
+  // Submitting is the whole interaction: pasting a repository link, pressing Enter or leaving the field starts the
+  // scan. A pause while typing does not, so "owner/re" is never scanned on the way to "owner/repo".
+  const submitIfRepo = (text) => {
+    const t = (text || '').trim()
+    if (t && t !== submitted.current && looksLikeRepo(t)) run(t)
+  }
+  // where a failed job had got to: what this view saw it running, else what the stored result shows it finished
+  const failedAt = (j) => (lastLive.current.id === j.id && lastLive.current.state) ||
+    (j.findings && j.findings.length ? 'fixing' : j.report && j.report.files_total !== undefined ? 'scanning' : 'cloning')
+  // the text to scan again: what was submitted here, else a GitHub owner/name from history, else the stored path
+  const retryTarget = (j) => submitted.current ||
+    (/^[A-Za-z0-9-]+\/[\w.-]+$/.test(j.repo_url) ? `https://github.com/${j.repo_url}` : j.repo_url)
   const openPr = async () => {
     setErr(''); setBusy(true)
     try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
@@ -121,9 +152,10 @@ export default function RepoView({ onDone }) {
         <h2>Repository</h2>
         <p className="muted">Paste a GitHub link. The code is read, never executed, and every change is reviewed before a pull request.</p>
         <div className="field">
-          <input placeholder="https://github.com/owner/repo" value={url} aria-label="GitHub repository URL"
-                 onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && url && !running && run()} />
-          <button className="primary" onClick={run} disabled={!url || running}>{running ? 'Scanning' : 'Scan'}</button>
+          <input placeholder="Paste a GitHub link to scan it" value={url} aria-label="GitHub repository URL" disabled={running}
+                 onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && url && !running && run()}
+                 onPaste={(e) => { const t = e.clipboardData && e.clipboardData.getData('text'); setTimeout(() => submitIfRepo(t || e.target.value), 0) }}
+                 onBlur={(e) => submitIfRepo(e.target.value)} />
           {running && <button onClick={cancel} disabled={busy}>{busy ? 'Cancelling…' : 'Cancel'}</button>}
         </div>
         <p className="muted small">AI {cfg.ai_enabled ? 'on' : 'off'} · Pull requests {cfg.github_enabled ? 'enabled' : 'unavailable (patch download only)'}</p>
@@ -136,7 +168,22 @@ export default function RepoView({ onDone }) {
                 {job.state === 'pr_opened' ? 'PR opened' : job.state === 'cancelled' ? 'Cancelled' : job.state}
               </span>
             </div>
-            {job.error && <p className="err">{job.error}</p>}
+            <ol className="scan-stages" aria-label="Scan progress">
+              {scanStages(job.state, failedAt(job)).map((st) => (
+                <li key={st.id} className={`stage ${st.status}`} aria-current={st.status === 'current' ? 'step' : undefined}>
+                  <span className="stage-dot" aria-hidden="true">{st.status === 'done' ? '✓' : st.status === 'failed' ? '!' : ''}</span>{st.label}
+                </li>
+              ))}
+            </ol>
+            {job.error && <p className="err" role="alert">{job.error}</p>}
+            {(job.state === 'failed' || job.state === 'cancelled') && (
+              <div className="actions"><button className="primary" onClick={() => run(retryTarget(job))}>
+                {job.state === 'failed' ? 'Try again' : 'Scan again'}</button></div>
+            )}
+            {!running && job.state !== 'failed' && job.state !== 'cancelled' && onViewPaths && (
+              <div className="actions"><button className="primary" onClick={onViewPaths}>
+                {job.findings && job.findings.length ? 'View attack paths' : 'Open analysis'}</button></div>
+            )}
             <ul className="log">{job.log.slice(-6).map((l, i) => <li key={i}>{l.msg}</li>)}</ul>
             <ScanReport r={job.report} />
             <Findings items={job.findings} />
@@ -144,7 +191,11 @@ export default function RepoView({ onDone }) {
         )}
       </aside>
       <main className="repo-main">
-        {!job && <div className="empty"><h2>No repository scanned</h2><p className="muted">Changes appear here as a reviewable diff.</p></div>}
+        {!job && <div className="empty"><h2>Paste a repository to begin</h2><p className="muted">The scan starts as soon as you paste a GitHub link. Findings become attack paths; fixes appear here as a reviewable diff.</p></div>}
+        {running && (
+          <div className="empty"><h2>Scanning {job.repo_url}</h2>
+            <p className="muted">Attack paths appear in Analysis as soon as weaknesses are found. Proposed fixes appear here when the scan finishes.</p></div>
+        )}
         {job && job.fixes.length === 0 && !running && job.state !== 'cancelled' && (
           <div className="empty"><h2>No code changes</h2>
             <p className="muted">{job.findings.length ? 'Nothing could be fixed safely and automatically. See the findings.' : 'Nothing needed changing.'}</p></div>

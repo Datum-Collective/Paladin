@@ -309,9 +309,13 @@ async def stream(request: Request, u: dict = Depends(auth.require_user)):
 
     async def gen():
         last = None
+        tick, code_ver = 0, None
         while not await request.is_disconnected():
             try:   # Supabase calls block: off the event loop (the thread inherits this request's session)
-                ver = await asyncio.to_thread(lambda: (store.event_count(ws), len(store.applied_fixes(ws))))
+                if tick % 4 == 0:   # a stored scan is rare: check it every 2 s, the live counters every 0.5 s
+                    code_ver = await asyncio.to_thread(codescan.version, ws)
+                tick += 1
+                ver = await asyncio.to_thread(lambda: (store.event_count(ws), len(store.applied_fixes(ws)), code_ver))
             except supa.DataError:
                 return   # e.g. the session expired: the browser reconnects, and the reconnect refreshes it
             if ver != last:

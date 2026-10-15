@@ -167,3 +167,25 @@ export function setupAdvice(error) {
   if (kind === 'quota') return { goto: null, retry: false }
   return { goto: null, retry: true }
 }
+
+/** Path node ids -> the labels people read ("Internet (any client)", "server.py"), id when a label is missing. */
+export function pathLabels(ids, nodes) {
+  const by = new Map((nodes || []).map((n) => [n.id, n.label]))
+  return ids.map((i) => by.get(i) || i)
+}
+
+const STAGES = [['clone', 'Fetch repository', ['queued', 'cloning']], ['scan', 'Find weaknesses', ['scanning']],
+  ['paths', 'Build attack paths', ['fixing']], ['done', 'Results ready', ['ready', 'done', 'pr_opened']]]
+
+/** The four visible stages of a scan with a status each. `failedAt` is the last state seen before a failure. */
+export function scanStages(state, failedAt = '') {
+  const idx = (st) => STAGES.findIndex((s) => s[2].includes(st))
+  const cur = state === 'failed' || state === 'cancelled' ? idx(failedAt) : idx(state)
+  return STAGES.map(([id, label], i) => {
+    let status = 'pending'
+    if (STAGES[3][2].includes(state)) status = 'done'
+    else if (i < cur) status = 'done'
+    else if (i === cur) status = state === 'failed' ? 'failed' : state === 'cancelled' ? 'pending' : 'current'
+    return { id, label, status }
+  })
+}

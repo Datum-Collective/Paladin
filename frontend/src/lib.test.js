@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -167,5 +167,28 @@ describe('groupCommands', () => {
   it('is a no-op for an already grouped list', () => {
     const list = [{ id: 'a', group: 'X' }, { id: 'b', group: 'Y' }]
     expect(groupCommands(list)).toEqual(list)
+  })
+})
+
+describe('pathLabels', () => {
+  it('shows node labels instead of internal ids, falling back to the id', () => {
+    const nodes = [{ id: 'code:internet', label: 'Internet (any client)' }, { id: 'code:a.py', label: 'a.py' }]
+    expect(pathLabels(['code:internet', 'code:a.py', 'x'], nodes)).toEqual(['Internet (any client)', 'a.py', 'x'])
+    expect(pathLabels(['x'], null)).toEqual(['x'])
+  })
+})
+
+describe('scanStages', () => {
+  it('marks finished, current and pending stages for each job state', () => {
+    const s = (state) => scanStages(state).map((x) => x.status)
+    expect(s('queued')).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(s('cloning')).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(s('scanning')).toEqual(['done', 'current', 'pending', 'pending'])
+    expect(s('fixing')).toEqual(['done', 'done', 'current', 'pending'])
+    expect(s('ready')).toEqual(['done', 'done', 'done', 'done'])
+    expect(s('done')).toEqual(['done', 'done', 'done', 'done'])
+  })
+  it('marks the stage that was running when a scan failed', () => {
+    expect(scanStages('failed', 'scanning').map((x) => x.status)).toEqual(['done', 'failed', 'pending', 'pending'])
   })
 })
