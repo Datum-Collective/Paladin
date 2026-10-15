@@ -1144,4 +1144,5 @@ kbd { background: var(--bg-3); border-radius: var(--r-s); box-shadow: none; font
 .analysis > * { grid-row: 2; }
 .analysis > .scan-banner { grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   font-size: 12px; border-bottom: 1px solid var(--line); background: var(--info-bg); color: var(--text); }
+.scan-banner .small-btn { margin-left: auto; }
 .scan-banner.bad { background: var(--bad-bg); } .scan-banner.warn { background: var(--warn-bg); }

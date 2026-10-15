@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scanBanner, normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { scanTarget, scanBanner, normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -225,6 +225,7 @@ describe('scanBanner', () => {
     expect(f.text).toContain('clone timed out')
     expect(f.text).toContain('2 attack paths found before it stopped')
     expect(scanBanner(job('cancelled'), 0).text).toBe('The scan of acme/shop was cancelled.')
+    expect(f.action).toBe('rescan')
   })
   it('stays quiet when nothing is running, and for old failures', () => {
     expect(scanBanner(null)).toBeNull()
@@ -234,5 +235,25 @@ describe('scanBanner', () => {
   })
   it('shortens a local folder path to the last two segments', () => {
     expect(scanBanner(job('scanning', { repo_url: '/Users/me/code/shop' }), 0).text).toContain('code/shop')
+  })
+})
+
+describe('a scan cut off by closing the app', () => {
+  const interrupted = (paths, ageS = 86400 * 3) => scanBanner({ state: 'failed', repo_url: 'acme/shop', updated: Date.now() / 1000 - ageS,
+    error: 'Interrupted: the app closed before this scan finished. Retry to run it again.' }, paths)
+  it('is always mentioned, however long ago, keeps the saved paths and offers to scan again', () => {
+    const b = interrupted(3)
+    expect(b).toMatchObject({ busy: false, tone: 'warn', action: 'rescan' })
+    expect(b.text).toContain('interrupted when Paladin closed')
+    expect(b.text).toContain('3 attack paths found before it stopped')
+    expect(interrupted(0).text).toContain('Nothing had been found yet')
+  })
+})
+
+describe('scanTarget', () => {
+  it('turns a stored owner/name back into a GitHub address and leaves paths alone', () => {
+    expect(scanTarget('acme/shop')).toBe('https://github.com/acme/shop')
+    expect(scanTarget('/Users/me/code/shop')).toBe('/Users/me/code/shop')
+    expect(scanTarget('C:\\code\\shop')).toBe('C:\\code\\shop')
   })
 })

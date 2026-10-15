@@ -4,17 +4,25 @@ import Resizer from './Resizer.jsx'
 import { useStored } from './useStored.js'
 import { usePrefs } from './prefs.jsx'
 import { Tabs } from './ui.jsx'
-import { pathLabels, scanBanner } from './lib.js'
+import { api } from './api.js'
+import { pathLabels, scanBanner, scanTarget } from './lib.js'
 import { ElementDetail, Empty, Events, Fixes, Ingest, PathDetail, Remediations, Severity } from './parts.jsx'
 
 /** One line above the panes while a scan runs (or after it failed): what it is doing and how much has arrived. */
-function ScanBanner({ scan, paths }) {
+function ScanBanner({ scan, paths, onRescan }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   const b = scanBanner(scan, paths)
   if (!b) return null
+  const again = async () => {
+    setBusy(true); setErr('')
+    try { await api.hStart(scanTarget(scan.repo_url)); await onRescan() } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
   return (
     <div className={`scan-banner ${b.tone}`} role="status" aria-live="polite">
       {b.busy && <span className="spinner tiny" aria-hidden="true" />}
-      <span>{b.text}</span>
+      <span>{b.text}{err ? ` ${err}` : ''}</span>
+      {b.action === 'rescan' && <button className="small-btn" disabled={busy} onClick={again}>{busy ? 'Starting…' : 'Scan Again'}</button>}
     </div>
   )
 }
@@ -41,7 +49,7 @@ export default function Analysis({ state, selected, setSelected, tab, setTab, go
 
   return (
     <main className="analysis" ref={root} style={{ gridTemplateColumns: `${leftW}px 1fr ${rightW}px` }}>
-      <ScanBanner scan={scan} paths={paths.length} />
+      <ScanBanner scan={scan} paths={paths.length} onRescan={refresh} />
       <section className="pane left" aria-label="Paths, events and data">
         <Tabs label="Paths, events and data" value={tab} onChange={setTab}
               tabs={[{ id: 'paths', label: 'Paths', count: paths.length }, { id: 'events', label: 'Events' }, { id: 'ingest', label: 'Import' }]} />

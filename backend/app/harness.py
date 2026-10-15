@@ -402,7 +402,11 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             return
         _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
                   f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
-        codescan.clear(ws)    # the previous scan's results are not this repository's: never show them as current
+        # Results of the previous scan of THIS repository stay until the new scan has results of its own (closing the
+        # app, a failed clone or a cancel must never leave the workspace empty). Another repository's are cleared.
+        prev = codescan.report(ws)
+        if prev.get("scanned") and prev.get("repo") != f"{owner}/{repo}":
+            codescan.clear(ws)
 
         def emit(fs: list[dict], refs: dict, stage: str) -> None:
             """Results so far, stored while the scan is still running: the graph, paths, fixes and the findings

@@ -115,3 +115,81 @@ def test_a_new_scan_does_not_show_the_previous_results(client, world, tmp_path, 
     _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(clean)}).json()["id"])
     assert client.get("/api/paths").json()["paths"] == []
     assert client.get("/api/codescan").json()["findings"] == []
+
+
+def _git_repo(tmp_path, name, text):
+    d = tmp_path / name
+    d.mkdir()
+    (d / "a.py").write_text(text)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "PATH": os.environ["PATH"], "HOME": str(tmp_path)}
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "i"]):
+        subprocess.run(["git", *cmd], cwd=d, env=env, check=True)
+    return d
+
+
+def test_results_survive_a_rescan_that_never_finishes_and_an_app_restart(client, world, tmp_path, monkeypatch):
+    """The user's report: close the app and the paths are gone. A rescan of the same repository must not wipe the
+    saved results before it has any of its own, and a scan cut off by closing must say so."""
+    from app import harness
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    monkeypatch.setenv("APC_OSV", "0")
+    monkeypatch.setattr(codescan.ai, "complete", lambda *a, **k: None)
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: None)
+    repo = _git_repo(tmp_path, "shop", "import hashlib\nh = hashlib.md5(b'a')\n")
+    sign_in(client, ALICE)
+    _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()["id"])
+    saved = client.get("/api/paths").json()["paths"]
+    assert saved
+
+    # the same repository is scanned again and the app is closed before it finds anything: the clone never completes
+    started = threading.Event()
+
+    def clone_then_hang(args, **kw):
+        started.set()
+        time.sleep(30)
+
+    monkeypatch.setattr(harness, "_git", clone_then_hang)
+    again = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
+    assert started.wait(5)
+    assert client.get("/api/paths").json()["paths"] == saved, "saved results stay visible while a rescan starts"
+    assert client.get("/api/codescan").json()["findings"], "...and in the findings list"
+
+    # the process dies: nothing of that thread ever writes again. On the next start the row is stale.
+    world.db.rows("jobs", id=again["id"])[0]["updated"] = time.time() - 3600
+    harness._threads.clear()
+    harness._cancels.clear()
+    job = client.get(f"/api/harness/jobs/{again['id']}").json()
+    assert job["state"] == "failed" and job["error"].startswith("Interrupted")
+    assert client.get("/api/paths").json()["paths"] == saved, "results are still there after the restart"
+
+
+def test_a_different_repository_does_not_inherit_the_previous_results(client, world, tmp_path, monkeypatch):
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    monkeypatch.setenv("APC_OSV", "0")
+    monkeypatch.setattr(codescan.ai, "complete", lambda *a, **k: None)
+    monkeypatch.setattr(fixers.ai, "complete", lambda *a, **k: None)
+    dirty = _git_repo(tmp_path, "dirty", "import hashlib\nx = hashlib.md5(b'a')\n")
+    other = _git_repo(tmp_path, "other",
+                      "from flask import Flask\napp = Flask(__name__)\n@app.route('/x')\ndef x():\n    return 'ok'\n")
+    sign_in(client, ALICE)
+    _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(dirty)}).json()["id"])
+    assert client.get("/api/paths").json()["paths"]
+    keys.set_many({"anthropic": "k"})
+    hold, reached = threading.Event(), threading.Event()
+
+    def slow(system, user, max_tokens, cancelled=lambda: False):
+        reached.set()
+        hold.wait(10)
+        return "[]", ""
+
+    monkeypatch.setattr(crawler.ai, "call", slow)
+    job = client.post("/api/harness/jobs", json={"repo_url": str(other)}).json()
+    assert reached.wait(10), "the review of the other repository started"
+    try:
+        assert client.get("/api/paths").json()["paths"] == [], "another repository's results are not shown for this one"
+        assert client.get("/api/codescan").json()["findings"] == []
+    finally:
+        hold.set()
+        keys.clear()
+    _wait(client, job["id"])

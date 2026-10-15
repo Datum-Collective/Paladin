@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, downloadText } from './api.js'
-import { looksLikeRepo, scanStages } from './lib.js'
+import { looksLikeRepo, scanStages, scanTarget } from './lib.js'
 import DiffView from './DiffView.jsx'
 import Icon from './Icons.jsx'
 
@@ -158,8 +158,7 @@ export default function RepoView({ onDone, onViewPaths }) {
   const failedAt = (j) => (lastLive.current.id === j.id && lastLive.current.state) ||
     (j.findings && j.findings.length ? 'fixing' : j.report && j.report.files_total !== undefined ? 'scanning' : 'cloning')
   // the text to scan again: what was submitted here, else a GitHub owner/name from history, else the stored path
-  const retryTarget = (j) => submitted.current ||
-    (/^[A-Za-z0-9-]+\/[\w.-]+$/.test(j.repo_url) ? `https://github.com/${j.repo_url}` : j.repo_url)
+  const retryTarget = (j) => submitted.current || scanTarget(j.repo_url)
   const openPr = async () => {
     setErr(''); setBusy(true)
     try { setJob(await api.hPr(job.id)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
