@@ -122,7 +122,8 @@ export default function Home({
   const start = useCallback(async (p) => {
     setPhase('working'); setErr(null)
     try {
-      if (p.type === 'github') await onImportRepo(p.text)
+      // a repository that is already a workspace only reaches here through "Scan Again": scan it again for real
+      if (p.type === 'github') await onImportRepo(p.text, Boolean(p.info.workspace_id))
       else await onImportFolder(p.info.path)
     } catch (e) { fail(e); setPhase('preview') }
   }, [onImportRepo, onImportFolder, fail])

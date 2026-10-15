@@ -24,6 +24,7 @@ URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]{1,100})/([A-Za-z0-9_.
 CLONE_TIMEOUT, MAX_REPO_BYTES, MAX_FIXES = 90, 150_000_000, 25
 AUTHOR = ("Attack Path Compiler", "apc@users.noreply.github.com")
 _threads: dict[int, threading.Thread] = {}
+_start_lock = threading.Lock()
 _cancels: dict[int, threading.Event] = {}
 
 
@@ -49,7 +50,10 @@ def parse_url(url: str) -> tuple[str, str, str]:
 def _git(args: list[str], cwd: Path | None = None, token: str | None = None, timeout: int = 60,
          allow_file: bool = False, cancel: threading.Event | None = None):
     base = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.symlinks=false", "-c", "protocol.ext.allow=never",
-            "-c", "credential.helper="]   # never ask a credential manager: the only credential is `token`
+            "-c", "credential.helper=",   # never ask a credential manager: the only credential is `token`
+            # settings that make git start another program; none of them is ever needed here, so a working copy whose
+            # .git/config was altered still cannot run anything
+            "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"]
     # the file protocol is blocked except for the one clone of a folder the user explicitly chose (desktop only)
     base += ["-c", f"protocol.file.allow={'always' if allow_file or os.environ.get('APC_ALLOW_LOCAL') == '1' else 'never'}"]
     cmd = base + args
@@ -316,14 +320,15 @@ def start(ws: int, url: str, *, token: str | None = None) -> dict:
         raise RuntimeError(settings.SERVERLESS_SCAN_MESSAGE)
     owner, repo, clone_url = parse_url(url)
     cleanup_old()
-    busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)}, columns="id,state,updated")
-            if effective_state(r) in RUNNING]
-    if busy:
-        raise RuntimeError("a job is already running for this workspace")
-    now = time.time()
-    jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now, "updated": now,
-                               "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
-                      returning="id")[0]["id"]
+    with _start_lock:   # "is a scan running?" and "record this one" must be one step, or two clicks start two
+        busy = [r for r in supa.select("jobs", {"ws": supa.eq(ws), "state": supa.in_(RUNNING)},
+                                       columns="id,state,updated") if effective_state(r) in RUNNING]
+        if busy:
+            raise RuntimeError("a job is already running for this workspace")
+        now = time.time()
+        jid = supa.insert("jobs", {"ws": ws, "user_id": supa.user_id(), "state": "queued", "created": now,
+                                   "updated": now, "repo_url": f"{owner}/{repo}" if owner != "local" else clone_url},
+                          returning="id")[0]["id"]
     # the thread keeps this request's Supabase session (context copy), so its writes are still the user's own
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(_run, ws, jid, owner, repo, clone_url, token), daemon=True)
@@ -471,7 +476,7 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
         msg = f"Fix {len(fixes)} security finding(s) found by Attack Path Compiler"
         _git(["-c", f"user.name={AUTHOR[0]}", "-c", f"user.email={AUTHOR[1]}", "commit", "-q", "-m", msg],
              cwd=src, cancel=cancel_event)
-        diff = _git(["diff", "HEAD~1", "HEAD"], cwd=src, cancel=cancel_event)
+        diff = _git(["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"], cwd=src, cancel=cancel_event)
         _upd(jid, state="ready", branch=branch, diff=diff[:400_000],
              fixes=json.dumps([{k: v for k, v in x.items() if k != "content"} for x in fixes]))
         _log(jid, f"committed {len(fixes)} fix(es) on local branch {branch}; waiting for human approval to open PR")

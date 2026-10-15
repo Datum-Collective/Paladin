@@ -47,6 +47,7 @@ export const api = {
   hConfig: () => req('GET', '/api/harness/config'),
   hStart: (repo_url) => req('POST', '/api/harness/jobs', { repo_url }),
   hJobs: () => req('GET', '/api/harness/jobs'),
+  mitreExplain: (ids) => req('GET', `/api/mitre/explain?ids=${encodeURIComponent(ids.join(','))}`),
   hJob: (id) => req('GET', `/api/harness/jobs/${id}`),
   hCancel: (id) => req('POST', `/api/harness/jobs/${id}/cancel`),
   hFile: (id, path) => req('GET', `/api/harness/jobs/${id}/file?path=${encodeURIComponent(path)}`),
@@ -65,7 +66,7 @@ export const api = {
   githubDisconnect: (id) => req('DELETE', `/api/github/installations/${encodeURIComponent(id)}`),
   workspaces: () => req('GET', '/api/workspaces'),
   createWorkspace: (name) => req('POST', '/api/workspaces', { name: name || null }),
-  importRepo: (query) => req('POST', '/api/workspaces/import', { query }),
+  importRepo: (query, rescan = false) => req('POST', '/api/workspaces/import', { query, rescan }),
   openWorkspace: (id) => req('POST', `/api/workspaces/${id}/open`),
   renameWorkspace: (id, name) => req('PATCH', `/api/workspaces/${id}`, { name }),
   deleteWorkspace: (id) => req('DELETE', `/api/workspaces/${id}`),
@@ -114,6 +115,41 @@ export async function downloadText(url, filename) {
 
 /** POST the conversation and call onEvent for each normalised event. Resolves when the stream ends; abort with the
  *  signal. Network and HTTP failures are delivered as an error event so callers handle one shape. */
+/** The fixing agent's event stream (start, text, tool, tool_result, tests, status, error, verdict). */
+export async function agentStream(body, onEvent, signal) {
+  let r
+  try {
+    r = await fetch('/api/agent/fix', { method: 'POST', credentials: 'same-origin', signal,
+      headers: { 'Content-Type': 'application/json', ...wsHeader() }, body: JSON.stringify(body) })
+  } catch (e) {
+    if (e.name !== 'AbortError') onEvent({ type: 'error', message: 'Could not reach the Paladin engine.' })
+    return
+  }
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}))
+    onEvent({ type: 'error', message: typeof d.detail === 'string' ? d.detail : `The agent could not start (${r.status}).` })
+    return
+  }
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let i
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const line = buf.slice(0, i).split('\n').find((l) => l.startsWith('data: '))
+        buf = buf.slice(i + 2)
+        if (line) { try { onEvent(JSON.parse(line.slice(6))) } catch { /* a malformed frame */ } }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') onEvent({ type: 'error', message: 'The connection to the agent was interrupted.' })
+  }
+}
+
 export async function chatStream(body, onEvent, signal) {
   let r
   try {

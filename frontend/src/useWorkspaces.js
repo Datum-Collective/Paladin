@@ -30,8 +30,8 @@ export function useWorkspaces(user) {
   }), [guard, take])
   const rename = useCallback((id, name) => guard(async () => { await api.renameWorkspace(id, name); await reload(); return true }), [guard, reload])
   const remove = useCallback((id) => guard(async () => { take(await api.deleteWorkspace(id)); return true }), [guard, take])
-  const importRepo = useCallback(async (query) => {      // errors propagate: the landing screen shows them inline
-    const r = await api.importRepo(query)
+  const importRepo = useCallback(async (query, rescan = false) => {   // errors propagate: the landing screen shows them
+    const r = await api.importRepo(query, rescan)
     take(r)
     return r
   }, [take])

@@ -237,6 +237,22 @@ def test_import_of_a_known_repo_reopens_instead_of_duplicating(client, monkeypat
     assert len(client.get("/api/workspaces").json()["workspaces"]) == 3
 
 
+def test_scan_again_on_a_known_repo_really_starts_a_new_scan(client, monkeypatch):
+    """Regression: "Scan Again" on Home returned the previous finished scan, so nothing was ever rescanned."""
+    login(client)
+    gh(monkeypatch, lambda r: httpx.Response(200, json={"full_name": "acme/api", "private": False, "default_branch": "main",
+                                                        "description": None, "html_url": "https://github.com/acme/api"}))
+    starts = []
+    monkeypatch.setattr(harness, "start", lambda ws, url: starts.append(url) or {"id": 9, "state": "queued"})
+    client.post("/api/workspaces/import", json={"query": "acme/api"})
+    monkeypatch.setattr(harness, "list_jobs", lambda ws: [{"id": 5, "state": "ready"}])
+    monkeypatch.setattr(harness, "get", lambda ws, jid: {"id": jid, "state": "ready"})
+    reopened = client.post("/api/workspaces/import", json={"query": "acme/api"}).json()
+    assert reopened["job"]["id"] == 5 and len(starts) == 1          # plain open: the finished scan is reused
+    again = client.post("/api/workspaces/import", json={"query": "acme/api", "rescan": True}).json()
+    assert again["job"] == {"id": 9, "state": "queued"} and again["rescanned"] is True and len(starts) == 2
+
+
 def test_import_failure_does_not_leave_a_workspace_behind(client, monkeypatch):
     login(client)
     gh(monkeypatch, lambda r: httpx.Response(404, json={"message": "Not Found"}))

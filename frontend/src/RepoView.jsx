@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, downloadText } from './api.js'
 import { githubUrl, looksLikeRepo, scanStages, scanTarget } from './lib.js'
 import DiffView from './DiffView.jsx'
+import { MitreCode, MitreExplain } from './Mitre.jsx'
 import Icon from './Icons.jsx'
 
 const RUNNING = ['queued', 'cloning', 'scanning', 'fixing']
@@ -83,10 +84,12 @@ function Findings({ items }) {
               <div className="row-top"><b>{f.title}</b>
                 <span className="pill-row">{f.severity && <span className={`pill ${SEV[f.severity] || 'mute'}`}>{f.severity}</span>}
                   <span className={`pill ${tone}`}>{label}</span></span></div>
-              <div className="muted mono small">{f.file}:{f.line} · {f.cwe} · {f.technique}</div>
+              <div className="muted mono small">{f.file}:{f.line}</div>
+              {f.cwe && <div className="small"><MitreCode id={f.cwe} /></div>}
               {f.snippet && <code className="snippet">{f.snippet}</code>}
               {f.reason && <div className="muted">{f.reason}</div>}
               {f.impact && <div className="small"><b>Impact</b> {f.impact}</div>}
+              <MitreExplain ids={[f.cwe, f.technique]} title={`What ${[f.cwe, f.technique].filter(Boolean).join(' and ')} mean`} />
               {f.evidence && f.evidence.length > 0 && (
                 <details className="small"><summary>Evidence across files ({f.evidence.length})</summary>
                   <ul className="plain">{f.evidence.map((e, i) => <li key={i}><span className="mono">{e.file}:{e.line}</span> <code>{e.quote}</code></li>)}</ul>
@@ -104,7 +107,7 @@ function Findings({ items }) {
   )
 }
 
-export default function RepoView({ onDone, onViewPaths }) {
+export default function RepoView({ onDone, onViewPaths, goSettings }) {
   const [url, setUrl] = useState('')
   const [job, setJob] = useState(null)
   const [cfg, setCfg] = useState({ github_enabled: false, ai_enabled: false })
@@ -241,12 +244,22 @@ export default function RepoView({ onDone, onViewPaths }) {
                   Download Patch</button>
                 {job.state === 'ready' && (
                   <button className="primary" disabled={busy || !cfg.github_enabled} onClick={openPr}
-                          title={cfg.github_enabled ? undefined : 'Pull requests need a connected GitHub account. Download the patch instead.'}>
+                          title={cfg.github_enabled ? undefined : 'Pull requests need a GitHub token. Download the patch instead.'}>
                     {busy ? 'Opening' : 'Open Pull Request'}
                   </button>
                 )}
               </div>
             </div>
+            {job.state === 'ready' && !cfg.github_enabled && (
+              <p className="notice" role="note">
+                <b>Why you can’t open a pull request:</b> Paladin has no GitHub token, so it cannot push the fixes branch to{' '}
+                <b>{job.repo_url}</b>. Add a token in Settings → GitHub (a fine-grained token for this repository with
+                Contents and Pull requests set to Read and write). Your account also needs write access to {job.repo_url};
+                if it isn’t your repository, ask the owner to add you as a collaborator. Until then, Download Patch gives
+                you the same changes.{' '}
+                {goSettings && <button className="link inline" onClick={goSettings}>Add a GitHub Token</button>}
+              </p>
+            )}
             <Verification v={job.report && job.report.verification} />
             {job.pr_url && (
               <p className="notice">Pull request opened: <a href={githubUrl(job.pr_url)} target="_blank" rel="noopener noreferrer">{job.pr_url}</a></p>

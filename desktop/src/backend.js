@@ -74,9 +74,13 @@ function readSupabaseConfig(file) {
   return { url, anonKey }
 }
 
+// Developer switches that loosen the engine's sandbox (run a scanned repository's tests on this machine, allow file://
+// git everywhere). A stray copy in the user's environment must never reach the shipped engine.
+const DEV_ONLY = ['APC_ALLOW_LOCAL_TESTS', 'APC_ALLOW_LOCAL']
+
 function buildEnv({ base, port, token, dataDir, staticDir, seedDir, version, extra, supabase }) {
   const { ANTHROPIC_API_KEY, GITHUB_TOKEN, ...rest } = base // keys come only from the Settings store
-  const clean = Object.fromEntries(Object.entries(rest).filter(([k]) => !SERVER_SECRETS.includes(k)))
+  const clean = Object.fromEntries(Object.entries(rest).filter(([k]) => !SERVER_SECRETS.includes(k) && !DEV_ONLY.includes(k)))
   return {
     ...clean,
     ...extra,

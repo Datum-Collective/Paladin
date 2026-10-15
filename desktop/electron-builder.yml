@@ -20,6 +20,7 @@ extraResources:
     filter:
       - "inventory.yaml"
       - "attack_subset.json"
+      - "mitre.json"            # offline MITRE ATT&CK + CWE + CAPEC pack for the fixing agent
       - "benchmarks.json"
       - "samples/**/*"
 mac:

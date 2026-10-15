@@ -14,7 +14,7 @@ import { ConfirmDialog, NewWorkspaceDialog } from './Dialogs.jsx'
 import Onboarding from './Onboarding.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
-import Assistant from './Assistant.jsx'
+import AssistantPanel from './AssistantPanel.jsx'
 import Setup from './Setup.jsx'
 import { classifyInput, pathKey, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
@@ -204,15 +204,16 @@ function Shell({ config, user, onSignOut, onExpired }) {
   }, [wsl, prefs, toast])
   const chooseFolder = useCallback(() => (bridge && bridge.chooseFolder ? bridge.chooseFolder() : Promise.resolve(null)), [])
 
-  const importRepo = useCallback(async (q) => {
-    const r = await wsl.importRepo(q)               // throws to Home, which shows the message inline
+  const importRepo = useCallback(async (q, rescan = false) => {
+    const r = await wsl.importRepo(q, rescan)       // throws to Home, which shows the message inline
     setSelected(null)
     setView(prefs['general.after_import'] === 'analysis' ? 'analysis' : 'repo')
-    toast(r.reopened ? `Opened ${r.workspace.name}` : `Scanning ${r.workspace.name}`, 'ok')
+    toast(r.rescanned ? `Scanning ${r.workspace.name} again` : r.reopened ? `Opened ${r.workspace.name}`
+      : `Scanning ${r.workspace.name}`, 'ok')
   }, [wsl, prefs, toast])
   const retryScan = useCallback(async (target) => {      // stays where it is: the user is looking at Activity
     if (classifyInput(target) === 'path') await api.importLocal(target)
-    else await api.importRepo(target)
+    else await api.importRepo(target, true)
     await wsl.reload()
     toast('Scan restarted', 'ok')
   }, [wsl, toast])
@@ -361,8 +362,8 @@ function Shell({ config, user, onSignOut, onExpired }) {
         {view === 'activity' && <ActivityView key={wsl.active} onRetry={retryScan} goSettings={goSettings} />}
         {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
         {view === 'insights' && <Insights key={ws.graph ? `${ws.graph.events}:${ws.graph.nodes.length}:${ws.graph.edges.length}` : 'empty'} graph={ws.graph} paths={ws.paths} fixes={ws.fixes} rems={ws.rems} />}
-        {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} />}
-        {view === 'assistant' && <Assistant key={wsl.active} goSettings={() => goSettings('providers')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} workspaceId={wsl.active} />}
+        {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} goSettings={() => goSettings('github')} />}
+        {view === 'assistant' && <AssistantPanel key={wsl.active} goSettings={() => goSettings('providers')} goRepo={() => setView('repo')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} workspaceId={wsl.active} />}
         {view === 'settings' && <Settings key={setupRuns} pane={pane} setPane={setPane} onSetup={() => setSetupOpen(true)} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}

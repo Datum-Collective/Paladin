@@ -35,6 +35,13 @@ function ErrorNote({ e, onRetry, goSettings }) {
   )
 }
 
+/** The thread as the API takes it when nothing is stored server-side: finished turns, then the new question. */
+function thread(msgs, text) {
+  const done = msgs.filter((m) => m.content && !m.error && !m.streaming).map((m) => ({ role: m.role, content: m.content }))
+  while (done.length && done[0].role !== 'user') done.shift()
+  return [...done, { role: 'user', content: text }].slice(-40)
+}
+
 export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspaceId }) {
   const [providers, setProviders] = useState(null)
   const { prefs, set: setPref } = usePrefs()
@@ -50,6 +57,7 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
   const [msgs, setMsgs] = useState([])
   const [convs, setConvs] = useState(null)                   // null while loading
   const [cid, setCid] = useStored(`assistant-conversation-${workspaceId || 0}`, null)
+  const [unsaved, setUnsaved] = useState(false)   // chat storage failed: keep the thread in memory only
   const cidRef = useRef(null)
   const sentRef = useRef(false)      // the user has sent a message in this view
   cidRef.current = cid
@@ -107,7 +115,7 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
     return () => { live = false }
   }, [cid]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const run = useCallback(async (conv, text, { retry = false } = {}) => {
+  const run = useCallback(async (conv, text, { retry = false, history = null } = {}) => {
     const ac = new AbortController()
     abort.current = ac
     setBusy(true)
@@ -116,7 +124,8 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
     const patch = (fn) => setMsgs((m) => { const c = [...m]; c[c.length - 1] = fn(c[c.length - 1]); return c })
     const clientId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
     await chatStream({ provider, model, effort: effort || null, include_context: ctx, conversation_id: conv, client_id: clientId,
-      retry, messages: [{ role: 'user', content: text }] },
+      // without a stored conversation the server has no history, so the whole thread is sent (an unsaved chat)
+      retry: conv ? retry : false, messages: conv ? [{ role: 'user', content: text }] : history || [{ role: 'user', content: text }] },
     (ev) => {
       if (ev.type === 'text') patch((m) => ({ ...m, content: m.content + ev.delta }))
       else if (ev.type === 'done') patch((m) => ({ ...m, streaming: false, stop: ev.stop_reason, usage: ev.usage }))
@@ -133,16 +142,24 @@ export default function Assistant({ goSettings, onSetup, workspaceEmpty, workspa
     setInput('')
     sentRef.current = true
     let conv = cid
-    if (!conv) {
-      try { conv = (await api.createConversation()).id } catch (e) { setLoadErr(e.message); setInput(t); return }
-      skipLoad.current = true
-      setCid(conv)
+    if (!conv && !unsaved) {
+      try {
+        conv = (await api.createConversation()).id
+        skipLoad.current = true
+        setCid(conv)
+      } catch (e) {
+        // saving chats failed (e.g. the chats table is missing): answer anyway, just do not save this chat
+        setLoadErr(`${e.message} Chats are not being saved; the assistant still answers.`)
+        setUnsaved(true)
+        conv = null
+      }
     }
-    run(conv, t)
+    run(conv, t, { history: conv ? null : thread(msgs, t) })
   }
   const stop = () => { if (abort.current) abort.current.abort() }
   const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
-  const retry = () => lastUser && run(cid, lastUser.content, { retry: true })
+  const retry = () => lastUser && run(cid, lastUser.content, {
+    retry: true, history: cid ? null : thread(msgs.filter((m, i) => !(i === msgs.length - 1 && m.role === 'assistant')).slice(0, -1), lastUser.content) })
   const newChat = () => { if (busy) stop(); setCid(null); setMsgs([]); setInput('') }
   const saveTitle = async () => {
     const e = editing

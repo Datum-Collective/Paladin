@@ -21,7 +21,22 @@ def workspace_model(ws: int) -> tuple[list[Node], list[Edge]]:
     cm = codescan.load_model(ws)
     nodes += _valid(Node, cm["nodes"])
     edges += _valid(Edge, cm["edges"])
-    return nodes, edges
+    return consistent(nodes, edges)
+
+
+def consistent(nodes: list[Node], edges: list[Edge]) -> tuple[list[Node], list[Edge]]:
+    """Unique ids and no edge whose endpoint is not a node. A skipped (invalid) stored node used to leave edges
+    pointing at nothing; the analysis ignored them but the API returned them, and the graph library throws on such
+    an edge, which blanked the whole window."""
+    seen: dict[str, Node] = {}
+    for n in nodes:
+        seen.setdefault(n.id, n)
+    out, ids = [], set()
+    for e in edges:
+        if e.id not in ids and e.src in seen and e.dst in seen:
+            ids.add(e.id)
+            out.append(e)
+    return list(seen.values()), out
 
 
 def _valid(model, items: list) -> list:

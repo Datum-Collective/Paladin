@@ -73,7 +73,8 @@ def _error(r: httpx.Response) -> DataError:
     # migrations (for example 0004, which creates Assistant conversations).
     # Treat it as a recoverable service configuration issue rather than asking
     # a signed-in user to retry an invalid request.
-    if code == "PGRST205" or "does not exist" in msg.lower():
+    # PGRST204 / 42703: a column is missing, e.g. 0005 (code remediations) was skipped while 0003 was applied
+    if code in ("PGRST205", "PGRST204", "42703") or "does not exist" in msg.lower():
         return DataError(503, "The database schema is incomplete. Apply the Supabase migrations, then retry.", code)
     if code in ("42501", "PGRST301", "PGRST302") or r.status_code in (401, 403):
         return DataError(401 if r.status_code == 401 else 404, "Not found or not signed in.", code)

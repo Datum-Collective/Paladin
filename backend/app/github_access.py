@@ -191,7 +191,9 @@ async def _token_repo(user_id: str, owner: str, repo: str) -> RepoCtx:
         raise _not_found("Repository not found")
     d = r.json()
     if not (d.get("permissions") or {}).get("push"):
-        raise HTTPException(409, "Your GitHub token can't push to this repository. Download the patch instead.")
+        raise HTTPException(409, f"Your GitHub token can't push to {d.get('full_name', f'{owner}/{repo}')}: the account "
+                                 "it belongs to has no write access there. Ask the owner to add you as a collaborator, "
+                                 "or fork it and scan your fork. Download the patch to use the fixes now.")
     return RepoCtx(user_id, None, d["id"], d["full_name"], d["default_branch"], bool(d.get("private")), via="token")
 
 

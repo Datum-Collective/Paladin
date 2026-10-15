@@ -77,24 +77,41 @@ export default function Graph({ graph, highlight, selected, onNode, onEdge, onCl
   const showLabelsRef = useRef(showLabels)
   showLabelsRef.current = showLabels
 
+  const shown = useRef('')
+
   function draw() {
     const g = graphRef.current
     if (!g || !cy.current) return
+    const c = cy.current
     const kind = theme().kind
+    // Cytoscape throws on an edge whose endpoint is missing, and a throw here unmounted the whole app (blank
+    // window). The API drops such edges too; this keeps the canvas alive if one ever arrives anyway.
+    const ids = new Set()
+    const nodes = (g.nodes || []).filter((n) => n && n.id != null && !ids.has(n.id) && ids.add(n.id))
+    const seen = new Set()
+    const edges = (g.edges || []).filter((e) => e && ids.has(e.src) && ids.has(e.dst) && !seen.has(e.id) && seen.add(e.id))
     const els = [
-      ...g.nodes.map((n) => ({ data: { id: n.id, label: showLabelsRef.current ? n.label : '', color: kind[n.kind] || kind.service,
-                                       shape: SHAPE[n.kind] || 'round-rectangle' } })),
-      ...g.edges.map((e) => ({ data: { id: e.id, source: e.src, target: e.dst, technique: e.technique,
+      ...nodes.map((n) => ({ data: { id: n.id, label: showLabelsRef.current ? n.label : '', color: kind[n.kind] || kind.service,
+                                     shape: SHAPE[n.kind] || 'round-rectangle' } })),
+      ...edges.map((e) => ({ data: { id: e.id, source: e.src, target: e.dst, technique: e.technique,
           p: e.p, observed: e.observed, fixed: e.fixed, basis: e.basis || '' } })),
     ]
-    cy.current.elements().remove()
-    cy.current.add(els)
     // a tall, narrow pane reads better top to bottom; a wide one left to right (the attack direction either way)
     const el = ref.current
     const tall = el && el.clientHeight > el.clientWidth * 1.15
-    orient.current = tall ? 'TB' : 'LR'
-    cy.current.layout({ name: 'dagre', rankDir: orient.current, nodeSep: tall ? 110 : 56, rankSep: tall ? 70 : 84, edgeSep: 30,
+    const want = tall ? 'TB' : 'LR'
+    const sig = want + '#' + [...ids].sort().join('|') + '#' + edges.map((e) => `${e.id}>${e.src}>${e.dst}`).sort().join('|')
+    const same = sig === shown.current && c.elements().length === els.length
+    if (same) {   // same structure (status, label or theme change): update in place so pan and zoom stay put
+      c.batch(() => els.forEach((x) => { const n = c.getElementById(x.data.id); if (n.nonempty()) n.data(x.data) }))
+      return
+    }
+    c.elements().remove()
+    c.add(els)
+    orient.current = want
+    c.layout({ name: 'dagre', rankDir: want, nodeSep: tall ? 110 : 56, rankSep: tall ? 70 : 84, edgeSep: 30,
       ranker: 'longest-path', fit: true, padding: 40 }).run()
+    shown.current = sig
   }
 
   useEffect(() => { draw() }, [graph, showLabels])

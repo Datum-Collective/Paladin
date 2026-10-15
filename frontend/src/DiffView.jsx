@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Icon from './Icons.jsx'
+import { MitreCode } from './Mitre.jsx'
 import { parseDiff, withInline } from './diffParse.js'
 import { api } from './api.js'
 import { Skeleton } from './ui.jsx'
@@ -70,7 +71,7 @@ function FileDiff({ file, fixes, defaultOpen, jobId }) {
           {fixes.map((f) => (
             <li key={f.id}>
               <span className="tag">{f.method === 'haiku' ? 'AI-drafted' : 'rule'}</span>
-              <b>{f.rule}</b> <span className="muted">{f.cwe} · {f.technique}</span>
+              <b>{f.rule}</b> {f.cwe && <MitreCode id={f.cwe} compact />}{f.technique && <> · <MitreCode id={f.technique} compact /></>}
               <div className="muted">{f.explanation}</div>
               <Checks checks={f.checks} />
             </li>

@@ -6,4 +6,5 @@ PyYAML==6.0.3
 pyjwt[crypto]==2.15.1
 python-dotenv==1.2.4
 pytest==9.1.1
+anthropic==1.14.0
 httpx==0.28.1
