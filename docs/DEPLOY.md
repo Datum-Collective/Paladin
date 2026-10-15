@@ -8,6 +8,31 @@
 | **Any VPS + free hostname** | a server with a public IP | `APP_DOMAIN=<ip-with-dashes>.sslip.io` (e.g. `203-0-113-10.sslip.io`), then the VPS steps below | No DNS to buy or configure; Caddy issues the certificate for that hostname. |
 | **Quick demo only** | a laptop | `cloudflared tunnel --url http://localhost:8000` | Temporary URL that changes each run, only while the laptop is on. Not production. |
 
+### Vercel (what is configured now)
+Vercel serves the UI from its CDN and runs the API as one serverless Python function (`api/index.py`, routed from
+`/api/*` and `/health` by `vercel.json`). Same origin, so sign-in cookies just work.
+
+```bash
+npm i -g vercel && vercel login
+git checkout fix/signin-diagnostics            # or main once merged
+vercel link                                    # create a new project, e.g. paladin-datum; root directory ./
+vercel env add SUPABASE_URL production
+vercel env add SUPABASE_ANON_KEY production
+vercel env add SUPABASE_SERVICE_KEY production  # mark as sensitive
+vercel --prod
+```
+Production address: `https://<project>.vercel.app` (the app reads it from `VERCEL_PROJECT_PRODUCTION_URL`; `APP_URL`
+is optional). Add it to Supabase: Site URL `https://<project>.vercel.app`, Redirect URL
+`https://<project>.vercel.app/api/auth/callback`. If the site asks you to log in to Vercel, turn off Deployment
+Protection for Production in Project Settings.
+
+**What works on Vercel:** sign-in, workspaces, log ingest, attack-path analysis, fixes and remediation, Insights,
+Activity history, the Assistant (needs a provider key set as a project env var), settings.
+**What does not:** repository scans (clone, scan, patch, open PR). They need a process that outlives a request, the
+`git` binary and a disk; functions have none of those. The app reports this plainly (`/api/config` has
+`scans: false`, and the Scan button explains why). Scans work in the desktop app and on Fly/Render/VPS.
+Function limits: 60 s per request, so very long Assistant answers may be cut.
+
 On Fly, Render and Railway the app learns its own address from the platform, so `APP_URL` is optional there. After
 the first deploy, add that exact address to Supabase (Site URL, and `<address>/api/auth/callback` under Redirect
 URLs). Use the exact URL, never a wildcard like `*.onrender.com`: that would let anyone's app on that host receive

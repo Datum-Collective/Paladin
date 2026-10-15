@@ -59,6 +59,13 @@ GITHUB_ENABLED = all((GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_CLIENT_ID, GITH
                       GITHUB_APP_PRIVATE_KEY, SUPABASE_SERVICE_KEY))
 
 
+# Vercel (and similar) run requests as short-lived functions: no background threads that outlive a response, no git
+# binary, no persistent disk. Repository scans are therefore unavailable there; everything else works.
+SERVERLESS = bool(os.environ.get("VERCEL"))
+SERVERLESS_SCAN_MESSAGE = ("Repository scans are not available on this hosted site, because it runs as short-lived "
+                           "functions. Use the Paladin desktop app (or a server that stays running) to scan a repository.")
+
+
 def app_url() -> str:
     """The origin the browser uses. Web: APP_URL. Desktop: the engine's own loopback address."""
     if desktop_mode():
@@ -66,6 +73,8 @@ def app_url() -> str:
     if _env("APP_URL"):
         return _env("APP_URL").rstrip("/")
     # hosting platforms that give every service an https address: no domain of your own is needed
+    if _env("VERCEL_PROJECT_PRODUCTION_URL"):   # the stable production alias (VERCEL_URL changes every deployment)
+        return f"https://{_env('VERCEL_PROJECT_PRODUCTION_URL')}"
     if _env("RENDER_EXTERNAL_URL"):
         return _env("RENDER_EXTERNAL_URL").rstrip("/")
     if _env("FLY_APP_NAME"):

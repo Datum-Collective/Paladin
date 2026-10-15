@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd frontend && npm ci",
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{backend/app/**,data/inventory.yaml,data/attack_subset.json,data/benchmarks.json,data/samples/**}",
+      "excludeFiles": "{backend/tests/**,backend/.venv/**,frontend/**,desktop/**,docs/**,data/attack/**,**/__pycache__/**}"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" }
+  ]
+}
