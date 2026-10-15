@@ -11,6 +11,7 @@ import WorkspacesView from './WorkspacesView.jsx'
 import ActivityView from './ActivityView.jsx'
 import IntegrationsView from './IntegrationsView.jsx'
 import { ConfirmDialog, NewWorkspaceDialog } from './Dialogs.jsx'
+import Onboarding from './Onboarding.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
@@ -113,7 +114,7 @@ const TITLES = { home: 'Home', workspaces: 'Workspaces', analysis: 'Analysis', r
 
 function Shell({ config, user, onSignOut, onExpired }) {
   const toast = useToast()
-  const { prefs, ready: prefsReady } = usePrefs()
+  const { prefs, set: setPref, ready: prefsReady } = usePrefs()
   const wsl = useWorkspaces(user)
   const ws = useWorkspace(user, onExpired, wsl.active)
   const [view, setView] = useState(null)               // null until preferences and workspaces are known
@@ -212,6 +213,17 @@ function Shell({ config, user, onSignOut, onExpired }) {
     }
     if (table[id]) table[id]()
   }, [ws, fx, go, goSettings, chooseFolder, toast, setSidebarOpen, setInspectorOpen, setRail])
+
+  // first-run guide: brand-new accounts only (nothing imported yet), once; any way out remembers it was seen
+  const isNew = wsl.loaded && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
+  const showWelcome = prefsReady && !prefs['general.welcome_seen'] && isNew
+  const finishWelcome = useCallback(async (choice, opts) => {
+    await setPref('general.welcome_seen', true)
+    if (opts && opts.keepOpen) return
+    if (choice === 'sample') { setView('analysis'); run('play') }
+    else if (choice === 'repo') run('open-repo')
+    else setView('home')
+  }, [setPref, run])
 
   // native menu bar -> same table (desktop)
   const runRef = useRef(run)
@@ -325,6 +337,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
         )}
       </div>
 
+      {showWelcome && <Onboarding config={config} user={user} canPlay={ws.canPlay} onFinish={finishWelcome} />}
       {newDlg && (
         <NewWorkspaceDialog desktop={config.desktop} onCancel={() => setNewDlg(false)} onCreate={createNamed}
                             onImportRepo={importRepo} onImportFolder={importLocal} onChooseFolder={chooseFolder} />

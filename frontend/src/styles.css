@@ -745,3 +745,21 @@ kbd { border-radius: 6px; }
 .login-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg-2);
   border: 1px solid var(--line); border-radius: 8px; }
 .login-fine { margin: 0; text-align: center; line-height: 1.5; }
+
+/* first-run guide */
+.dialog.onboard { width: min(480px, calc(100vw - 32px)); padding: 24px; display: flex; flex-direction: column; gap: 16px; min-height: 340px; }
+.dialog.onboard section { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.dialog.onboard h2 { font-size: 18px; margin: 0; }
+.ob-steps { display: flex; gap: 6px; }
+.ob-steps .dot { height: 4px; flex: 1; border-radius: 2px; background: var(--line-strong); }
+.ob-steps .dot.done, .ob-steps .dot.on { background: var(--accent); }
+.ob-steps .dot.done { opacity: 0.45; }
+.ob-row { display: flex; gap: 8px; } .ob-row input { flex: 1; min-height: 32px; }
+.ob-seg { display: inline-flex; gap: 0; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.ob-seg button { border: 0; border-radius: 0; background: transparent; padding: 4px 14px; }
+.ob-seg button.on { background: var(--accent); color: var(--on-accent); }
+.ob-choices { display: flex; flex-direction: column; gap: 8px; }
+.ob-choice { display: flex; align-items: center; gap: 12px; text-align: left; height: auto; padding: 12px; border-radius: 10px; }
+.ob-choice > span { display: flex; flex-direction: column; gap: 2px; }
+.ob-choice .icon { color: var(--accent); }
+.ob-actions { display: flex; align-items: center; gap: 8px; }
