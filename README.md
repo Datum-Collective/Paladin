@@ -65,8 +65,10 @@ Setup, once per Supabase project:
    Email. Authentication -> URL Configuration -> Redirect URLs, add:
    - `http://localhost:5173/api/auth/callback` (dev) and `https://<APP_DOMAIN>/api/auth/callback` (VPS)
    - `http://127.0.0.1:*/api/auth/callback` (desktop app; its engine listens on a local port)
-3. SQL editor: run `supabase/migrations/0001_auth.sql`, `0002_github.sql`, `0003_app_data.sql` in order (each is safe
-   to re-run), then `supabase/tests/rls_test.sql`. It must end with "RLS checks passed"; it changes nothing.
+3. SQL editor: run every numbered migration from `supabase/migrations/0001_auth.sql` through
+   `0005_code_remediation.sql` in order (each is safe to re-run), then `supabase/tests/rls_test.sql`. It must end
+   with "RLS checks passed"; it changes nothing. Migration `0004_conversations.sql` is required for Assistant chat
+   history and streaming replies.
 4. Fill in `SUPABASE_URL`, `SUPABASE_ANON_KEY` (publishable key), `SUPABASE_SERVICE_KEY` (server only) and
    `APP_URL` (the origin the browser uses) in `.env`.
 

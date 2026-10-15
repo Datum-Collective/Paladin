@@ -118,5 +118,5 @@ The frozen bug-bounty build is `./deploy.sh bounty` (separate container and `BOU
 | Login bounces back with an error at the end | the production callback is missing from Supabase's Redirect URLs |
 | Certificate never issues | port 80 closed, or DNS not yet pointing at this server |
 | "Sign-in is not set up" | `.env` not at the repo root, or `SUPABASE_*` empty (preflight shows which) |
-| Signed in but data calls fail | migrations not applied (`supabase/migrations/0001..0003`) |
+| Signed in but data calls fail, or Assistant says the database rejected a request | migrations not applied (`supabase/migrations/0001..0005`; `0004` creates Assistant conversations) |
 | Cookie not kept | `COOKIE_SECURE=0` or `APP_URL` is http |

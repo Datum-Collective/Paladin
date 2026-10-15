@@ -131,12 +131,15 @@ def main() -> int:
         say(WARN, "new sign-ups are disabled in this project; only existing users can sign in")
 
     print("\nData layer (migrations)")
-    for table in ("profiles", "jobs", "events", "prefs"):
+    # Keep this list aligned with all numbered migrations.  In particular,
+    # conversations/messages are required for the Assistant, so checking only
+    # the original app-data tables can otherwise report a false-ready deploy.
+    for table in ("profiles", "jobs", "events", "prefs", "conversations", "messages", "remediations"):
         t = httpx.get(f"{url}/rest/v1/{table}?select=*&limit=0", headers=headers, timeout=10)
         if t.status_code in (200, 206):
             say(OK, f"table '{table}' exists")
         elif t.status_code == 404 or "PGRST205" in t.text or "does not exist" in t.text:
-            say(BAD, f"table '{table}' missing: run supabase/migrations/0001..0003 in the SQL editor, in order")
+            say(BAD, f"table '{table}' missing: run supabase/migrations/0001..0005 in the SQL editor, in order")
         else:
             say(WARN, f"table '{table}': HTTP {t.status_code} (RLS may be hiding it from an anonymous caller; fine)")
 

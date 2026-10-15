@@ -68,6 +68,13 @@ def _error(r: httpx.Response) -> DataError:
     if code == "23514" or "limit reached" in msg:
         # check constraints and the row caps in 0003 (their messages are ours, not Postgres internals)
         return DataError(409, msg if "limit" in msg else "That value is not allowed.", code)
+    # PostgREST returns PGRST205 while its schema cache cannot find a table.
+    # That most commonly means a deployment skipped one of our numbered SQL
+    # migrations (for example 0004, which creates Assistant conversations).
+    # Treat it as a recoverable service configuration issue rather than asking
+    # a signed-in user to retry an invalid request.
+    if code == "PGRST205" or "does not exist" in msg.lower():
+        return DataError(503, "The database schema is incomplete. Apply the Supabase migrations, then retry.", code)
     if code in ("42501", "PGRST301", "PGRST302") or r.status_code in (401, 403):
         return DataError(401 if r.status_code == 401 else 404, "Not found or not signed in.", code)
     if code == "23503":
