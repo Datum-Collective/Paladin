@@ -955,3 +955,6 @@ kbd { border-radius: 6px; }
   .ob-screen, .ob-stage > *, .g-path, .g-node, .g-node circle, .g-cut, .art, .art > *, .ob-timer, .ob-check { animation: none !important; }
   .g-path { stroke-dashoffset: 0; } .g-cut { opacity: 1; } .ob-sun, .ob-screen { transition: none; }
 }
+
+/* brand mark: the Paladin glyph on its sunset tile (public/mark.svg), everywhere the old flat square was used */
+.brand-mark, .ob-top .brand-mark, .splash .brand-mark { background: url("/mark.svg") center / contain no-repeat; border-radius: 0; box-shadow: none; }
