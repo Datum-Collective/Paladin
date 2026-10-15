@@ -1,8 +1,8 @@
 // Renders the brand artwork to every format the packaged app needs. Run from desktop/:
 //   npx electron scripts/make-icons.js
-// Inputs : build/icon.svg (1024 grid, Apple icon template), build/dmg-background.svg (660x400)
+// Inputs : build/icon-source.png (1024 master, Apple icon grid with its own shadow), build/dmg-background.svg (660x400)
 // Outputs: build/icon.png, build/icon.icns, build/dmg-background.png, build/dmg-background@2x.png, build/dmg-background.tiff
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, nativeImage } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
@@ -31,10 +31,12 @@ app.on('window-all-closed', () => {})
 
 app.whenReady().then(async () => {
   try {
-    const icon = path.join(BUILD, 'icon.svg')
+    const source = path.join(BUILD, 'icon-source.png')
+    if (!fs.existsSync(source)) throw new Error(`missing ${source}`)
     fs.rmSync(ICONSET, { recursive: true, force: true })
     fs.mkdirSync(ICONSET, { recursive: true })
-    const master = await render(icon, 1024, 1024)
+    const master = nativeImage.createFromPath(source)
+    if (master.isEmpty() || master.getSize().width !== 1024) throw new Error('icon-source.png must be 1024x1024')
     fs.writeFileSync(path.join(BUILD, 'icon.png'), master.toPNG())
     for (const [base, scale] of SIZES) {
       const px = base * scale

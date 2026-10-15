@@ -4,7 +4,7 @@
 cd desktop
 SUPABASE_URL=... SUPABASE_ANON_KEY=... npm run dist:mac        # app, zip and DMG in desktop/dist
 npm run dist:mac -- --dir                                      # unpacked .app only (faster)
-npm run icons                                                  # regenerate icns/png/DMG art from build/*.svg
+npm run icons                                                  # regenerate icns/png/DMG art from build/icon-source.png and build/dmg-background.svg
 ```
 
 `dist:mac` builds the UI, freezes the engine with PyInstaller (own `backend/.venv`; needs `uv`), packages with
@@ -14,7 +14,7 @@ electron-builder and writes `Paladin-<version>-<arch>.dmg` plus the `.zip` that 
 
 | File | Purpose |
 |---|---|
-| `desktop/build/icon.svg` | Master app icon (1024 grid, Apple icon template). Edit this, then `npm run icons`. |
+| `desktop/build/icon-source.png` | Master app icon, 1024x1024 on Apple's icon grid (824 body, soft shadow). Replace it, then `npm run icons`. |
 | `desktop/build/icon.icns`, `icon.png` | Generated: Dock, Finder, Launchpad, window icon. |
 | `desktop/build/dmg-background.svg` / `.tiff` | Installer window art (660x400, retina TIFF generated). |
 | `frontend/public/{favicon,mark,glyph}.svg` | Web favicon, in-app brand mark, single-colour glyph. |
