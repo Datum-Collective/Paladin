@@ -6,6 +6,7 @@ DEFAULTS: dict = {
     "general.startup": "home",            # home | last
     "general.after_import": "repository", # repository | analysis
     "general.onboarding_dismissed": False,
+    "general.welcome_seen": False,        # the first-run setup guide has been completed or skipped
     "workspaces.sort": "recent",          # recent | name | events
     "appearance.density": "comfortable",  # comfortable | compact
     "appearance.graph_labels": True,

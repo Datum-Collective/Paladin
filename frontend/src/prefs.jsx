@@ -4,7 +4,7 @@ import { useToast } from './toast.jsx'
 
 // Mirrors the server's defaults so the UI renders before the first response; the server stays authoritative.
 export const PREF_DEFAULTS = {
-  'general.startup': 'home', 'general.after_import': 'repository', 'general.onboarding_dismissed': false,
+  'general.startup': 'home', 'general.after_import': 'repository', 'general.onboarding_dismissed': false, 'general.welcome_seen': false,
   'workspaces.sort': 'recent', 'appearance.density': 'comfortable',
   'appearance.graph_labels': true, 'diff.wrap': true, 'diff.font_size': 12, 'assistant.provider': '',
   'assistant.model': '', 'assistant.effort': '', 'assistant.context': true,
