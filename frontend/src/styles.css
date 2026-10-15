@@ -730,3 +730,18 @@ kbd { border-radius: 6px; }
 .frow + .frow { border-radius: 0; }
 .keylist { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .keylist li { display: flex; align-items: center; gap: 8px; }
+
+/* sign in: one centred panel on the flat skin */
+.login-page { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 32px 16px;
+  background: var(--bg-2); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px; }
+.login-page .login { margin: 0; max-width: 400px; width: 100%; gap: 14px; padding: 28px; background: var(--bg);
+  border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow); }
+.login-title { font-size: 22px; line-height: 28px; letter-spacing: -0.01em; margin: 6px 0 0; }
+.login-lede { margin: 0; font-size: 13px; line-height: 1.5; }
+.login-points { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.login-points li { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--text-2); }
+.login-points .icon { color: var(--accent); }
+.login-cta { width: 100%; justify-content: center; min-height: 38px; font-size: 14px; border-radius: 8px; margin-top: 4px; }
+.login-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 8px; }
+.login-fine { margin: 0; text-align: center; line-height: 1.5; }
