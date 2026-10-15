@@ -12,6 +12,11 @@
 Vercel serves the UI from its CDN and runs the API as one serverless Python function (`api/index.py`, routed from
 `/api/*` and `/health` by `vercel.json`). Same origin, so sign-in cookies just work.
 
+`vercel.json` uses the Vercel **services** model (`frontend` = Vite in `frontend/`, `backend` = FastAPI via
+`api.index:app`); the CLI rejects top-level `functions`/`buildCommand`/`outputDirectory` next to auto-detected
+services. The Hobby plan cannot connect a private org repository to Vercel, so deploy from the CLI (`vercel --prod`);
+pushes do not auto-deploy.
+
 ```bash
 npm i -g vercel && vercel login
 git checkout fix/signin-diagnostics            # or main once merged
