@@ -4,6 +4,8 @@ The model only rewrites structured facts we computed. Any failure returns None a
 """
 import json
 import os
+import random
+import time
 
 import httpx
 
@@ -56,3 +58,53 @@ def complete(system: str, user: str, max_tokens: int = 1500) -> str | None:
         return "".join(p.get("text", "") for p in r.json().get("content", []) if p.get("type") == "text")
     except Exception:
         return None
+
+
+RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
+MAX_TRIES = 4
+BACKOFF = (2.0, 5.0, 12.0)         # seconds before retry 1..3 (tests set this to zeros)
+MAX_RETRY_AFTER = 30.0
+
+
+def model() -> str:
+    return os.environ.get("AI_MODEL", "claude-haiku-5-5")
+
+
+def call(system: str, user: str, max_tokens: int = 1500, cancelled=lambda: False) -> tuple[str | None, str]:
+    """One Haiku request with retries. Returns (text, "") or (None, kind) where kind is one of: off, auth, quota,
+    rate_limit, overloaded, network, invalid, server, cancelled. Rate limits honour Retry-After; waiting is
+    cancellable. Keys never appear in what is returned."""
+    if not enabled():
+        return None, "off"
+    kind = "server"
+    for attempt in range(MAX_TRIES):
+        if cancelled():
+            return None, "cancelled"
+        wait = 0.0
+        try:
+            r = httpx.post(URL, headers={"x-api-key": keys.get("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01",
+                                         "content-type": "application/json"},
+                           json={"model": model(), "max_tokens": max_tokens, "system": system,
+                                 "messages": [{"role": "user", "content": user}]}, timeout=60)
+            if r.status_code == 200:
+                text = "".join(p.get("text", "") for p in r.json().get("content", []) if p.get("type") == "text")
+                return text, ""
+            kind = {401: "auth", 403: "auth", 402: "quota", 400: "invalid", 404: "invalid", 429: "rate_limit",
+                    529: "overloaded"}.get(r.status_code, "server")
+            if r.status_code not in RETRY_STATUS:
+                return None, kind
+            try:
+                wait = min(MAX_RETRY_AFTER, float(r.headers.get("retry-after", "")))
+            except ValueError:
+                wait = 0.0
+        except (httpx.HTTPError, ValueError):
+            kind = "network"
+        if attempt == MAX_TRIES - 1:
+            break
+        delay = max(wait, BACKOFF[min(attempt, len(BACKOFF) - 1)]) * (1 + random.random() * 0.2)
+        end = time.monotonic() + delay
+        while time.monotonic() < end:
+            if cancelled():
+                return None, "cancelled"
+            time.sleep(min(0.25, max(0.0, end - time.monotonic())))
+    return None, kind

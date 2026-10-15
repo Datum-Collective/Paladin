@@ -136,6 +136,17 @@ class Provider:
         except ProviderError as e:
             return {"ok": False, "error": e.to_event()}
 
+    async def probe(self, model: str) -> dict:
+        """One tiny real inference with the saved key and the chosen model: the only proof that setup works end to
+        end (a models list does not show that the model is usable or that billing allows it)."""
+        async for ev in self.stream(model=model, system="Reply with the single word: ok.",
+                                    messages=[{"role": "user", "content": "ping"}], max_tokens=64):
+            if ev.get("type") == "error":
+                return {"ok": False, "error": ev}
+            if ev.get("type") == "done":
+                return {"ok": True, "model": model}
+        return {"ok": False, "error": ProviderError("server", "The provider returned no response.").to_event()}
+
     async def stream(self, *, model: str, system: str, messages: list[dict], effort: str | None = None,
                      max_tokens: int = 4096) -> AsyncIterator[dict]:
         """Yield normalised events. Retries only before the first byte of a successful response; once streaming

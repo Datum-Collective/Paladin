@@ -6,6 +6,8 @@ DEFAULTS: dict = {
     "general.startup": "home",            # home | last
     "general.after_import": "repository", # repository | analysis
     "general.onboarding_dismissed": False,
+    "general.setup_done": False,          # a provider, key and model were validated by a real round trip
+    "general.setup_skipped": False,       # the user chose to set up later; the guided flow stops opening itself
     "general.welcome_seen": False,        # the first-run setup guide has been completed or skipped
     "workspaces.sort": "recent",          # recent | name | events
     "appearance.density": "comfortable",  # comfortable | compact

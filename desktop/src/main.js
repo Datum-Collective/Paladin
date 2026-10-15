@@ -112,6 +112,7 @@ function createWindow(origin) {
     title: 'Paladin',
     // vibrancy needs a transparent window; the content column paints its own opaque background
     backgroundColor: isMac ? '#00000000' : (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff'),
+    icon: isMac ? undefined : path.join(__dirname, '..', 'build', 'icon-source.png'),   // macOS takes the icon from the app bundle
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
     trafficLightPosition: isMac ? { x: 13, y: 12 } : undefined, // centres the controls in the 40pt titlebar row
     titleBarOverlay: isMac ? undefined : { color: '#00000000', symbolColor: '#8e8e93', height: 36 },
@@ -270,6 +271,8 @@ function buildMenu() {
 }
 
 async function boot() {
+  // running from source (npm start): the bundle has no icon yet, so show the brand icon in the Dock
+  if (isMac && !app.isPackaged && app.dock) { try { app.dock.setIcon(path.join(__dirname, '..', 'build', 'icon-source.png')) } catch { /* cosmetic */ } }
   const dataRoot = path.join(app.getPath('userData'), 'data')
   settings = new Settings(app.getPath('userData'), safeStorage)
   backend = new Backend({
@@ -301,7 +304,8 @@ async function boot() {
   registerIpc()
   buildMenu()
   hardenSession()
-  updater = createUpdater({ app, send: (s) => send('update:status', s), log })
+  updater = createUpdater({ app, send: (s) => send('update:status', s), log,
+    releaseUrl: 'https://github.com/Manipal-Hackathon-2026/DATUM/releases/latest' })
   try {
     await backend.start()
   } catch (e) {
@@ -310,7 +314,7 @@ async function boot() {
   }
   pushKeys().catch((e) => log('could not push keys at startup', e.message)) // the app works without provider keys
   createWindow(backend.origin)
-  if (app.isPackaged) setTimeout(() => updater.check(), 5000)
+  updater.start()   // no-op outside a packaged build
 }
 
 app.whenReady().then(boot)

@@ -157,14 +157,14 @@ def test_cancel_during_scan_stops_before_results_are_persisted(client, repo, mon
         shutil.copytree(repo, args[-1])
         return ""
 
-    def blocked_scan(files, cancelled):
+    def blocked_scan(files, cancelled, **_):
         scanning.set()
         while not cancelled():
             time.sleep(0.01)
         raise InterruptedError("scan cancelled")
 
     monkeypatch.setattr(harness, "_git", clone)
-    monkeypatch.setattr(harness.codescan, "scan_full", blocked_scan)
+    monkeypatch.setattr(harness.crawler, "analyze", blocked_scan)
     job = client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()
     assert scanning.wait(2)
 
@@ -285,7 +285,7 @@ def test_clone_token_goes_only_into_a_github_header(monkeypatch):
 
 
 @pytest.mark.parametrize("stderr,expect", [
-    ("Cloning into 'data_dir\jobs\9\repo'...\nfatal: unable to access 'https://github.com/a/b.git/': "
+    ("Cloning into 'data_dir\\jobs\\9\\repo'...\nfatal: unable to access 'https://github.com/a/b.git/': "
      "Could not resolve host: github.com\n", "network or DNS"),
     ("Cloning into 'x'...\nfatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com "
      "port 443 after 21000 ms: Timed out\n", "network or DNS"),
@@ -294,7 +294,7 @@ def test_clone_token_goes_only_into_a_github_header(monkeypatch):
     ("Cloning into 'x'...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
      "not found"),
     # a repo named like a network word, in a job folder named 403, is still classified by git's error line only
-    ("Cloning into 'data_dir\jobs\403\ssl-timed-out'...\nfatal: weird\n", "server log"),
+    ("Cloning into 'data_dir\\jobs\\403\\ssl-timed-out'...\nfatal: weird\n", "server log"),
 ])
 def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, expect):
     monkeypatch.setattr(harness.subprocess, "run",
@@ -303,3 +303,41 @@ def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, 
         harness._git(["clone", "https://github.com/a/b.git", "dest"], token="ghs_t")
     msg = str(e.value)
     assert expect in msg and "data_dir" not in msg and "jobs" not in msg and "ghs_t" not in msg
+
+
+def test_scan_result_is_visible_to_the_live_stream_and_graph_api(client, world, repo):
+    """Root cause of 'the graph never shows up': finishing a scan changed nothing the live stream watched."""
+    sign_in(client, ALICE)
+    before = client.get("/api/graph").json()
+    assert before["nodes"] == []
+    assert not world.db.tables.get("code_models")
+    job = _wait(client, client.post("/api/harness/jobs", json={"repo_url": str(repo)}).json()["id"])
+    assert job["state"] == "ready"
+    [row] = world.db.tables["code_models"]
+    assert row["created"] > 0       # `created` is what codescan.version() reports, and the stream watches it
+    g = client.get("/api/graph").json()
+    kinds = {n["kind"] for n in g["nodes"]}
+    assert {"external", "component", "weakness", "data"} <= kinds
+    w = next(n for n in g["nodes"] if n["kind"] == "weakness")
+    assert w["meta"]["file"] == "server.py" and w["meta"]["line"] > 0
+    assert {e["basis"] for e in g["edges"]} >= {"finding", "assumed"}
+    p = client.get("/api/paths").json()["paths"][0]
+    assert {h["basis"] for h in p["hops"]} >= {"finding", "assumed"}
+def test_clone_token_is_not_left_in_the_working_copy(tmp_path, monkeypatch):
+    """The token travels as an environment-only header: nothing in the clone's .git may contain it."""
+    import os
+    monkeypatch.setenv("APC_ALLOW_LOCAL", "1")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("x = 1\n")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "PATH": os.environ["PATH"], "HOME": str(tmp_path), **{k: v for k, v in os.environ.items() if k.upper() == "SYSTEMROOT"}}
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *cmd], cwd=src, env=env, check=True)
+    dest = tmp_path / "clone"
+    harness._git(["clone", "--depth", "1", src.resolve().as_uri(), str(dest)], token="ghs_must_not_persist",
+                 allow_file=True)
+    for f in (dest / ".git").rglob("*"):
+        if f.is_file():
+            data = f.read_bytes()
+            assert b"ghs_must_not_persist" not in data and b"AUTHORIZATION" not in data.upper(), f

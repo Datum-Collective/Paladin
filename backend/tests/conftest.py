@@ -17,6 +17,7 @@ os.environ.update({
     "SUPABASE_SERVICE_KEY": SERVICE_KEY,
     "SUPABASE_JWT_SECRET": JWT_SECRET,
     "APP_URL": "http://localhost:5173",
+    "PORT": "5173",   # desktop mode: the engine answers only to its own port (the test clients use localhost:5173)
     "COOKIE_SECURE": "0",
     "GITHUB_APP_ID": APP_ID,
     "GITHUB_APP_SLUG": "apc-test",

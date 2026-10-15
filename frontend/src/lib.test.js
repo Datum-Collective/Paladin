@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -122,5 +122,83 @@ describe('filter and sort workspaces', () => {
   it('names a folder from its path', () => {
     expect(folderName('/Users/me/code/api/')).toBe('api')
     expect(folderName('C:\\code\\api')).toBe('api')
+  })
+})
+
+describe('keyProblem', () => {
+  it('accepts well-formed keys for each provider', () => {
+    expect(keyProblem('anthropic', 'sk-ant-api03-' + 'a'.repeat(30))).toBe('')
+    expect(keyProblem('openai', 'sk-proj-' + 'b'.repeat(30))).toBe('')
+  })
+  it('names what is wrong', () => {
+    expect(keyProblem('anthropic', '')).toBe('')                      // empty is "not entered yet", not an error
+    expect(keyProblem('anthropic', 'sk-' + 'a'.repeat(40))).toMatch(/sk-ant-/)
+    expect(keyProblem('openai', 'nope-' + 'a'.repeat(40))).toMatch(/sk-/)
+    expect(keyProblem('openai', 'sk-abc')).toMatch(/short/i)
+    expect(keyProblem('openai', 'sk-abc def' + 'x'.repeat(30))).toMatch(/space/i)
+  })
+})
+
+describe('setupAdvice', () => {
+  it('sends credential problems back to the key step', () => {
+    expect(setupAdvice({ kind: 'auth' }).goto).toBe('key')
+    expect(setupAdvice({ kind: 'permission' }).goto).toBe('model')
+  })
+  it('sends model problems to the model step and transient ones to a retry', () => {
+    expect(setupAdvice({ kind: 'not_found' }).goto).toBe('model')
+    expect(setupAdvice({ kind: 'rate_limit' })).toMatchObject({ goto: null, retry: true })
+    expect(setupAdvice({ kind: 'network' })).toMatchObject({ goto: null, retry: true })
+    expect(setupAdvice({ kind: 'quota' })).toMatchObject({ goto: null, retry: false })
+  })
+  it('falls back to a retry for unknown kinds', () => {
+    expect(setupAdvice({ kind: 'weird' }).retry).toBe(true)
+    expect(setupAdvice(null).retry).toBe(true)
+  })
+})
+
+describe('groupCommands', () => {
+  it('gathers each group into one contiguous run, keeping first-seen group order and item order', () => {
+    const out = groupCommands([
+      { id: 'a', group: 'Go to' }, { id: 'b', group: 'Workspaces' }, { id: 'c', group: 'Go to' },
+      { id: 'd', group: 'Actions' }, { id: 'e', group: 'Workspaces' },
+    ])
+    expect(out.map((c) => c.id)).toEqual(['a', 'c', 'b', 'e', 'd'])
+  })
+  it('is a no-op for an already grouped list', () => {
+    const list = [{ id: 'a', group: 'X' }, { id: 'b', group: 'Y' }]
+    expect(groupCommands(list)).toEqual(list)
+  })
+})
+
+describe('pathLabels', () => {
+  it('shows node labels instead of internal ids, falling back to the id', () => {
+    const nodes = [{ id: 'code:internet', label: 'Internet (any client)' }, { id: 'code:a.py', label: 'a.py' }]
+    expect(pathLabels(['code:internet', 'code:a.py', 'x'], nodes)).toEqual(['Internet (any client)', 'a.py', 'x'])
+    expect(pathLabels(['x'], null)).toEqual(['x'])
+  })
+})
+
+describe('scanStages', () => {
+  it('marks finished, current and pending stages for each job state', () => {
+    const s = (state) => scanStages(state).map((x) => x.status)
+    expect(s('queued')).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(s('cloning')).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(s('scanning')).toEqual(['done', 'current', 'pending', 'pending'])
+    expect(s('fixing')).toEqual(['done', 'done', 'current', 'pending'])
+    expect(s('ready')).toEqual(['done', 'done', 'done', 'done'])
+    expect(s('done')).toEqual(['done', 'done', 'done', 'done'])
+  })
+  it('marks the stage that was running when a scan failed', () => {
+    expect(scanStages('failed', 'scanning').map((x) => x.status)).toEqual(['done', 'failed', 'pending', 'pending'])
+  })
+})
+
+describe('fromStored', () => {
+  it('keeps the text of failed, stopped and cut-off replies and labels them', () => {
+    expect(fromStored({ id: 1, role: 'assistant', content: 'partial', status: 'interrupted', meta: {} }).interrupted).toBe(true)
+    expect(fromStored({ id: 2, role: 'assistant', content: '', status: 'error', meta: { error: { kind: 'auth', message: 'bad key' } } }).error.kind).toBe('auth')
+    const ok = fromStored({ id: 3, role: 'assistant', content: 'hi', status: 'complete', meta: { stop_reason: 'end_turn', usage: { input: 1, output: 2 } } })
+    expect(ok).toMatchObject({ content: 'hi', stop: 'end_turn', usage: { output: 2 }, stopped: false, interrupted: false })
+    expect(ok.error).toBeUndefined()
   })
 })

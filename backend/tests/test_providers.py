@@ -245,6 +245,29 @@ def test_openai_stream_uses_responses_api_with_store_false(monkeypatch):
     assert evs[-1] == {"type": "done", "stop_reason": "end_turn", "usage": {"input": 7, "output": 3}, "request_id": "req_o"}
 
 
+def test_openai_stream_accepts_full_lifecycle_and_refusal_events(monkeypatch):
+    keys.set_many({"openai": "k"})
+    progress = [
+        "response.created", "response.queued", "response.in_progress",
+        "response.output_item.added", "response.content_part.added",
+        "response.output_text.done", "response.content_part.done", "response.output_item.done",
+        "response.reasoning_summary_part.added", "response.reasoning_summary_text.delta",
+        "response.reasoning_summary_text.done", "response.reasoning_summary_part.done",
+        "response.function_call_arguments.delta", "response.function_call_arguments.done",
+        "response.refusal.done",
+    ]
+    events = [(None, {"type": t}) for t in progress]
+    events.insert(5, (None, {"type": "response.refusal.delta", "delta": "I cannot"}))
+    events.append((None, {"type": "response.completed", "response": {"usage": {}}}))
+    use(monkeypatch, openai_api, lambda r: httpx.Response(200, content=sse(*events)))
+
+    evs = run(collect(get_provider("openai").stream(
+        model="gpt-5", system="", messages=[{"role": "user", "content": "x"}])))
+
+    assert evs[0] == {"type": "text", "delta": "I cannot"}
+    assert evs[-1]["type"] == "done"
+
+
 def test_openai_incomplete_and_failed(monkeypatch):
     keys.set_many({"openai": "k"})
     use(monkeypatch, openai_api, lambda r: httpx.Response(200, content=sse(

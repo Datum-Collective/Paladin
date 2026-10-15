@@ -29,6 +29,17 @@ export function rankCommands(commands, query) {
     .map((x) => x.c)
 }
 
+/** Palette rows with each group in one run (first-seen order), so a heading never appears twice. */
+export function groupCommands(commands) {
+  const order = []
+  const by = new Map()
+  for (const c of commands) {
+    if (!by.has(c.group)) { by.set(c.group, []); order.push(c.group) }
+    by.get(c.group).push(c)
+  }
+  return order.flatMap((g) => by.get(g))
+}
+
 export const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n))
 
 /** Relative "x ago" for a unix-seconds or ISO timestamp, in compact form. */
@@ -119,3 +130,71 @@ export function sortWorkspaces(list, by = 'recent') {
 }
 
 export const folderName = (p) => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop()
+
+/** A link we may put in href: only https://github.com/... Anything else (javascript:, data:, another host) is dropped,
+ *  because job rows are the user's own and can be edited through the API. */
+export const githubUrl = (url) => (typeof url === 'string' && /^https:\/\/github\.com\//.test(url) ? url : undefined)
+
+/** FastAPI sends `detail` as a string for our errors and as a list of {msg, loc} for request validation. */
+export function errorText(detail, fallback = 'request failed') {
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) => (d && typeof d.msg === 'string' ? d.msg : '')).filter(Boolean)
+    if (msgs.length) return msgs.join('; ')
+  }
+  return fallback
+}
+
+const KEY_SHAPE = { anthropic: { prefix: 'sk-ant-', name: 'Claude' }, openai: { prefix: 'sk-', name: 'OpenAI' } }
+
+/** What is visibly wrong with a pasted key, or '' when it looks fine or is still empty. Shape only: the provider
+ *  is the authority on whether the key works. */
+export function keyProblem(provider, value) {
+  const v = String(value || '')
+  const shape = KEY_SHAPE[provider]
+  if (!v || !shape) return ''
+  if (/\s/.test(v)) return 'Keys never contain spaces. Check that you copied the whole key and nothing else.'
+  if (!v.startsWith(shape.prefix)) return `${shape.name} keys start with ${shape.prefix}`
+  if (v.length < 20) return 'That key looks too short. Copy the whole key.'
+  return ''
+}
+
+/** Where setup should send the user after a failed connection test, and whether trying again can help. */
+export function setupAdvice(error) {
+  const kind = error && error.kind
+  if (kind === 'auth') return { goto: 'key', retry: false }
+  if (kind === 'permission' || kind === 'not_found' || kind === 'invalid') return { goto: 'model', retry: false }
+  if (kind === 'quota') return { goto: null, retry: false }
+  return { goto: null, retry: true }
+}
+
+/** Path node ids -> the labels people read ("Internet (any client)", "server.py"), id when a label is missing. */
+export function pathLabels(ids, nodes) {
+  const by = new Map((nodes || []).map((n) => [n.id, n.label]))
+  return ids.map((i) => by.get(i) || i)
+}
+
+const STAGES = [['clone', 'Fetch repository', ['queued', 'cloning']], ['scan', 'Find weaknesses', ['scanning']],
+  ['paths', 'Build attack paths', ['fixing']], ['done', 'Results ready', ['ready', 'done', 'pr_opened']]]
+
+/** The four visible stages of a scan with a status each. `failedAt` is the last state seen before a failure. */
+export function scanStages(state, failedAt = '') {
+  const idx = (st) => STAGES.findIndex((s) => s[2].includes(st))
+  const cur = state === 'failed' || state === 'cancelled' ? idx(failedAt) : idx(state)
+  return STAGES.map(([id, label], i) => {
+    let status = 'pending'
+    if (STAGES[3][2].includes(state)) status = 'done'
+    else if (i < cur) status = 'done'
+    else if (i === cur) status = state === 'failed' ? 'failed' : state === 'cancelled' ? 'pending' : 'current'
+    return { id, label, status }
+  })
+}
+
+/** A stored message -> what the thread renders: failures, stops and cut-off replies keep their text and say so. */
+export function fromStored(m) {
+  const meta = m.meta || {}
+  return { id: m.id, role: m.role, content: m.content, created: m.created,
+    error: m.status === 'error' ? (meta.error || { message: 'The reply failed.' }) : undefined,
+    stopped: m.status === 'stopped', interrupted: m.status === 'interrupted' || m.status === 'streaming',
+    stop: meta.stop_reason, usage: meta.usage }
+}

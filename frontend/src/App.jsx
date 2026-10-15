@@ -15,6 +15,7 @@ import Onboarding from './Onboarding.jsx'
 import { PrefsProvider, usePrefs } from './prefs.jsx'
 import { useWorkspaces } from './useWorkspaces.js'
 import Assistant from './Assistant.jsx'
+import Setup from './Setup.jsx'
 import { classifyInput, pushRecent } from './lib.js'
 import { useStored } from './useStored.js'
 import Sidebar from './Sidebar.jsx'
@@ -128,6 +129,8 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const [homeFocus, setHomeFocus] = useState(0)
   const [homeIntent, setHomeIntent] = useState(null)
   const [newDlg, setNewDlg] = useState(false)
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [setupRuns, setSetupRuns] = useState(0)   // bumps when setup closes so Settings re-reads key state
   const [delTarget, setDelTarget] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useStored('sidebar-open', true)
   const [rail, setRail] = useStored('sidebar-rail', false)
@@ -148,6 +151,20 @@ function Shell({ config, user, onSignOut, onExpired }) {
     }
     setView(prefs['general.startup'] === 'last' && wsl.current ? 'analysis' : 'home')
   }, [view, prefsReady, wsl.loaded, wsl.current, prefs, toast])
+
+  // First launch: nothing validated, nothing skipped, and no provider key anywhere. Returning users (including
+  // web users whose server already holds a key) go straight in; setup stays reachable from Settings and the palette.
+  const checkedSetup = useRef(false)
+  useEffect(() => {
+    if (checkedSetup.current || !prefsReady || !wsl.loaded) return
+    const welcoming = !prefs['general.welcome_seen'] && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
+    if (welcoming) return                      // the welcome tour comes first; this re-runs when it finishes
+    checkedSetup.current = true
+    if (prefs['general.setup_done'] || prefs['general.setup_skipped']) return
+    api.providers().then((r) => {
+      if (!r.providers.some((p) => p.configured)) setSetupOpen(true)
+    }).catch(() => {})
+  }, [prefsReady, wsl.loaded, wsl.workspaces, prefs])
 
   const go = useCallback((target) => {
     if (target === 'ingest') { setView('analysis'); setTab('ingest') } else setView(target)
@@ -201,7 +218,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       },
       workspaces: () => setView('workspaces'), activity: () => setView('activity'), integrations: () => setView('integrations'),
       analysis: () => setView('analysis'), repo: () => setView('repo'), insights: () => setView('insights'),
-      assistant: () => setView('assistant'), settings: () => goSettings(), ingest: () => go('ingest'),
+      assistant: () => setView('assistant'), settings: () => goSettings(), setup: () => setSetupOpen(true), ingest: () => go('ingest'),
       events: () => { setView('analysis'); setTab('events') }, palette: () => setPalette((p) => !p),
       'toggle-sidebar': () => setSidebarOpen((o) => !o), 'collapse-sidebar': () => { setSidebarOpen(true); setRail((r) => !r) }, 'toggle-inspector': () => setInspectorOpen((o) => !o),
       play: () => (ws.canPlay ? ws.play() : toast('No sample scenario is installed.', 'warn')),
@@ -221,6 +238,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
   const isNew = wsl.loaded && !wsl.workspaces.some((w) => w.repo_url || w.events > 0)
   const showWelcome = prefsReady && !prefs['general.welcome_seen'] && isNew
   const finishWelcome = useCallback(async (choice, opts) => {
+    checkedSetup.current = true      // the tour already offered provider setup; never open it again straight after
     await setPref('general.welcome_seen', true)
     if (opts && opts.keepOpen) return
     if (choice === 'sample') { setView('analysis'); run('play') }
@@ -264,6 +282,7 @@ function Shell({ config, user, onSignOut, onExpired }) {
       { id: 'repo', group: 'Go to', title: 'Repository', icon: 'repo', hint: 'Scan a GitHub repository', keywords: 'github scan code' },
       { id: 'insights', group: 'Go to', title: 'Insights', icon: 'chart', hint: 'Timeline and benchmarks' },
       { id: 'assistant', group: 'Go to', title: 'Assistant', icon: 'chat', hint: 'Ask about your paths', keywords: 'claude openai chat ask' },
+      { id: 'setup', group: 'Actions', title: 'Set up AI provider…', icon: 'shield', hint: 'Provider, key and model', keywords: 'onboarding claude openai api key model connect' },
       { id: 'settings', group: 'Go to', title: 'Settings', icon: 'settings', keywords: 'keys providers updates preferences' },
       { id: 'ingest', group: 'Actions', title: 'Add log data…', icon: 'upload', keywords: 'ingest upload paste logs' },
       { id: 'events', group: 'Actions', title: 'Show events', icon: 'file' },
@@ -331,15 +350,16 @@ function Shell({ config, user, onSignOut, onExpired }) {
         {view === 'activity' && <ActivityView key={wsl.active} onRetry={retryScan} goSettings={goSettings} />}
         {view === 'integrations' && <IntegrationsView config={config} desktop={config.desktop} goSettings={goSettings} onIngested={ws.refresh} />}
         {view === 'insights' && <Insights key={ws.graph ? `${ws.graph.events}:${ws.graph.nodes.length}:${ws.graph.edges.length}` : 'empty'} graph={ws.graph} paths={ws.paths} fixes={ws.fixes} rems={ws.rems} />}
-        {view === 'repo' && <RepoView onDone={ws.refresh} />}
-        {view === 'assistant' && <Assistant goSettings={() => goSettings('providers')} workspaceEmpty={ws.empty} />}
-        {view === 'settings' && <Settings pane={pane} setPane={setPane} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
+        {view === 'repo' && <RepoView onDone={ws.refresh} onViewPaths={() => setView('analysis')} />}
+        {view === 'assistant' && <Assistant key={wsl.active} goSettings={() => goSettings('providers')} onSetup={() => setSetupOpen(true)} workspaceEmpty={ws.empty} workspaceId={wsl.active} />}
+        {view === 'settings' && <Settings key={setupRuns} pane={pane} setPane={setPane} onSetup={() => setSetupOpen(true)} config={config} user={user} wsl={wsl} onCreate={() => setNewDlg(true)} onReset={() => setConfirmReset(true)} />}
         {view === 'analysis' && (
           <Analysis state={ws} selected={selected} setSelected={setSelected} tab={tab} setTab={setTab} go={go}
                     desktop={config.desktop} inspectorOpen={inspectorOpen} />
         )}
       </div>
 
+      {setupOpen && <Setup config={config} onClose={() => { setSetupOpen(false); setSetupRuns((n) => n + 1) }} onOpenAssistant={() => setView('assistant')} />}
       {showWelcome && <Onboarding config={config} user={user} canPlay={ws.canPlay} onFinish={finishWelcome} />}
       {newDlg && (
         <NewWorkspaceDialog desktop={config.desktop} onCancel={() => setNewDlg(false)} onCreate={createNamed}

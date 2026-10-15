@@ -36,10 +36,11 @@ def narrate(path: dict, edges_by_id: dict, labels: dict) -> tuple[str, list[str]
             ev = ", ".join(e.evidence[:3]) + ("..." if len(e.evidence) > 3 else "")
             sentences.append(f"{src} reached {dst} via {how}, confirmed by events {ev}.")
         else:
-            sentences.append(f"{src} could reach {dst} via {how} (no events yet, prior only).")
+            why = {"finding": "static finding", "reference": "an import at a real line", "assumed": "assumed, not verified"}.get(e.basis, "no events yet, prior only")
+            sentences.append(f"{src} could reach {dst} via {how} ({why}).")
         hops.append({"edge": eid, "src": e.src, "dst": e.dst, "technique": e.technique,
                      "technique_name": t["name"], "observed": e.observed, "p": round(e.p, 3),
                      "evidence": e.evidence, "mitigation": e.mitigation,
-                     "mitigation_name": mitigation_name(e.mitigation)})
+                     "mitigation_name": mitigation_name(e.mitigation), "basis": e.basis, "note": e.note})
     order = sorted(tactics, key=lambda x: TACTIC_ORDER.index(x) if x in TACTIC_ORDER else 99)
     return " ".join(sentences), order, hops

@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import ai, codescan, fixers, keys, supa
+from . import ai, codescan, crawler, fixers, keys, supa
 from . import config as settings
 
 log = logging.getLogger("uvicorn.error")
@@ -216,14 +216,15 @@ def coverage(src: Path, kept: list[dict], findings: list[dict], ai_stats: dict, 
         "files_total": total, "scanned": len(kept), "lines_scanned": ai_stats.get("lines", 0),
         "skipped": skipped, "scanned_files": sorted(kept_paths)[:80],
         "rules": [{"id": r[0], "title": r[5], "cwe": r[2]} for r in codescan.RULES],
-        "candidates": sum(1 for f in findings if f["triaged_by"] != "haiku-review"),
+        "candidates": sum(1 for f in findings if f["triaged_by"] in ("static", "haiku")),
         "judged_not_exploitable": judged_no,
         "ai": {"enabled": ai_on, "triage": ai_stats.get("triage", False),
                "review_files": ai_stats.get("files_reviewed", 0), "review_findings": ai_stats.get("findings", 0),
                "claims_rejected": ai_stats.get("claims_rejected", 0),
                "review_truncated": ai_stats.get("truncated", [])},
-        "limits": "Pattern rules plus an AI review of up to 10 files; not a full static-analysis or "
-                  "dependency audit. Repo code is never executed.",
+        "limits": "Pattern rules, an import-aware Claude Haiku review of up to 24 prioritised files, and OSV "
+                  "advisories for pinned dependencies. Not a full data-flow analysis; repository code is never "
+                  "executed, and AI claims are kept only when they quote the real lines.",
     }
 
 
@@ -401,16 +402,21 @@ def _run(ws: int, jid: int, owner: str, repo: str, clone_url: str, token: str | 
             return
         _log(jid, f"checking {len(kept)} files against {len(codescan.RULES)} rules"
                   f"{' and an AI review of the most exposed files' if ai.enabled() else ' (AI off)'}")
-        findings, ai_used, n, stats = codescan.scan_full(files, cancelled=cancel_event.is_set)
+        findings, ai_used, n, stats, repo_map = crawler.analyze(
+            files, cancelled=cancel_event.is_set, progress=lambda m: _log(jid, m),
+            cache_dir=data_root() / "ai-cache" / str(ws))
         if cancel_event.is_set():
             raise Cancelled()
         rep = coverage(src, kept, findings, stats, ai.enabled())
+        rep["map"] = repo_map
+        rep["crawler"] = {k: stats.get(k) for k in ("confirmed", "cached", "failed", "partial", "advisories",
+                                                    "dependency_note", "files")}
         _upd(jid, report=json.dumps(rep))
         _log(jid, f"scanned {n} files, {rep['lines_scanned']} lines against {len(rep['rules'])} rules: "
                   f"{rep['candidates']} rule hit(s), {stats['findings']} AI-review finding(s), "
                   f"{rep['judged_not_exploitable']} judged not exploitable")
         _stage(jid, cancel_event, "fixing")
-        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n)
+        codescan.persist(ws, f"{owner}/{repo}", findings, ai_used, n, refs=repo_map["reach"])
         _upd(jid, ai_used=int(ai_used))
         fixes = _fix_all(jid, src, files, findings, cancel_event.is_set)
         for f in findings:
