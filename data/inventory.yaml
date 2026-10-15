@@ -1,0 +1,111 @@
+# Possible attack steps for the synthetic Northstar branch office (names shared with scenarios/stalk-branch.yaml).
+# Synthetic data only. `match` lines are the event shapes that confirm an edge.
+company: northstar-branch (synthetic)
+ips:
+  10.44.30.10: WEB-BO-01
+  45.83.220.5: WEB-BO-01
+  10.44.20.20: FILE-BO-01
+  10.44.20.10: DC-BO-01
+  10.44.10.21: WS-MPATEL-01
+  10.44.10.24: WS-NKAPOOR-01
+nodes:
+  - {id: internet, kind: external, label: Internet scanner, criticality: 1}
+  - {id: phish-mail, kind: external, label: Phishing email, criticality: 1}
+  - {id: stale-vpn, kind: external, label: Leaked former-employee credentials, criticality: 1}
+  - {id: WEB-BO-01, kind: host, label: Claims portal web server, criticality: 4}
+  - {id: www-data, kind: identity, label: www-data service account, criticality: 2}
+  - {id: WS-MPATEL-01, kind: host, label: Maya's workstation, criticality: 3}
+  - {id: WS-NKAPOOR-01, kind: host, label: Admin workstation, criticality: 5}
+  - {id: nina.kapoor, kind: identity, label: nina.kapoor (domain admin), criticality: 7}
+  - {id: FILE-BO-01, kind: host, label: Claims file server, criticality: 6}
+  - {id: DC-BO-01, kind: host, label: Domain controller, criticality: 9}
+  - {id: claims-data, kind: data, label: Customer claims share, criticality: 9}
+  - {id: domain-secrets, kind: data, label: Domain credential store, criticality: 10}
+edges:
+  - id: scan-web
+    src: internet
+    dst: WEB-BO-01
+    technique: T1190
+    p: 0.35
+    cost: 3
+    mitigation: M1050
+    match:
+      - {source: web_access, type: web_scan, host: WEB-BO-01}
+      - {source: ids_alert, host: WEB-BO-01}
+  - id: ssh-wwwdata
+    src: internet
+    dst: www-data
+    technique: T1078
+    p: 0.2
+    cost: 2
+    mitigation: M1032
+    match: {source: linux_auth, type: auth_success, actor: www-data}
+  - id: wwwdata-shell
+    src: www-data
+    dst: WEB-BO-01
+    technique: T1059
+    p: 0.8
+    cost: 6
+    mitigation: M1038
+  - id: phish-ws
+    src: phish-mail
+    dst: WS-MPATEL-01
+    technique: T1566
+    p: 0.3
+    cost: 3
+    mitigation: M1017
+  - id: stale-ws
+    src: stale-vpn
+    dst: WS-NKAPOOR-01
+    technique: T1078
+    p: 0.1
+    cost: 2
+    mitigation: M1032
+  - id: web-creds
+    src: WEB-BO-01
+    dst: nina.kapoor
+    technique: T1552
+    p: 0.35
+    cost: 4
+    mitigation: M1027
+  - id: ws-creds
+    src: WS-MPATEL-01
+    dst: nina.kapoor
+    technique: T1558
+    p: 0.15
+    cost: 6
+    mitigation: M1026
+  - id: nkws-id
+    src: WS-NKAPOOR-01
+    dst: nina.kapoor
+    technique: T1078
+    p: 0.9
+  - id: rdp-file
+    src: nina.kapoor
+    dst: FILE-BO-01
+    technique: T1021.001
+    p: 0.6
+    cost: 5
+    mitigation: M1032
+    match: {source: ids_alert, host: FILE-BO-01}
+  - id: rdp-dc
+    src: nina.kapoor
+    dst: DC-BO-01
+    technique: T1021.001
+    p: 0.4
+    cost: 8
+    mitigation: M1030
+  - id: file-claims
+    src: FILE-BO-01
+    dst: claims-data
+    technique: T1005
+    p: 0.8
+    cost: 3
+    mitigation: M1022
+  - id: dc-secrets
+    src: DC-BO-01
+    dst: domain-secrets
+    technique: T1003
+    p: 0.5
+    cost: 9
+    mitigation: M1026

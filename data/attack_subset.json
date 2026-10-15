@@ -1,0 +1,232 @@
+{
+ "mitigations": {
+  "M1013": "Application Developer Guidance",
+  "M1015": "Active Directory Configuration",
+  "M1016": "Vulnerability Scanning",
+  "M1017": "User Training",
+  "M1018": "User Account Management",
+  "M1021": "Restrict Web-Based Content",
+  "M1022": "Restrict File and Directory Permissions",
+  "M1025": "Privileged Process Integrity",
+  "M1026": "Privileged Account Management",
+  "M1027": "Password Policies",
+  "M1028": "Operating System Configuration",
+  "M1030": "Network Segmentation",
+  "M1031": "Network Intrusion Prevention",
+  "M1032": "Multi-factor Authentication",
+  "M1033": "Limit Software Installation",
+  "M1035": "Limit Access to Resource Over Network",
+  "M1036": "Account Use Policies",
+  "M1037": "Filter Network Traffic",
+  "M1038": "Execution Prevention",
+  "M1040": "Behavior Prevention on Endpoint",
+  "M1041": "Encrypt Sensitive Information",
+  "M1042": "Disable or Remove Feature or Program",
+  "M1043": "Credential Access Protection",
+  "M1045": "Code Signing",
+  "M1047": "Audit",
+  "M1048": "Application Isolation and Sandboxing",
+  "M1049": "Antivirus/Antimalware",
+  "M1050": "Exploit Protection",
+  "M1051": "Update Software",
+  "M1054": "Software Configuration",
+  "M1057": "Data Loss Prevention"
+ },
+ "source": "MITRE ATT&CK Enterprise (Apache-2.0 / ATT&CK terms of use)",
+ "techniques": {
+  "T1003": {
+   "mitigations": [
+    "M1041",
+    "M1040",
+    "M1027",
+    "M1017",
+    "M1026",
+    "M1025",
+    "M1043",
+    "M1015",
+    "M1028"
+   ],
+   "name": "OS Credential Dumping",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1005": {
+   "mitigations": [
+    "M1057"
+   ],
+   "name": "Data from Local System",
+   "tactics": [
+    "collection"
+   ]
+  },
+  "T1021.001": {
+   "mitigations": [
+    "M1047",
+    "M1035",
+    "M1030",
+    "M1028",
+    "M1042",
+    "M1018",
+    "M1032",
+    "M1026"
+   ],
+   "name": "Remote Desktop Protocol",
+   "tactics": [
+    "lateral-movement"
+   ]
+  },
+  "T1059": {
+   "mitigations": [
+    "M1033",
+    "M1045",
+    "M1042",
+    "M1038",
+    "M1049",
+    "M1026",
+    "M1047",
+    "M1021",
+    "M1040"
+   ],
+   "name": "Command and Scripting Interpreter",
+   "tactics": [
+    "execution"
+   ]
+  },
+  "T1078": {
+   "mitigations": [
+    "M1027",
+    "M1018",
+    "M1026",
+    "M1032",
+    "M1013",
+    "M1017",
+    "M1015",
+    "M1036"
+   ],
+   "name": "Valid Accounts",
+   "tactics": [
+    "stealth",
+    "persistence",
+    "privilege-escalation",
+    "initial-access"
+   ]
+  },
+  "T1110": {
+   "mitigations": [
+    "M1018",
+    "M1036",
+    "M1032",
+    "M1027"
+   ],
+   "name": "Brute Force",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1189": {
+   "mitigations": [
+    "M1050",
+    "M1051",
+    "M1048",
+    "M1021",
+    "M1017"
+   ],
+   "name": "Drive-by Compromise",
+   "tactics": [
+    "initial-access"
+   ]
+  },
+  "T1190": {
+   "mitigations": [
+    "M1048",
+    "M1037",
+    "M1030",
+    "M1016",
+    "M1026",
+    "M1050",
+    "M1035",
+    "M1051"
+   ],
+   "name": "Exploit Public-Facing Application",
+   "tactics": [
+    "initial-access"
+   ]
+  },
+  "T1552": {
+   "mitigations": [
+    "M1041",
+    "M1051",
+    "M1017",
+    "M1015",
+    "M1027",
+    "M1028",
+    "M1037",
+    "M1022",
+    "M1035",
+    "M1047",
+    "M1026"
+   ],
+   "name": "Unsecured Credentials",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1552.001": {
+   "mitigations": [
+    "M1017",
+    "M1047",
+    "M1022",
+    "M1027"
+   ],
+   "name": "Credentials In Files",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1557": {
+   "mitigations": [
+    "M1037",
+    "M1041",
+    "M1035",
+    "M1042",
+    "M1017",
+    "M1031",
+    "M1030"
+   ],
+   "name": "Adversary-in-the-Middle",
+   "tactics": [
+    "credential-access",
+    "collection"
+   ]
+  },
+  "T1558": {
+   "mitigations": [
+    "M1015",
+    "M1043",
+    "M1041",
+    "M1027",
+    "M1047",
+    "M1026"
+   ],
+   "name": "Steal or Forge Kerberos Tickets",
+   "tactics": [
+    "credential-access"
+   ]
+  },
+  "T1566": {
+   "mitigations": [
+    "M1047",
+    "M1031",
+    "M1054",
+    "M1021",
+    "M1049",
+    "M1017"
+   ],
+   "name": "Phishing",
+   "tactics": [
+    "initial-access"
+   ]
+  }
+ }
+}
