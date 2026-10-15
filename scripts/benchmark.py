@@ -8,16 +8,15 @@ import os
 import platform
 import random
 import sys
-import tempfile
 import time
+import tracemalloc
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 os.environ.setdefault("SEED_DIR", str(ROOT / "data"))
-os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="apc-bench-")
-
-from app import analyze, engine, store  # noqa: E402
+from app import analyze, inventory  # noqa: E402
+from app.correlate import correlate  # noqa: E402
 from app.models import Edge, Node  # noqa: E402
 from app.parsers.registry import parse_lines  # noqa: E402
 
@@ -53,10 +52,9 @@ def gen(n: int, seed: int = 7) -> dict[str, list[str]]:
 
 
 def run(n: int) -> dict:
-    store.reset_connection()
-    store.conn()
-    ws = n  # fresh workspace per size
     lines = gen(n)
+    nodes, base_edges = inventory.load()["nodes"], inventory.load()["edges"]
+    tracemalloc.start()
     t0 = time.perf_counter()
     events, rejected = [], 0
     for fmt, ls in lines.items():
@@ -64,27 +62,33 @@ def run(n: int) -> dict:
         events.extend(ev)
         rejected += len(bad)
     t1 = time.perf_counter()
-    stored = store.add_events(ws, events)
+    # The application store is Supabase-backed.  This benchmark deliberately
+    # measures the deterministic local pipeline only, so no credentials or
+    # database/network latency can alter the result.
+    events = [e.model_copy(update={"id": f"e{i}"}) for i, e in enumerate(events, 1)]
     t2 = time.perf_counter()
-    snap = engine.snapshot(ws, 10)
+    edges = correlate(base_edges, events)
+    g = analyze.build_graph(nodes, edges)
+    paths = analyze.top_paths(g, 10)
     t3 = time.perf_counter()
-    tm = snap["timings"]
-    confirmed = sum(1 for e in snap["edges"] if e.observed)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    confirmed = sum(1 for e in edges if e.observed)
     return {
-        "events": stored, "rejected": rejected,
+        "events": len(events), "rejected": rejected,
         "parse_ms": round((t1 - t0) * 1000, 1), "parse_eps": round(len(events) / (t1 - t0)),
-        "ingest_ms": round((t2 - t1) * 1000, 1), "ingest_eps": round(stored / (t2 - t1)),
-        "correlate_ms": tm["correlate_ms"], "graph_ms": tm["graph_ms"], "paths_ms": tm["paths_ms"],
-        "narrate_ms": tm["narrate_ms"], "analysis_ms": round((t3 - t2) * 1000, 1),
+        "prepare_ms": round((t2 - t1) * 1000, 1),
+        "correlate_ms": round((t3 - t2) * 1000, 2), "analysis_ms": round((t3 - t2) * 1000, 1),
         "end_to_end_ms": round((t3 - t0) * 1000, 1),
-        "end_to_end_eps": round(stored / (t3 - t0)),
-        "confirmed_steps": confirmed, "ranked_paths": len(snap["paths"]),
-        "top_severity": snap["paths"][0]["severity"] if snap["paths"] else None,
+        "end_to_end_eps": round(len(events) / (t3 - t0)), "peak_kib": round(peak / 1024, 1),
+        "confirmed_steps": confirmed, "ranked_paths": len(paths),
+        "top_severity": paths[0]["severity"] if paths else None,
     }
 
 
 def graph_scale(n_nodes: int, seed: int = 11) -> dict:
     """Synthetic layered attack graph: entry points -> layers of hosts/identities -> crown jewels."""
+    tracemalloc.start()
     rnd = random.Random(seed)
     layers = max(4, int(n_nodes ** 0.5) // 2)
     width = max(2, n_nodes // layers)
@@ -120,9 +124,11 @@ def graph_scale(n_nodes: int, seed: int = 11) -> dict:
     finally:
         analyze.DANGEROUS = saved
     t3 = time.perf_counter()
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
     return {"nodes": len(nodes), "edges": len(edges), "build_ms": round((t1 - t0) * 1000, 1),
             "top10_paths_ms": round((t2 - t1) * 1000, 1), "min_cut_ms": round((t3 - t2) * 1000, 1),
-            "paths_found": len(paths), "cut_cost": fix["total_cost"] if fix else None}
+            "paths_found": len(paths), "cut_cost": fix["total_cost"] if fix else None, "peak_kib": round(peak / 1024, 1)}
 
 
 def main() -> None:
@@ -133,21 +139,22 @@ def main() -> None:
             "cpus": os.cpu_count(), "synthetic_load": True, "seed": 7,
             "generated": time.strftime("%Y-%m-%d %H:%M:%S")}
     (ROOT / "data" / "benchmarks.json").write_text(json.dumps({"meta": meta, "runs": runs, "graph_scale": scale}, indent=1))
-    hdr = ("| events | parse eps | ingest eps | correlate ms | graph ms | paths ms | analysis ms | "
-           "end-to-end ms | confirmed steps | ranked paths |")
-    rows = [f"| {r['events']} | {r['parse_eps']} | {r['ingest_eps']} | {r['correlate_ms']} | {r['graph_ms']} | "
-            f"{r['paths_ms']} | {r['analysis_ms']} | {r['end_to_end_ms']} | {r['confirmed_steps']} | "
+    hdr = ("| events | parse eps | prepare ms | correlate + graph + paths ms | analysis ms | "
+           "end-to-end ms | peak KiB | confirmed steps | ranked paths |")
+    rows = [f"| {r['events']} | {r['parse_eps']} | {r['prepare_ms']} | {r['correlate_ms']} | "
+            f"{r['analysis_ms']} | {r['end_to_end_ms']} | {r['peak_kib']} | {r['confirmed_steps']} | "
             f"{r['ranked_paths']} |" for r in runs]
     md = (f"# Benchmarks\n\nMeasured by `scripts/benchmark.py` on {meta['system']} {meta['machine']}, "
           f"{meta['cpus']} CPUs, Python {meta['python']}, {meta['generated']}. Load is synthetic "
-          f"(seeded generator), mixed Linux auth / web access / IDS lines through the real parsers, SQLite "
-          f"store, correlation and path engine. In-process: HTTP and network latency are not included.\n\n"
-          f"{hdr}\n|{'---|' * 10}\n" + "\n".join(rows) + "\n")
+          f"(seeded generator), mixed Linux auth / web access / IDS lines through the real parsers, correlation "
+          f"and path engine. It intentionally excludes Supabase, HTTP, and network latency. Peak KiB is Python "
+          f"tracemalloc allocation during each run.\n\n"
+          f"{hdr}\n|{'---|' * 9}\n" + "\n".join(rows) + "\n")
     srows = [f"| {x['nodes']} | {x['edges']} | {x['build_ms']} | {x['top10_paths_ms']} | {x['min_cut_ms']} | "
-             f"{x['paths_found']} | {x['cut_cost']} |" for x in scale]
+             f"{x['paths_found']} | {x['cut_cost']} | {x['peak_kib']} |" for x in scale]
     md += ("\n## Graph scale (synthetic layered graph, 3 entry points, 3 crown jewels)\n\n"
-           "| nodes | edges | build ms | top-10 paths ms | min cut ms | paths found | cut cost |\n"
-           "|---|---|---|---|---|---|---|\n" + "\n".join(srows) + "\n")
+           "| nodes | edges | build ms | top-10 paths ms | min cut ms | paths found | cut cost | peak KiB |\n"
+           "|---|---|---|---|---|---|---|---|\n" + "\n".join(srows) + "\n")
     (ROOT / "docs" / "BENCHMARKS.md").write_text(md)
     print(md)
 

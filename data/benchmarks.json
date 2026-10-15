@@ -1,28 +1,25 @@
 {
  "meta": {
-  "python": "3.12.13",
+  "python": "3.12.14",
   "machine": "arm64",
   "system": "Darwin",
-  "cpus": 8,
+  "cpus": 6,
   "synthetic_load": true,
   "seed": 7,
-  "generated": "2026-10-14 15:53:23"
+  "generated": "2026-10-15 19:27:45"
  },
  "runs": [
   {
    "events": 1000,
    "rejected": 0,
-   "parse_ms": 7.7,
-   "parse_eps": 130467,
-   "ingest_ms": 4.4,
-   "ingest_eps": 227840,
-   "correlate_ms": 5.42,
-   "graph_ms": 0.04,
-   "paths_ms": 0.51,
-   "narrate_ms": 0.39,
-   "analysis_ms": 15.8,
-   "end_to_end_ms": 27.9,
-   "end_to_end_eps": 35887,
+   "parse_ms": 119.0,
+   "parse_eps": 8404,
+   "prepare_ms": 12.9,
+   "correlate_ms": 64.42,
+   "analysis_ms": 64.4,
+   "end_to_end_ms": 196.3,
+   "end_to_end_eps": 5095,
+   "peak_kib": 2800.6,
    "confirmed_steps": 2,
    "ranked_paths": 8,
    "top_severity": "HIGH"
@@ -30,17 +27,14 @@
   {
    "events": 10000,
    "rejected": 0,
-   "parse_ms": 68.5,
-   "parse_eps": 145919,
-   "ingest_ms": 41.1,
-   "ingest_eps": 243188,
-   "correlate_ms": 55.28,
-   "graph_ms": 0.04,
-   "paths_ms": 0.36,
-   "narrate_ms": 0.07,
-   "analysis_ms": 95.3,
-   "end_to_end_ms": 204.9,
-   "end_to_end_eps": 48801,
+   "parse_ms": 1016.9,
+   "parse_eps": 9834,
+   "prepare_ms": 140.7,
+   "correlate_ms": 533.29,
+   "analysis_ms": 533.3,
+   "end_to_end_ms": 1690.9,
+   "end_to_end_eps": 5914,
+   "peak_kib": 27133.3,
    "confirmed_steps": 2,
    "ranked_paths": 8,
    "top_severity": "HIGH"
@@ -48,17 +42,14 @@
   {
    "events": 50000,
    "rejected": 0,
-   "parse_ms": 339.7,
-   "parse_eps": 147175,
-   "ingest_ms": 211.5,
-   "ingest_eps": 236429,
-   "correlate_ms": 277.05,
-   "graph_ms": 0.05,
-   "paths_ms": 0.35,
-   "narrate_ms": 0.07,
-   "analysis_ms": 539.1,
-   "end_to_end_ms": 1090.3,
-   "end_to_end_eps": 45858,
+   "parse_ms": 5617.2,
+   "parse_eps": 8901,
+   "prepare_ms": 815.8,
+   "correlate_ms": 2515.1,
+   "analysis_ms": 2515.1,
+   "end_to_end_ms": 8948.0,
+   "end_to_end_eps": 5588,
+   "peak_kib": 135635.6,
    "confirmed_steps": 2,
    "ranked_paths": 8,
    "top_severity": "HIGH"
@@ -68,29 +59,32 @@
   {
    "nodes": 106,
    "edges": 309,
-   "build_ms": 0.3,
-   "top10_paths_ms": 10.0,
-   "min_cut_ms": 1.2,
+   "build_ms": 1.6,
+   "top10_paths_ms": 145.5,
+   "min_cut_ms": 7.7,
    "paths_found": 10,
-   "cut_cost": 11.0
+   "cut_cost": 11.0,
+   "peak_kib": 873.2
   },
   {
    "nodes": 501,
    "edges": 1494,
-   "build_ms": 1.4,
-   "top10_paths_ms": 65.3,
-   "min_cut_ms": 1.2,
+   "build_ms": 8.7,
+   "top10_paths_ms": 958.0,
+   "min_cut_ms": 6.3,
    "paths_found": 10,
-   "cut_cost": 6.0
+   "cut_cost": 6.0,
+   "peak_kib": 4116.6
   },
   {
    "nodes": 1986,
    "edges": 5949,
-   "build_ms": 6.0,
-   "top10_paths_ms": 602.1,
-   "min_cut_ms": 2.3,
-   "paths_found": 10,
-   "cut_cost": 4.0
+   "build_ms": 41.0,
+   "top10_paths_ms": 2075.8,
+   "min_cut_ms": 14.4,
+   "paths_found": 8,
+   "cut_cost": 3.0,
+   "peak_kib": 16084.1
   }
  ]
 }
