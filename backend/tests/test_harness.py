@@ -285,7 +285,7 @@ def test_clone_token_goes_only_into_a_github_header(monkeypatch):
 
 
 @pytest.mark.parametrize("stderr,expect", [
-    ("Cloning into 'data_dir\jobs\9\repo'...\nfatal: unable to access 'https://github.com/a/b.git/': "
+    ("Cloning into 'data_dir\\jobs\\9\\repo'...\nfatal: unable to access 'https://github.com/a/b.git/': "
      "Could not resolve host: github.com\n", "network or DNS"),
     ("Cloning into 'x'...\nfatal: unable to access 'https://github.com/a/b.git/': Failed to connect to github.com "
      "port 443 after 21000 ms: Timed out\n", "network or DNS"),
@@ -294,7 +294,7 @@ def test_clone_token_goes_only_into_a_github_header(monkeypatch):
     ("Cloning into 'x'...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n",
      "not found"),
     # a repo named like a network word, in a job folder named 403, is still classified by git's error line only
-    ("Cloning into 'data_dir\jobs\403\ssl-timed-out'...\nfatal: weird\n", "server log"),
+    ("Cloning into 'data_dir\\jobs\\403\\ssl-timed-out'...\nfatal: weird\n", "server log"),
 ])
 def test_git_errors_say_what_kind_of_failure_without_paths(monkeypatch, stderr, expect):
     monkeypatch.setattr(harness.subprocess, "run",
