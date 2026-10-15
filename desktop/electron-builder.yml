@@ -6,6 +6,7 @@ directories:
 files:
   - src/**/*
   - package.json
+  - build/icon-source.png      # window icon on Windows/Linux (macOS reads icon.icns from the bundle)
 extraResources:
   - from: build/backend/paladin-server
     to: backend
@@ -42,7 +43,7 @@ dmg:
     - { x: 180, y: 200, type: file }
     - { x: 480, y: 200, type: link, path: /Applications }
 win:
-  icon: build/icon.png
+  icon: build/icon-source.png
   target: [nsis]
 nsis:
   oneClick: false
@@ -51,12 +52,10 @@ nsis:
   # No spaces: GitHub turns spaces in release file names into dots, and latest.yml must name the file exactly,
   # or every installed copy fails to download its update.
   artifactName: Paladin-Setup-${version}.${ext}
-# No update feed while releases are private: an installed app can only read a private GitHub repo with a token
-# built into it, which anyone with the installer could extract. Without `publish`, no app-update.yml is packaged
-# and the app does not check for updates (src/updater.js). To turn auto-update on, make the releases repo public and
-# restore e.g.:
-#   publish: { provider: github, owner: MerlinTheCreator09, repo: paladin-releases }
-publish: null
+publish:
+  provider: github
+  owner: Manipal-Hackathon-2026
+  repo: DATUM
 # Hardening: turn off the Electron features this app never uses (Electron fuses guide).
 electronFuses:
   # Session cookies (including the long-lived refresh token) are encrypted on disk with the OS key store (DPAPI on

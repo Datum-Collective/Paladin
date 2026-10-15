@@ -128,6 +128,19 @@ test('engine.log is capped and rotated', () => {
   assert.ok(fs.statSync(`${file}.1`).size > 1024 * 1024)
 })
 
+test('engine.log replaces the previous rotation and caps a single large write', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'paladin-log-'))
+  const file = path.join(dir, 'engine.log')
+  fs.writeFileSync(file, 'old current'.padEnd(1024 * 1024 + 1, 'x'))
+  fs.writeFileSync(`${file}.1`, 'stale rotation')
+  const log = openLog(file)
+  log.write(Buffer.alloc(2 * 1024 * 1024, 120))
+  log.end()
+  await new Promise((r) => setTimeout(r, 50))
+  assert.match(fs.readFileSync(`${file}.1`, 'utf8').slice(0, 11), /old current/)
+  assert.ok(fs.statSync(file).size <= 1024 * 1024 + 100, 'one write cannot exceed the cap')
+})
+
 test('freePort reuses a preferred port when it is free and falls back when busy', async () => {
   const p = await freePort()
   assert.equal(await freePort(p), p)
