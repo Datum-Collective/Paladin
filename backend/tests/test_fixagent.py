@@ -282,3 +282,23 @@ def test_a_free_form_request_checks_citations_for_existence_only(repo, monkeypat
     g = r["grounding"]
     assert g["ok"] and g["unrelated"] == [] and g["related_checked"] is False
     assert r["verdict"] == "verified" and "tests pass" in r["reason"]
+
+
+def test_every_mitre_code_is_explained_in_plain_words_from_mitre_data():
+    e = mitre.explain("CWE-89")
+    assert e["short"] == "SQL Injection" and e["kind"] == "Weakness (MITRE CWE)"
+    assert e["summary"].startswith("If exploited, an attacker can run their own code") and "change or delete your data" in e["summary"]
+    assert e["what"].startswith("The product constructs all or part of an SQL command") and e["fix"]
+    t = mitre.explain("T1190")
+    assert t["name"] == "Exploit Public-Facing Application" and "getting into your system" in t["summary"]
+    assert mitre.explain("M1038")["kind"].startswith("Mitigation") and mitre.explain("CAPEC-66")["summary"]
+    assert mitre.explain("CWE-99999") is None
+
+
+def test_explain_endpoint_batches_and_never_guesses(client):
+    from conftest import sign_in
+    sign_in(client)
+    r = client.get("/api/mitre/explain", params={"ids": "CWE-78,T1059,CWE-99999,CWE-78"}).json()
+    assert set(r["codes"]) == {"CWE-78", "T1059", "CWE-99999"}
+    assert r["codes"]["CWE-78"]["short"] == "OS Command Injection"
+    assert r["codes"]["CWE-99999"]["unknown"] is True and r["source"]["cwe"]["version"]

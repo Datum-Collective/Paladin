@@ -1176,3 +1176,11 @@ kbd { background: var(--bg-3); border-radius: var(--r-s); box-shadow: none; font
 .verdict.ok { border-color: var(--ok); } .verdict.bad { border-color: var(--bad); } .verdict.warn { border-color: var(--warn); }
 .verdict .checks { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; font-family: var(--mono); font-size: 12.5px; }
 .verdict .checks a { color: inherit; text-decoration: underline; }
+
+/* MITRE codes explained in place */
+.mitre code { font-size: 12px; }
+.mitre a { color: inherit; text-decoration: none; } .mitre a:hover code { text-decoration: underline; }
+.mitre-sum { color: var(--text-2); }
+.mitre-block { margin-top: 6px; } .mitre-block summary { cursor: default; color: var(--accent); font-size: 12px; }
+.mitre-block ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 10px; }
+.mitre-block a { color: inherit; } .mitre-plain { margin: 2px 0; }

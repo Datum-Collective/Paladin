@@ -164,6 +164,17 @@ async def agent_fix(b: FixBody, request: Request, u: dict = Depends(auth.require
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@router.get("/api/mitre/explain")
+def mitre_explain(ids: str, u: dict = Depends(auth.require_user)):
+    """Plain-language meaning of up to 40 MITRE codes (comma-separated). Unknown codes are reported, not guessed."""
+    want = [i for i in dict.fromkeys(x.strip() for x in ids.split(",")) if i][:40]
+    out = {}
+    for i in want:
+        e = mitre.explain(i)
+        out[i] = e or {"id": i, "unknown": True, "summary": "Not an entry in Paladin's MITRE pack."}
+    return {"codes": out, "source": mitre.source()}
+
+
 @router.get("/api/agent/mitre/{ident}")
 def mitre_entry(ident: str, u: dict = Depends(auth.require_user)):
     e = mitre.get(ident)

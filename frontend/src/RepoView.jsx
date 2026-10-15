@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, downloadText } from './api.js'
 import { looksLikeRepo, scanStages, scanTarget } from './lib.js'
 import DiffView from './DiffView.jsx'
+import { MitreCode, MitreExplain } from './Mitre.jsx'
 import Icon from './Icons.jsx'
 
 const RUNNING = ['queued', 'cloning', 'scanning', 'fixing']
@@ -83,10 +84,12 @@ function Findings({ items }) {
               <div className="row-top"><b>{f.title}</b>
                 <span className="pill-row">{f.severity && <span className={`pill ${SEV[f.severity] || 'mute'}`}>{f.severity}</span>}
                   <span className={`pill ${tone}`}>{label}</span></span></div>
-              <div className="muted mono small">{f.file}:{f.line} · {f.cwe} · {f.technique}</div>
+              <div className="muted mono small">{f.file}:{f.line}</div>
+              {f.cwe && <div className="small"><MitreCode id={f.cwe} /></div>}
               {f.snippet && <code className="snippet">{f.snippet}</code>}
               {f.reason && <div className="muted">{f.reason}</div>}
               {f.impact && <div className="small"><b>Impact</b> {f.impact}</div>}
+              <MitreExplain ids={[f.cwe, f.technique]} title={`What ${[f.cwe, f.technique].filter(Boolean).join(' and ')} mean`} />
               {f.evidence && f.evidence.length > 0 && (
                 <details className="small"><summary>Evidence across files ({f.evidence.length})</summary>
                   <ul className="plain">{f.evidence.map((e, i) => <li key={i}><span className="mono">{e.file}:{e.line}</span> <code>{e.quote}</code></li>)}</ul>

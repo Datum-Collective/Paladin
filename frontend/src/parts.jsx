@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, downloadText } from './api.js'
 import DiffView from './DiffView.jsx'
+import { MitreCode, MitreExplain } from './Mitre.jsx'
 import { hhmm, pathLabels } from './lib.js'
 import { KIND_LABEL } from './kinds.js'
 import { useToast } from './toast.jsx'
@@ -40,7 +41,7 @@ export function ElementDetail({ el, graph, onClear }) {
           <p><b>{node.label}</b></p>
           <dl className="kv wide">
             {node.meta && node.meta.file && <><dt>Location</dt><dd className="mono">{node.meta.file}{node.meta.line ? `:${node.meta.line}` : ''}</dd></>}
-            {node.meta && node.meta.cwe && <><dt>Weakness</dt><dd>{node.meta.cwe} · {node.meta.rule}</dd></>}
+            {node.meta && node.meta.cwe && <><dt>Weakness</dt><dd><MitreCode id={node.meta.cwe} /></dd></>}
             {node.meta && node.meta.confidence !== undefined && <><dt>Confidence</dt><dd>{Math.round(node.meta.confidence * 100)}%</dd></>}
             {node.meta && node.meta.severity && <><dt>Severity</dt><dd>{node.meta.severity}</dd></>}
             {node.meta && node.meta.confirmed !== undefined && <><dt>Status</dt><dd>{node.meta.confirmed ? 'Confirmed: the quoted code shows input reaching it' : 'Potential: a match without a proven data flow'}</dd></>}
@@ -55,18 +56,20 @@ export function ElementDetail({ el, graph, onClear }) {
           )}
           {node.meta && node.meta.advisories && node.meta.advisories.length > 0 && <p className="muted small">Advisories: {node.meta.advisories.join(', ')}</p>}
           {node.meta && node.meta.assumed && <p className="muted small">This target is assumed from the weakness category; it was not located in the code.</p>}
+          {node.meta && node.meta.cwe && <MitreExplain ids={[node.meta.cwe]} title={`What ${node.meta.cwe} means`} />}
         </>
       )}
       {edge && (
         <>
           <p><b>{label(edge.src)}</b> <span className="muted">to</span> <b>{label(edge.dst)}</b></p>
           <dl className="kv wide">
-            <dt>Technique</dt><dd>{edge.technique}</dd>
+            <dt>Technique</dt><dd><MitreCode id={edge.technique} /></dd>
             <dt>Likelihood</dt><dd>{Math.round(edge.p * 100)}%</dd>
             <dt>Support</dt><dd>{edge.observed ? <span className="pill ok">Confirmed by events</span>
               : <span className={`pill ${BASIS[edge.basis || ''][1]}`}>{BASIS[edge.basis || ''][0]}</span>}</dd>
           </dl>
           {edge.note && <p className="muted">{edge.note}</p>}
+          <MitreExplain ids={[edge.technique, edge.mitigation]} title="What these MITRE codes mean" />
           {edge.evidence && edge.evidence.length > 0 && <p className="muted small mono">Events {edge.evidence.slice(0, 5).join(', ')}</p>}
         </>
       )}
@@ -113,7 +116,7 @@ export function PathDetail({ path }) {
           <li key={h.edge}>
             <div><b>{name(h.src)}</b> <span className="muted">to</span> <b>{name(h.dst)}</b></div>
             <div className="muted">
-              {h.technique} {h.technique_name} · p {h.p} · {h.observed ? 'confirmed by events'
+              <MitreCode id={h.technique} compact /> · p {h.p} · {h.observed ? 'confirmed by events'
                 : h.basis === 'finding' ? 'backed by a code finding' : h.basis === 'reference' ? 'import at a real line' : h.basis === 'assumed' ? 'assumed, not verified' : 'possible, no events yet'}
             </div>
             {h.note && <div className="muted small">{h.note}</div>}
@@ -123,10 +126,11 @@ export function PathDetail({ path }) {
                 <code className="snippet">{e.raw || `${e.type} ${e.actor} ${e.src_ip}`}</code>
               </div>
             ))}
-            {h.mitigation && <div className="muted">Mitigation {h.mitigation} {h.mitigation_name}</div>}
+            {h.mitigation && <div className="muted">Mitigation <MitreCode id={h.mitigation} compact /></div>}
           </li>
         ))}
       </ol>
+      <MitreExplain ids={path.hops.flatMap((h) => [h.technique, h.mitigation])} title="What the MITRE codes in this path mean" />
     </div>
   )
 }
@@ -147,8 +151,9 @@ export function Fixes({ fixes, onPropose }) {
       <div className="row-top"><b>{title}</b><span className="muted">cost {f.total_cost}</span></div>
       <p className="muted">
         Closes {f.edges.length} step(s) and breaks {f.paths_broken} path(s), removing {f.risk_removed_pct}% of risk.
-        {' '}{[...new Set(f.mitigations.map((m) => m.mitigation).filter(Boolean))].join(', ')}
       </p>
+      <MitreExplain ids={[...new Set(f.mitigations.flatMap((m) => [m.technique, m.mitigation]).filter(Boolean))]}
+                    title="What this fix stops and how (MITRE)" />
       <button className="primary" onClick={() => onPropose(f.edges, title)}>Propose Fix</button>
     </div>
   )

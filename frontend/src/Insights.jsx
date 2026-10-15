@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { MitreCode } from './Mitre.jsx'
 import { api } from './api.js'
 
 const CATEGORY_COLORS = ['var(--accent)', 'var(--info)', 'var(--ok)', 'var(--text-2)', 'var(--line-strong)', 'var(--accent)']
@@ -169,6 +170,7 @@ export default function Insights({ graph, paths = [], rems = [], demo = false })
     </Insight>
     <Insight title="MITRE ATT&amp;CK distribution" explanation={mappings.length ? `${mappings[0].technique} is the most frequently mapped technique in current repository findings.` : 'Technique mappings appear after findings are available.'} action={selectedTechnique ? `Review controls related to ${selectedTechnique.technique} in ${selectedTechnique.files.size} affected component${selectedTechnique.files.size === 1 ? '' : 's'}.` : 'Select a technique to see its evidence footprint.'}>
       <HorizontalBars rows={mappings.slice(0, 6)} selected={technique} onSelect={setTechnique} label="Mapped ATT&CK techniques" />
+      {selectedTechnique && <p className="analytics-detail"><MitreCode id={selectedTechnique.technique} /></p>}
       {selectedTechnique && <p className="analytics-detail"><b>{selectedTechnique.technique}</b> is mapped by {selectedTechnique.count} finding{selectedTechnique.count === 1 ? '' : 's'}; {selectedTechnique.confirmed} {selectedTechnique.confirmed === 1 ? 'is' : 'are'} confirmed. Other mappings remain findings, not confirmed attack observations.</p>}
     </Insight>
     <Insight title="Remediation effectiveness" explanation={outcomes.rows.length ? `${outcomes.verified} remediation action${outcomes.verified === 1 ? ' is' : 's are'} verified against the current workspace.` : 'Outcome analysis begins when remediation actions are proposed.'} action={selectedOutcome ? `Review ${titleCase(selectedOutcome.state)} remediation actions to keep the workflow moving.` : 'Select an outcome to focus the next remediation step.'}>

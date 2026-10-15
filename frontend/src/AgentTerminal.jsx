@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, agentStream } from './api.js'
 import { usePrefs } from './prefs.jsx'
+import { MitreExplain } from './Mitre.jsx'
 
 /* The fixing agent as a terminal: every tool call and result as it happens, then a verdict that Paladin computed
    (re-scan, real tests, MITRE citations), shown apart from what the agent claims. */
@@ -74,6 +75,7 @@ function Verdict({ v, onOpenDiff }) {
           {g.related_checked === false && g.citations.length > 0 && <span className="muted"> (custom request: checked that each id is a real MITRE entry)</span>}
         </li>
       </ul>
+      {g.citations.length > 0 && <MitreExplain ids={g.citations} title="What the cited MITRE codes say" />}
       {v.changed_files && v.changed_files.length > 0 && (
         <p className="small">Changed {v.changed_files.join(', ')} · {v.committed ? 'committed to the scan’s local branch (nothing pushed)' : 'not committed'}
           {v.committed && <> · <button className="link inline small" onClick={onOpenDiff}>Review the diff</button></>}</p>

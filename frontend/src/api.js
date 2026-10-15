@@ -45,6 +45,7 @@ export const api = {
   hConfig: () => req('GET', '/api/harness/config'),
   hStart: (repo_url) => req('POST', '/api/harness/jobs', { repo_url }),
   hJobs: () => req('GET', '/api/harness/jobs'),
+  mitreExplain: (ids) => req('GET', `/api/mitre/explain?ids=${encodeURIComponent(ids.join(','))}`),
   hJob: (id) => req('GET', `/api/harness/jobs/${id}`),
   hCancel: (id) => req('POST', `/api/harness/jobs/${id}/cancel`),
   hFile: (id, path) => req('GET', `/api/harness/jobs/${id}/file?path=${encodeURIComponent(path)}`),
