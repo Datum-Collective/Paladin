@@ -1,4 +1,21 @@
-# Deploying to production (VPS: Docker Compose + Caddy)
+# Deploying to production
+
+## No domain? Pick one (all give you HTTPS)
+| Option | You need | Steps | Notes |
+|---|---|---|---|
+| **Fly.io** (recommended for a private repo) | a Fly account (card on file), `flyctl` | `fly launch --copy-config --no-deploy --name <unique>`, `fly secrets set ...`, `fly deploy` (see `fly.toml`) | Builds from your local checkout, no GitHub access needed. Address: `https://<name>.fly.dev`. |
+| **Render** | a Render account; the Render GitHub app authorised on the org (an owner approves) | New > Blueprint > pick the repo (`render.yaml`), fill the three secrets | Address: `https://<name>.onrender.com`. Use the `starter` plan, free sleeps when idle. |
+| **Any VPS + free hostname** | a server with a public IP | `APP_DOMAIN=<ip-with-dashes>.sslip.io` (e.g. `203-0-113-10.sslip.io`), then the VPS steps below | No DNS to buy or configure; Caddy issues the certificate for that hostname. |
+| **Quick demo only** | a laptop | `cloudflared tunnel --url http://localhost:8000` | Temporary URL that changes each run, only while the laptop is on. Not production. |
+
+On Fly, Render and Railway the app learns its own address from the platform, so `APP_URL` is optional there. After
+the first deploy, add that exact address to Supabase (Site URL, and `<address>/api/auth/callback` under Redirect
+URLs). Use the exact URL, never a wildcard like `*.onrender.com`: that would let anyone's app on that host receive
+sign-in codes.
+
+---
+
+## VPS: Docker Compose + Caddy
 
 Caddy terminates HTTPS (automatic Let's Encrypt certificates) and proxies to the app container. The app keeps no
 user data on disk beyond scan working copies; accounts and data live in Supabase.

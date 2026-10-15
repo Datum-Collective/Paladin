@@ -61,8 +61,11 @@ def production_checks(supabase_url: str) -> None:
     say(BAD if local else OK, "APP_URL is a real public host" if not local else
         f"APP_URL host '{host}' is not a public domain")
     domain = os.environ.get("APP_DOMAIN", "").strip()
-    say(OK if domain and domain == host else BAD, f"APP_DOMAIN matches APP_URL ({domain})" if domain and domain == host
-        else f"APP_DOMAIN ('{domain}') must equal the APP_URL host ('{host}'); Caddy issues the certificate for it")
+    if domain:   # only the VPS/Caddy setup uses it; Fly, Render and Railway terminate https themselves
+        say(OK if domain == host else BAD, f"APP_DOMAIN matches APP_URL ({domain})" if domain == host
+            else f"APP_DOMAIN ('{domain}') must equal the APP_URL host ('{host}'); Caddy issues the certificate for it")
+    else:
+        say(WARN, "APP_DOMAIN not set: fine on Fly/Render/Railway, required only for the Caddy VPS setup")
     say(OK if config.secure_cookies() else BAD, "COOKIE_SECURE is on" if config.secure_cookies()
         else "COOKIE_SECURE=0 in production sends the session cookie over plain http")
     say(OK if config.SUPABASE_SERVICE_KEY else BAD, "SUPABASE_SERVICE_KEY is set (the web server needs it)"

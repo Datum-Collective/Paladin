@@ -63,7 +63,16 @@ def app_url() -> str:
     """The origin the browser uses. Web: APP_URL. Desktop: the engine's own loopback address."""
     if desktop_mode():
         return f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
-    return (_env("APP_URL") or "http://localhost:5173").rstrip("/")
+    if _env("APP_URL"):
+        return _env("APP_URL").rstrip("/")
+    # hosting platforms that give every service an https address: no domain of your own is needed
+    if _env("RENDER_EXTERNAL_URL"):
+        return _env("RENDER_EXTERNAL_URL").rstrip("/")
+    if _env("FLY_APP_NAME"):
+        return f"https://{_env('FLY_APP_NAME')}.fly.dev"
+    if _env("RAILWAY_PUBLIC_DOMAIN"):
+        return f"https://{_env('RAILWAY_PUBLIC_DOMAIN')}"
+    return "http://localhost:5173"
 
 
 def secure_cookies() -> bool:
