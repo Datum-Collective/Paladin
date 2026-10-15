@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { useToast } from './toast.jsx'
+import { normalizeTheme } from './lib.js'
 
 // Mirrors the server's defaults so the UI renders before the first response; the server stays authoritative.
 export const PREF_DEFAULTS = {
   'general.startup': 'home', 'general.after_import': 'repository', 'general.onboarding_dismissed': false, 'general.welcome_seen': false,
   'general.setup_done': false, 'general.setup_skipped': false,
-  'workspaces.sort': 'recent', 'appearance.density': 'comfortable',
+  'workspaces.sort': 'recent', 'appearance.density': 'comfortable', 'appearance.theme': 'system',
   'appearance.graph_labels': true, 'diff.wrap': true, 'diff.font_size': 12, 'assistant.provider': '',
   'assistant.model': '', 'assistant.effort': '', 'assistant.context': true,
 }
@@ -14,7 +15,18 @@ const Ctx = createContext({ prefs: PREF_DEFAULTS, set: () => {}, ready: false })
 export const usePrefs = () => useContext(Ctx)
 
 /** Reflect preferences on <html> so plain CSS can react to them. */
+export function applyTheme(choice) {
+  const theme = normalizeTheme(choice)
+  const r = document.documentElement
+  if (theme === 'system') r.removeAttribute('data-theme')
+  else r.dataset.theme = theme
+  try { localStorage.setItem('paladin:theme', theme) } catch { /* storage blocked: the pref still applies */ }
+  const b = typeof window !== 'undefined' ? window.paladin : undefined
+  if (b && b.setTheme) b.setTheme(theme)          // desktop: window chrome and menus follow too
+}
+
 function apply(p) {
+  applyTheme(p['appearance.theme'])
   const r = document.documentElement
   r.dataset.density = p['appearance.density']
   r.dataset.diffWrap = p['diff.wrap'] ? 'on' : 'off'

@@ -168,6 +168,10 @@ export function setupAdvice(error) {
   return { goto: null, retry: true }
 }
 
+export const THEMES = ['system', 'light', 'dark']
+/** A stored theme choice, or "system" for anything unrecognised (an old or hand-edited value). */
+export const normalizeTheme = (v) => (THEMES.includes(v) ? v : 'system')
+
 /** Path node ids -> the labels people read ("Internet (any client)", "server.py"), id when a label is missing. */
 export function pathLabels(ids, nodes) {
   const by = new Map((nodes || []).map((n) => [n.id, n.label]))

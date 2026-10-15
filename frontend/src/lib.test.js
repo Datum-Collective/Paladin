@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
+import { normalizeTheme, fromStored, pathLabels, scanStages, groupCommands, keyProblem, setupAdvice, ago, classifyInput, clamp, filterWorkspaces, folderName, fuzzy, looksLikeRepo, pushRecent, rankCommands, sortWorkspaces, toHistory, workspaceStatus } from './lib.js'
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects non-matches', () => {
@@ -200,5 +200,12 @@ describe('fromStored', () => {
     const ok = fromStored({ id: 3, role: 'assistant', content: 'hi', status: 'complete', meta: { stop_reason: 'end_turn', usage: { input: 1, output: 2 } } })
     expect(ok).toMatchObject({ content: 'hi', stop: 'end_turn', usage: { output: 2 }, stopped: false, interrupted: false })
     expect(ok.error).toBeUndefined()
+  })
+})
+
+describe('normalizeTheme', () => {
+  it('keeps the three known choices and falls back to following the system', () => {
+    expect(['system', 'light', 'dark'].map(normalizeTheme)).toEqual(['system', 'light', 'dark'])
+    for (const bad of ['', 'solarized', null, undefined, 3]) expect(normalizeTheme(bad)).toBe('system')
   })
 })

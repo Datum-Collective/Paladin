@@ -242,6 +242,11 @@ function registerIpc() {
     dataDir: path.join(app.getPath('userData'), 'data'),
   }))
   handle('auth:sign-in', () => startSignIn())
+  handle('app:set-theme', (t) => {
+    if (!['system', 'light', 'dark'].includes(t)) throw new Error('invalid theme')
+    nativeTheme.themeSource = t                       // window chrome, menus and dialogs follow the choice
+    if (win && !isMac) win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#181818' : '#ffffff')
+  })
   handle('settings:get', () => settings.status())
   handle('settings:set', async (patch) => {
     settings.set(patch)   // persisted first: the keychain is the source of truth

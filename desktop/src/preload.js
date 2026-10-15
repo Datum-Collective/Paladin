@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('paladin', {
   signIn: () => ipcRenderer.invoke('auth:sign-in'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
+  setTheme: (t) => ipcRenderer.invoke('app:set-theme', t),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   chooseFolder: () => ipcRenderer.invoke('dialog:choose-folder'),

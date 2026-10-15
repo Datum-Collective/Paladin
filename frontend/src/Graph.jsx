@@ -53,13 +53,15 @@ export default function Graph({ graph, highlight, selected, onNode, onEdge, onCl
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onScheme = () => { cy.current.style(theme().style); draw() }
     mq.addEventListener('change', onScheme)
+    const mo = new MutationObserver(onScheme)        // the Theme setting changes data-theme on <html>
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     cy.current.on('tap', 'edge', (e) => cb.current.onEdge && cb.current.onEdge(e.target.id()))
     cy.current.on('tap', 'node', (e) => cb.current.onNode && cb.current.onNode(e.target.id()))
     cy.current.on('tap', (e) => { if (e.target === cy.current && cb.current.onClear) cb.current.onClear() })
     // refit whenever the pane is resized (window, splitter drag, first layout) so the graph never stays tiny
     const ro = new ResizeObserver(() => { if (cy.current) { cy.current.resize(); cy.current.fit(undefined, 40) } })
     ro.observe(ref.current)
-    return () => { ro.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
+    return () => { ro.disconnect(); mo.disconnect(); mq.removeEventListener('change', onScheme); cy.current.destroy() }
   }, [])
 
   const graphRef = useRef(null)
