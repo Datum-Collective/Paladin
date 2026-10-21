@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="470" viewBox="0 0 720 470" role="img" aria-label="Animated ASCII paladin: scanning, finding a path, cutting it, verifying">
+<title>Paladin</title>
+<style>
+.bg{fill:#131418} .card{fill:#232429;stroke:#3a3b42;stroke-width:1}
+text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;white-space:pre}
+.art{font-size:15px;fill:#e8e8ea} .hot{fill:#e0605a} .dim{fill:#8c8c92}
+.f{opacity:0;animation:cycle 12s steps(1,end) infinite}
+.f1{animation-delay:0s} .f2{animation-delay:3s} .f3{animation-delay:6s} .f4{animation-delay:9s}
+@keyframes cycle{0%{opacity:1}25%{opacity:0}100%{opacity:0}}
+.scan{animation:sweep 3s linear infinite}
+@keyframes sweep{0%{transform:translateY(0)}100%{transform:translateY(340px)}}
+.cur{animation:blink 1s steps(1,end) infinite} @keyframes blink{50%{opacity:0}}
+</style>
+<rect class="bg" width="720" height="470" rx="14"/>
+<rect class="card" x="14" y="14" width="692" height="442" rx="10"/>
+<circle cx="36" cy="34" r="5" fill="#e0605a"/><circle cx="54" cy="34" r="5" fill="#d9a441"/><circle cx="72" cy="34" r="5" fill="#5fd68a"/>
+<text x="96" y="38" class="dim" font-size="12">paladin://attack-path-compiler</text>
+<rect class="scan" x="24" y="52" width="672" height="2" fill="#e0605a" opacity="0.35"/>
+<g class="f f1">
+<text class="art" x="40" y="70" font-size="15">
+<tspan x="40" y="70"></tspan>
+<tspan x="40" y="88"></tspan>
+<tspan x="40" y="106">       ,-^^^-.</tspan>
+<tspan x="40" y="124">      /  ___  \</tspan>
+<tspan x="40" y="142">     |  |___|  |</tspan>
+<tspan x="40" y="160">     |   \_/   |</tspan>
+<tspan x="40" y="178">      \_______/</tspan>
+<tspan x="40" y="196">   .-------------.</tspan>
+<tspan x="40" y="214">   | \    |    / |</tspan>
+<tspan x="40" y="232">   |  \   |   /  |</tspan>
+<tspan x="40" y="250">   |----- + -----| -+-</tspan>
+<tspan x="40" y="268">   |  /   |   \  |   |</tspan>
+<tspan x="40" y="286">   | /    |    \ |   |</tspan>
+<tspan x="40" y="304">   |/     |     \|   |</tspan>
+<tspan x="40" y="322">    \     |     /    |</tspan>
+<tspan x="40" y="340">     \    |    /     |</tspan>
+<tspan x="40" y="358">      \   |   /      |</tspan>
+<tspan x="40" y="376">       \  |  /       |</tspan>
+<tspan x="40" y="394">        \ | /        |</tspan>
+<tspan x="40" y="412">         \|/         |</tspan>
+<tspan x="40" y="430">          v          v</tspan>
+<tspan x="40" y="448"></tspan>
+</text>
+<text x="340" y="150" font-size="13" fill="#8c8c92">STEP 01/04</text>
+<text x="340" y="182" font-size="26" font-weight="700" fill="#e0605a">FIND THE PATH</text>
+<text x="340" y="225" font-size="13" fill="#e8e8ea">&gt; scanning logs + code ........ 3 sources</text>
+</g>
+<g class="f f2">
+<text class="art" x="40" y="70" font-size="15">
+<tspan x="40" y="70">                     ^       *</tspan>
+<tspan x="40" y="88">                    *|</tspan>
+<tspan x="40" y="106">       ,-^^^-.       |      *</tspan>
+<tspan x="40" y="124">      /  ___  \   *  |</tspan>
+<tspan x="40" y="142">     |  |___|  |     *</tspan>
+<tspan x="40" y="160">     |   \_/   |     |       *</tspan>
+<tspan x="40" y="178">      \_______/      |</tspan>
+<tspan x="40" y="196">   .-------------.   |</tspan>
+<tspan x="40" y="214">   | \    |    / |   |</tspan>
+<tspan x="40" y="232">   |  \   |   /  | -+-</tspan>
+<tspan x="40" y="250">   |----- + -----|</tspan>
+<tspan x="40" y="268">   |  /   |   \  |</tspan>
+<tspan x="40" y="286">   | /    |    \ |</tspan>
+<tspan x="40" y="304">   |/     |     \|</tspan>
+<tspan x="40" y="322">    \     |     /</tspan>
+<tspan x="40" y="340">     \    |    /</tspan>
+<tspan x="40" y="358">      \   |   /</tspan>
+<tspan x="40" y="376">       \  |  /</tspan>
+<tspan x="40" y="394">        \ | /</tspan>
+<tspan x="40" y="412">         \|/</tspan>
+<tspan x="40" y="430">          v</tspan>
+<tspan x="40" y="448"></tspan>
+</text>
+<text x="340" y="150" font-size="13" fill="#8c8c92">STEP 02/04</text>
+<text x="340" y="182" font-size="26" font-weight="700" fill="#e0605a">RANK THE FIX</text>
+<text x="340" y="225" font-size="13" fill="#e0605a">&gt; path found: internet &gt; web &gt; admin &gt; claims-data</text>
+</g>
+<g class="f f3">
+<text class="art" x="40" y="70" font-size="15">
+<tspan x="40" y="70"></tspan>
+<tspan x="40" y="88"></tspan>
+<tspan x="40" y="106">       ,-^^^-.</tspan>
+<tspan x="40" y="124">      /  ___  \</tspan>
+<tspan x="40" y="142">     |  |___|  |</tspan>
+<tspan x="40" y="160">     |   \_/   |</tspan>
+<tspan x="40" y="178">      \_______/</tspan>
+<tspan x="40" y="196">   .-------------.            *</tspan>
+<tspan x="40" y="214">   | \    |    / |  \  \  \</tspan>
+<tspan x="40" y="232">   |  \   |   /  |</tspan>
+<tspan x="40" y="250">   |----- + -----| -+---------&gt;</tspan>
+<tspan x="40" y="268">   |  /   |   \  |</tspan>
+<tspan x="40" y="286">   | /    |    \ |    /  /  /</tspan>
+<tspan x="40" y="304">   |/     |     \|             *</tspan>
+<tspan x="40" y="322">    \     |     /</tspan>
+<tspan x="40" y="340">     \    |    /</tspan>
+<tspan x="40" y="358">      \   |   /</tspan>
+<tspan x="40" y="376">       \  |  /</tspan>
+<tspan x="40" y="394">        \ | /</tspan>
+<tspan x="40" y="412">         \|/</tspan>
+<tspan x="40" y="430">          v</tspan>
+<tspan x="40" y="448"></tspan>
+</text>
+<text x="340" y="150" font-size="13" fill="#8c8c92">STEP 03/04</text>
+<text x="340" y="182" font-size="26" font-weight="700" fill="#e0605a">FIX IT</text>
+<text x="340" y="225" font-size="13" fill="#e8e8ea">&gt; cheapest cut: one step blocks every route</text>
+</g>
+<g class="f f4">
+<text class="art" x="40" y="70" font-size="15">
+<tspan x="40" y="70"></tspan>
+<tspan x="40" y="88"></tspan>
+<tspan x="40" y="106">       ,-^^^-.</tspan>
+<tspan x="40" y="124">      /  ___  \    *</tspan>
+<tspan x="40" y="142">     |  |___|  |</tspan>
+<tspan x="40" y="160">     |   \_/   | *</tspan>
+<tspan x="40" y="178">      \_______/</tspan>
+<tspan x="40" y="196">*  .-------------.</tspan>
+<tspan x="40" y="214">   | \    |    / |*</tspan>
+<tspan x="40" y="232">   |  \   |   /  |</tspan>
+<tspan x="40" y="250">   |----- V -----| -+-</tspan>
+<tspan x="40" y="268">   |  /   |   \  |   |</tspan>
+<tspan x="40" y="286"> * | /    |    \ |   |</tspan>
+<tspan x="40" y="304">   |/     |     \|   |</tspan>
+<tspan x="40" y="322">    \     |     /    |</tspan>
+<tspan x="40" y="340">     \    |    /     |</tspan>
+<tspan x="40" y="358">      \   |   /    * |</tspan>
+<tspan x="40" y="376">       \  |  /       |</tspan>
+<tspan x="40" y="394">        \ | /        |</tspan>
+<tspan x="40" y="412">         \|/         |</tspan>
+<tspan x="40" y="430">          v          v</tspan>
+<tspan x="40" y="448"></tspan>
+</text>
+<text x="340" y="150" font-size="13" fill="#8c8c92">STEP 04/04</text>
+<text x="340" y="182" font-size="26" font-weight="700" fill="#5fd68a">PROVE IT</text>
+<text x="340" y="225" font-size="13" fill="#5fd68a">&gt; verified: re-scan clean, tests pass, evidence kept</text>
+</g>
+<text x="340" y="300" font-size="12" class="dim">01 FIND  →  02 RANK  →  03 FIX  →  04 PROVE</text>
+<text x="340" y="332" font-size="12" class="dim">logs in. attack paths out.</text>
+<text x="340" y="352" font-size="12" class="dim">cheapest fix. proof it worked.</text>
+<text x="340" y="420" font-size="15" fill="#e8e8ea">PALADIN <tspan class="hot">by DATUM</tspan><tspan class="cur hot"> _</tspan></text>
+</svg>
